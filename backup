@@ -1,0 +1,355 @@
+import random
+import pygame
+import time
+import math
+
+pygame.init()
+screen = pygame.display.set_mode((1200, 800))
+pygame.display.set_caption("Hello Pygame")
+white = [255, 255, 255]
+black = (0, 0, 0)
+
+# Variabele range instellen
+n_lifeforms = 100
+n_dna_profiles = 5
+
+# Lege lijst voor levensvorm-objecten
+lifeforms = []
+dna_profiles = []
+
+# Set the frame rate to 4 FPS
+fps = 30
+
+# Create a clock object
+clock = pygame.time.Clock()
+
+
+# Klasse voor levensvorm-objecten
+class Lifeform:
+    def __init__(self, x, y, dna_profile, generation):
+        self.x = x
+        self.y = y
+        self.x_direction = ()
+        self.y_direction = ()
+        self.id = dna_profile['id']
+        self.width = dna_profile['width']
+        self.height = dna_profile['height']
+        self.color = dna_profile['color']
+        self.health = dna_profile['health']
+        self.maturity = dna_profile['maturity']
+        self.vision = dna_profile['vision']
+        self.generation = generation
+
+        self.size = 0
+        self.speed = 0
+        self.angle = ()
+
+        self.age = 0
+        self.hunger = 0
+        self.reproduced = 0
+
+
+    def movement(self):
+        # Determine the direction in which the Lifeform object should move
+        if not self.x_direction:
+            self.x_direction = random.randint(-1, 1)
+        if not self.y_direction:
+            self.y_direction = random.randint(-1, 1)
+
+        # Move the Lifeform object in the chosen direction
+        self.x += self.x_direction * self.speed
+        self.y += self.y_direction * self.speed
+
+        if random.randint(0, 100) < 3:  # Change direction with a ?% chance at each step
+            self.x_direction = random.randint(-1, 1)
+        if random.randint(0, 100) < 3:  # Change direction with a ?% chance at each step
+            self.y_direction = random.randint(-1, 1)
+
+        # Check if the object has reached the edges of the screen
+        if self.x < 0:
+            self.x = 0
+            self.x_direction = -self.x_direction  # Reverse the direction of movement along the x-axis
+        elif self.x + self.width > screen.get_width():
+            self.x = screen.get_width() - self.width
+            self.x_direction = -self.x_direction  # Reverse the direction of movement along the x-axis
+
+        if self.y < 0:
+            self.y = 0
+            self.y_direction = -self.y_direction  # Reverse the direction of movement along the y-axis
+        elif self.y + self.height > screen.get_height():
+            self.y = screen.get_height() - self.height
+            self.x_direction = -self.y_direction  # Reverse the direction of movement along the y-axis
+
+        enemy = self.detect_enemy()
+        if enemy and self.distance_to(enemy) < 10:
+            # Calculate the angle between the two objects
+            angle = math.atan2(self.y - enemy.y, self.x - enemy.x)
+            # Set the x_direction and y_direction variables based on the angle
+            self.x_direction = math.sin(angle)
+            self.y_direction = math.cos(angle)
+
+            print("move from enemy")
+        if enemy and self.distance_to(enemy) < 2:
+            self.health -= 50
+            self.speed -= 4
+
+        prey = self.detect_prey()
+        if prey and self.hunger > 100 and not enemy:
+            # Calculate the angle between the two objects
+            angle = math.atan2(self.y - prey.y, self.x - prey.x)
+            # If prey is detected, set the x_direction and y_direction variables to move towards the prey
+            self.x_direction = math.sin(angle)
+            self.y_direction = math.cos(angle)
+
+            print("move towards prey")
+
+        if prey and self.distance_to(prey) < 2:
+            self.health += 1
+            self.hunger = 0
+
+
+        partner = self.detect_partner()
+        if partner and not enemy:
+            # Calculate the angle between the two objects
+            angle = math.atan2(self.y - partner.y, self.x - partner.x)
+            # If prey is detected, move towards it
+            self.x_direction = math.sin(angle)
+            self.y_direction = math.cos(angle)
+
+            print("move towards partner")
+        if partner and not enemy and self.distance_to(partner) < 10 and self.reproduced < 3:
+            print("reproduced")
+            self.speed = 0
+            self.reproduce(partner)
+            self.reproduced += 1
+
+
+
+    def move_in_group(self):
+        pass
+
+    def detect_lifeform(self):
+        for lifeform in lifeforms:
+            # Check if the lifeform is smaller and within the vision range
+            if self.distance_to(lifeform) < self.vision and lifeform != self:
+                if self.size > lifeform.size:
+                    prey = lifeform
+                    angle = math.atan2(self.y - prey.y, self.x - prey.x)
+                    # If prey is detected, move towards it
+                    self.x_direction = math.sin(angle)
+                    self.y_direction = math.cos(angle)
+                    if self.distance_to(prey) < 2:
+                        self.health += 1
+                        self.hunger = 0
+                if self.size < lifeform.size:
+                    enemy = lifeform
+                    angle = math.atan2(self.y - enemy.y, self.x - enemy.x)
+                    # If enemy is detected, move from it
+                    self.x_direction = math.sin(angle)
+                    self.y_direction = math.cos(angle)
+                    if self.distance_to(enemy) < 2:
+                        self.health -= 10
+                if lifeform.maturity < lifeform.age and \
+                    self.maturity < self.age and \
+                    lifeform.id == self.id and \
+                    lifeform.health > 50 and \
+                    lifeform != self:
+                    partner = lifeform
+                    angle = math.atan2(self.y - enemy.y, self.x - enemy.x)
+                    # If enemy is detected, move from it
+                    self.x_direction = math.sin(angle)
+                    self.y_direction = math.cos(angle)
+                    if self.distance_to(partner) < 2:
+                        self.speed = 0
+                        self.reproduce(partner)
+                        self.reproduced += 1
+
+
+
+
+                return lifeform  # Return the position of the prey
+
+    def detect_enemy(self):
+        for lifeform in lifeforms:
+            if lifeform.size > self.size and self.distance_to(lifeform) < self.vision:
+                return lifeform
+
+    def detect_partner(self):
+        for lifeform in lifeforms:
+            if lifeform.maturity < lifeform.age and \
+                    self.maturity < self.age and \
+                    lifeform.id == self.id and \
+                    lifeform.health > 50 and \
+                    self.distance_to(lifeform) < self.vision and \
+                    lifeform != self:
+                print("distance to partner: " + str(self.distance_to(lifeform)))
+                return lifeform
+
+    def distance_to(self, other):
+        # Calculate the distance between two Lifeform objects
+        print("distance to coords begin: " + str((self.x, self.y, other.x, other.y)))
+        dx = self.x - other.x
+        dy = self.y - other.y
+        print("distance to: " + str(math.sqrt(dx ** 2 + dy ** 2)))
+        return math.sqrt(dx ** 2 + dy ** 2)
+
+
+    def set_size(self):
+        self.size = self.width * self.height
+
+    def set_speed(self):
+        # Calculate the speed based on the size of the Lifeform object
+        self.speed = 10 - (self.size / 50) - (self.health * 10)
+
+        # Constrain the speed value to a certain range
+        if self.speed < 1:
+            self.speed = 1
+
+        if self.speed > 10:
+            self.speed = 10
+
+        if random.randint(0, 100) < 3:  # Change speed with a 5% chance at each step
+            self.speed += random.randint(-1, 1)
+
+    def draw(self, surface):
+        if self.health > 0:
+            pygame.draw.rect(surface, self.color, (self.x, self.y, self.width, self.height))
+
+        else:
+            lifeforms.remove(self)
+
+    def grow(self):
+        pass
+        # Als de leeftijd kleiner is dan de volwassenheid, verhoog de breedte en hoogte met 1
+        # if self.age < self.maturity:
+            #self.width += 0.01
+            #self.height += 0.01
+
+    def reproduce(self, partner):
+        # Create a new DNA profile by mixing the attributes of the two parent Lifeform objects
+        child_dna_profile = {
+                'id': len(lifeforms),  # Assign a new ID to the child Lifeform object
+                'width': (self.width + partner.width) // 2,  # Average the width of the two parent Lifeform objects
+                'height': (self.height + partner.height) // 2,  # Average the height of the two parent Lifeform objects
+                'color': ((self.color[0] + partner.color[0]) // 2, (self.color[1] + partner.color[1]) // 2, (self.color[2] + partner.color[2]) // 2),
+                # Mix the colors of the two parent Lifeform objects
+                'health': (self.health + partner.health) // 2,  # Average the health of the two parent Lifeform objects
+                'maturity': (self.maturity + partner.maturity) // 2,
+                    # Average the maturity of the two parent Lifeform objects
+                'vision': (self.vision + partner.vision) // 2  # Average the vision of the two parent Lifeform objects
+                }
+
+        # Check if a mutation should occur for each attribute
+        mutation_chance = 1  # ?% chance of mutation
+        if random.randint(0, 100) < mutation_chance:
+            child_dna_profile['width'] += random.randint(-5, 5)
+        if random.randint(0, 100) < mutation_chance:
+            child_dna_profile['height'] += random.randint(-5, 5)
+        if random.randint(0, 100) < mutation_chance:
+            child_dna_profile['color'] = (
+                random.randint(0, 255),
+                random.randint(0, 255),
+                random.randint(0, 255)
+            )
+        if random.randint(0, 100) < mutation_chance:
+            child_dna_profile['health'] += random.randint(-50, 50)
+        if random.randint(0, 100) < mutation_chance:
+            child_dna_profile['maturity'] += random.randint(-50, 50)
+        if random.randint(0, 100) < mutation_chance:
+            child_dna_profile['vision'] += random.randint(-50, 50)
+
+
+        # Create a new Lifeform object with the mixed DNA profile
+        child_lifeform = Lifeform(self.x, self.y, child_dna_profile, (self.generation + 1))
+        lifeforms.append(child_lifeform)
+
+        print(self.id)
+
+    def progression(self):
+        self.hunger += 1
+        self.age += 1
+
+        if self.age > 1000:
+            self.health -= 1
+        if self.hunger > 1000:
+            self.health -= 1
+
+for i in range(n_dna_profiles):
+    dna_profile = {
+        'id': i,
+        'width': random.randint(2, 10),
+        'height': random.randint(2, 10),
+        'color': (random.randint(0, 250), random.randint(0, 250), random.randint(0, 250)),
+        'health': random.randint(0, 200),
+        'maturity': random.randint(100, 500),
+        'vision': random.randint(0, 100)
+    }
+    dna_profiles.append(dna_profile)
+
+# Levensvorm-objecten maken met behulp van een for-lus
+for i in range(n_lifeforms):
+    x = (random.randint(0, screen.get_width()))
+    y = (random.randint(0, screen.get_height()))
+
+    generation = 1
+
+    dna_profile = random.choice(dna_profiles)
+
+    lifeform = Lifeform(x, y, dna_profile, generation)
+    lifeforms.append(lifeform)
+
+
+
+running = True
+while running:
+    screen.fill(white)
+
+    # Limit the loop to the specified frame rate
+    clock.tick(fps)
+
+    text1 = "Number of Lifeforms: " + str(len(lifeforms))
+    text2 = "generation: " + str(lifeform.generation)
+    font = pygame.font.Font(None, 36)
+
+    # Levensvorm-objecten tekenen met behulp van een for-lus
+    for lifeform in lifeforms:
+        lifeform.draw(screen)
+
+    for lifeform in lifeforms:
+        lifeform.set_size()
+        lifeform.set_speed()
+        lifeform.movement()
+        lifeform.progression()
+        lifeform.grow()
+
+    # Render the text
+    text_surface = font.render(text1, True, black)
+    text_surface2 = font.render(text2, True, black)
+
+    # Get the rect of the text surface
+    text_rect = text_surface.get_rect()
+    text2_rect = text_surface2.get_rect()
+
+    # Set the position of the text
+    text_rect.center = (320, 240)
+    text2_rect.center = (320, 200)
+
+    # Draw the text
+    screen.blit(text_surface, text_rect)
+    screen.blit(text_surface2, text2_rect)
+
+
+
+    pygame.display.flip()
+
+    for event in pygame.event.get():
+        if event.type == pygame.QUIT:
+            running = False
+
+  #  for lifeform in lifeforms:
+  #      print(lifeform.id, lifeform.health, lifeform.age, lifeform.maturity, lifeform.speed, lifeform.size)
+    print(len(lifeforms))
+    for lifeform in lifeforms:
+        print(lifeform.generation)
+
+pygame.quit()
