@@ -8,8 +8,14 @@ from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
 import pygame
 
+# Global configuration for the playable world. A significantly larger world
+# gives the different lifeforms room to claim their own territory and makes it
+# easier to separate the ecological niches they occupy.
+WORLD_WIDTH = 2800
+WORLD_HEIGHT = 1600
+
 pygame.init()
-screen = pygame.display.set_mode((1900, 1000))
+screen = pygame.display.set_mode((WORLD_WIDTH, WORLD_HEIGHT))
 # screen = pygame.Surface((1400, 750), pygame.SRCALPHA)
 pygame.display.set_caption("Evolution Sim")
 
@@ -361,27 +367,55 @@ class World:
         height: int,
         preferred_biome: Optional[BiomeRegion] = None,
         avoid_water: bool = True,
+        avoid_positions: Optional[List[Tuple[float, float]]] = None,
+        min_distance: float = 0.0,
+        biome_padding: int = 0,
     ) -> Tuple[float, float, Optional[BiomeRegion]]:
         attempts = 0
         x = random.randint(0, max(1, self.width - width))
         y = random.randint(0, max(1, self.height - height))
-        while attempts < 160:
-            biome = preferred_biome or random.choice(self.biomes)
-            spawn_rect = biome.rect if biome else pygame.Rect(0, 0, self.width, self.height)
+        avoid_positions = avoid_positions or []
+
+        while attempts < 260:
+            if preferred_biome is None and not self.biomes:
+                biome = None
+            else:
+                biome = preferred_biome or random.choice(self.biomes)
+            if biome:
+                spawn_rect = biome.rect.inflate(-biome_padding, -biome_padding)
+                if spawn_rect.width <= 0 or spawn_rect.height <= 0:
+                    spawn_rect = biome.rect
+            else:
+                spawn_rect = pygame.Rect(0, 0, self.width, self.height)
+
             x = random.randint(spawn_rect.left, max(spawn_rect.left, spawn_rect.right - width))
             y = random.randint(spawn_rect.top, max(spawn_rect.top, spawn_rect.bottom - height))
             candidate = pygame.Rect(x, y, width, height)
+
             if candidate.right > self.width or candidate.bottom > self.height:
                 attempts += 1
                 continue
             if self.is_blocked(candidate, include_water=avoid_water):
                 attempts += 1
                 continue
+
+            if avoid_positions and min_distance > 0:
+                center = (candidate.centerx, candidate.centery)
+                too_close = False
+                for px, py in avoid_positions:
+                    if math.hypot(center[0] - px, center[1] - py) < min_distance:
+                        too_close = True
+                        break
+                if too_close:
+                    attempts += 1
+                    continue
+
             return float(x), float(y), self.get_biome_at(candidate.centerx, candidate.centery)
+
         return float(x), float(y), self.get_biome_at(x, y)
 
 
-world = World(screen.get_width(), screen.get_height())
+world = World(WORLD_WIDTH, WORLD_HEIGHT)
 
 
 @dataclass
@@ -1576,6 +1610,92 @@ def reset_list_values():
     environment_modifiers["hunger_rate"] = 1.0
 
 
+def _normalize(value: float, minimum: float, maximum: float) -> float:
+    if maximum == minimum:
+        return 0.5
+    return max(0.0, min(1.0, (value - minimum) / (maximum - minimum)))
+
+
+def determine_home_biome(dna_profile, biomes: List[BiomeRegion]) -> Optional[BiomeRegion]:
+    if not biomes:
+        return None
+
+    size = (dna_profile['width'] + dna_profile['height']) / 2
+    min_size = (min_width + min_height) / 2
+    max_size = (max_width + max_height) / 2
+
+    size_norm = _normalize(size, min_size, max_size)
+    heat_tolerance = _normalize(dna_profile['energy'], 60, 120)
+    hydration_dependence = 1.0 - heat_tolerance
+    resilience = (
+        _normalize(dna_profile['health'], 1, 220)
+        + _normalize(dna_profile['defence_power'], 1, 110)
+    ) / 2
+    mobility = (
+        _normalize(dna_profile['vision'], vision_min, vision_max)
+        + (1.0 - size_norm)
+    ) / 2
+    longevity_factor = _normalize(dna_profile['longevity'], 800, 5200)
+    aggression = _normalize(dna_profile['attack_power'], 1, 110)
+
+    preferred_biome = None
+    preferred_score = -1.0
+
+    for biome in biomes:
+        name = biome.name.lower()
+        score = 0.0
+        if "woestijn" in name:
+            score = (
+                heat_tolerance * 0.55
+                + resilience * 0.25
+                + aggression * 0.15
+                + mobility * 0.1
+                - hydration_dependence * 0.2
+            )
+        elif "toendra" in name:
+            score = (
+                (1.0 - heat_tolerance) * 0.35
+                + longevity_factor * 0.35
+                + resilience * 0.2
+                + hydration_dependence * 0.1
+            )
+        elif "bos" in name:
+            score = (
+                mobility * 0.35
+                + hydration_dependence * 0.2
+                + resilience * 0.25
+                + (1.0 - size_norm) * 0.1
+                + aggression * 0.1
+            )
+        elif "rivier" in name or "delta" in name or "moeras" in name:
+            score = (
+                hydration_dependence * 0.45
+                + mobility * 0.2
+                + resilience * 0.2
+                + longevity_factor * 0.15
+            )
+        elif "steppe" in name:
+            score = (
+                mobility * 0.3
+                + heat_tolerance * 0.25
+                + resilience * 0.2
+                + aggression * 0.15
+                + longevity_factor * 0.1
+            )
+        else:
+            score = (
+                resilience * 0.3
+                + mobility * 0.25
+                + longevity_factor * 0.2
+                + (1.0 - abs(heat_tolerance - 0.5)) * 0.25
+            )
+
+        if score > preferred_score:
+            preferred_biome = biome
+            preferred_score = score
+
+    return preferred_biome
+
 
 def reset_dna_profiles():
     dna_home_biome.clear()
@@ -1595,7 +1715,7 @@ def reset_dna_profiles():
         }
         dna_profiles.append(dna_profile)
         if world.biomes:
-            dna_home_biome[dna_profile['dna_id']] = random.choice(world.biomes)
+            dna_home_biome[dna_profile['dna_id']] = determine_home_biome(dna_profile, world.biomes)
         else:
             dna_home_biome[dna_profile['dna_id']] = None
 
@@ -1625,13 +1745,40 @@ def create_dna_id(parent_dna_id):
 
 def init_lifeforms():
 
+    spawn_positions_by_dna = {profile['dna_id']: [] for profile in dna_profiles}
+
     for i in range(n_lifeforms):
 
         dna_profile = random.choice(dna_profiles)
         generation = 1
 
         preferred_biome = dna_home_biome.get(dna_profile['dna_id'])
-        x, y, biome = world.random_position(dna_profile['width'], dna_profile['height'], preferred_biome=preferred_biome)
+        other_positions = [
+            pos
+            for dna_id, positions in spawn_positions_by_dna.items()
+            if dna_id != dna_profile['dna_id']
+            for pos in positions
+        ]
+
+        spawn_attempts = 0
+        while True:
+            x, y, biome = world.random_position(
+                dna_profile['width'],
+                dna_profile['height'],
+                preferred_biome=preferred_biome,
+                avoid_positions=other_positions,
+                min_distance=320,
+                biome_padding=40,
+            )
+            center = (x + dna_profile['width'] / 2, y + dna_profile['height'] / 2)
+            same_species_positions = spawn_positions_by_dna.setdefault(dna_profile['dna_id'], [])
+            too_close_same = any(
+                math.hypot(center[0] - px, center[1] - py) < 160 for px, py in same_species_positions
+            )
+            if not too_close_same or spawn_attempts > 120:
+                same_species_positions.append(center)
+                break
+            spawn_attempts += 1
 
         lifeform = Lifeform(x, y, dna_profile, generation)
         lifeform.current_biome = biome
