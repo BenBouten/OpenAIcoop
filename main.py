@@ -4,6 +4,7 @@ import os
 import random
 import itertools
 from dataclasses import dataclass, field
+from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
 import pygame
 
@@ -21,6 +22,360 @@ green = (124, 252, 184)
 red = (255, 150, 150)
 blue = (150, 255, 150)
 sea = (194, 252, 250)
+
+
+@dataclass
+class WeatherPattern:
+    name: str
+    temperature: int
+    precipitation: str
+    movement_modifier: float = 1.0
+    hunger_modifier: float = 1.0
+    regrowth_modifier: float = 1.0
+    energy_modifier: float = 1.0
+    health_tick: float = 0.0
+    duration_range: Tuple[int, int] = (15000, 30000)
+
+    def random_duration(self) -> int:
+        return random.randint(*self.duration_range)
+
+
+@dataclass
+class Barrier:
+    rect: pygame.Rect
+    color: Tuple[int, int, int] = (90, 90, 90)
+    label: str = ""
+
+
+@dataclass
+class WaterBody:
+    kind: str
+    segments: List[pygame.Rect]
+    color: Tuple[int, int, int] = (70, 140, 220)
+
+    def collides(self, rect: pygame.Rect) -> bool:
+        return any(segment.colliderect(rect) for segment in self.segments)
+
+
+@dataclass
+class BiomeRegion:
+    name: str
+    rect: pygame.Rect
+    color: Tuple[int, int, int]
+    weather_patterns: List[WeatherPattern]
+    movement_modifier: float = 1.0
+    hunger_modifier: float = 1.0
+    regrowth_modifier: float = 1.0
+    energy_modifier: float = 1.0
+    health_modifier: float = 0.0
+    active_weather: Optional[WeatherPattern] = None
+    weather_expires_at: int = 0
+
+    def update_weather(self, now_ms: int) -> None:
+        if self.active_weather is None or now_ms >= self.weather_expires_at:
+            self.active_weather = random.choice(self.weather_patterns)
+            self.weather_expires_at = now_ms + self.active_weather.random_duration()
+
+    def get_effects(self) -> dict:
+        weather = self.active_weather
+        if weather is None:
+            weather = WeatherPattern(
+                name="Stabiel",
+                temperature=20,
+                precipitation="helder"
+            )
+        return {
+            "movement": self.movement_modifier * weather.movement_modifier,
+            "hunger": self.hunger_modifier * weather.hunger_modifier,
+            "regrowth": self.regrowth_modifier * weather.regrowth_modifier,
+            "energy": self.energy_modifier * weather.energy_modifier,
+            "health": self.health_modifier + weather.health_tick,
+            "temperature": weather.temperature,
+            "precipitation": weather.precipitation,
+            "weather_name": weather.name,
+        }
+
+
+class World:
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.background_color = (228, 222, 208)
+        self.barriers: List[Barrier] = []
+        self.water_bodies: List[WaterBody] = []
+        self.biomes: List[BiomeRegion] = []
+        self._generate()
+
+    def _generate(self) -> None:
+        self.barriers.clear()
+        self.water_bodies.clear()
+        self.biomes.clear()
+        self._create_border_barriers()
+        self._create_interior_barriers()
+        self._create_water_bodies()
+        self._create_biomes()
+
+    def regenerate(self) -> None:
+        self._generate()
+
+    def _create_border_barriers(self) -> None:
+        border_thickness = 12
+        self.barriers.extend([
+            Barrier(pygame.Rect(0, 0, self.width, border_thickness)),
+            Barrier(pygame.Rect(0, 0, border_thickness, self.height)),
+            Barrier(pygame.Rect(0, self.height - border_thickness, self.width, border_thickness)),
+            Barrier(pygame.Rect(self.width - border_thickness, 0, border_thickness, self.height)),
+        ])
+
+    def _create_interior_barriers(self) -> None:
+        ridge_rect = pygame.Rect(self.width // 3, 140, 40, self.height - 280)
+        canyon_rect = pygame.Rect(2 * self.width // 3, self.height // 2, 30, self.height // 2 - 60)
+        self.barriers.extend([
+            Barrier(ridge_rect, (120, 110, 95), "rotsrug"),
+            Barrier(canyon_rect, (110, 100, 85), "canyon"),
+        ])
+
+    def _create_water_bodies(self) -> None:
+        sea_rect = pygame.Rect(40, self.height - 220, self.width // 2, 220)
+        sea = WaterBody("sea", [sea_rect], color=(64, 140, 200))
+
+        river_segments: List[pygame.Rect] = []
+        segment_width = 32
+        x = self.width - 220
+        y = 0
+        while y < self.height:
+            segment = pygame.Rect(x, y, segment_width, 140)
+            river_segments.append(segment)
+            x += random.randint(-80, 60)
+            x = max(self.width // 3, min(self.width - segment_width - 40, x))
+            y += 120
+        river = WaterBody("river", river_segments, color=(60, 150, 210))
+
+        delta_segments: List[pygame.Rect] = []
+        for idx, segment in enumerate(river_segments[-3:]):
+            offset = idx * 50
+            delta_segments.append(pygame.Rect(segment.x - offset, segment.bottom - 60, segment_width + 100, 80))
+        delta = WaterBody("delta", delta_segments, color=(70, 170, 220))
+
+        self.water_bodies.extend([sea, river, delta])
+
+    def _create_biomes(self) -> None:
+        temperate_patterns = [
+            WeatherPattern("Zonnig", 23, "helder", movement_modifier=1.05, hunger_modifier=0.9, regrowth_modifier=1.15, energy_modifier=1.1),
+            WeatherPattern("Lichte regen", 18, "regen", movement_modifier=0.95, hunger_modifier=1.0, regrowth_modifier=1.35, energy_modifier=0.95),
+            WeatherPattern("Mist", 15, "mist", movement_modifier=0.85, hunger_modifier=1.05, regrowth_modifier=1.2, energy_modifier=0.9, duration_range=(12000, 20000)),
+        ]
+        forest_patterns = [
+            WeatherPattern("Dichte mist", 14, "mist", movement_modifier=0.8, hunger_modifier=1.1, regrowth_modifier=1.4, energy_modifier=0.9),
+            WeatherPattern("Regenstorm", 16, "storm", movement_modifier=0.7, hunger_modifier=1.15, regrowth_modifier=1.55, energy_modifier=0.85, health_tick=-0.2, duration_range=(10000, 18000)),
+            WeatherPattern("Zwoel", 22, "bewolkt", movement_modifier=0.9, hunger_modifier=1.05, regrowth_modifier=1.2, energy_modifier=1.0),
+        ]
+        desert_patterns = [
+            WeatherPattern("Hitteslag", 36, "droog", movement_modifier=0.7, hunger_modifier=1.35, regrowth_modifier=0.6, energy_modifier=0.7, health_tick=-0.3, duration_range=(12000, 20000)),
+            WeatherPattern("Koele nacht", 20, "helder", movement_modifier=1.05, hunger_modifier=0.95, regrowth_modifier=0.8, energy_modifier=1.1),
+            WeatherPattern("Zandstorm", 32, "storm", movement_modifier=0.55, hunger_modifier=1.45, regrowth_modifier=0.5, energy_modifier=0.6, health_tick=-0.4, duration_range=(8000, 15000)),
+        ]
+        tundra_patterns = [
+            WeatherPattern("Sneeuw", -4, "sneeuw", movement_modifier=0.65, hunger_modifier=1.25, regrowth_modifier=0.7, energy_modifier=0.8, health_tick=-0.2),
+            WeatherPattern("Heldere kou", -10, "helder", movement_modifier=0.75, hunger_modifier=1.1, regrowth_modifier=0.5, energy_modifier=0.85),
+            WeatherPattern("Dooi", 2, "regen", movement_modifier=0.85, hunger_modifier=1.0, regrowth_modifier=0.9, energy_modifier=0.9),
+        ]
+        marsh_patterns = [
+            WeatherPattern("Damp", 19, "mist", movement_modifier=0.8, hunger_modifier=1.05, regrowth_modifier=1.5, energy_modifier=0.95),
+            WeatherPattern("Zware regen", 17, "regen", movement_modifier=0.75, hunger_modifier=1.0, regrowth_modifier=1.6, energy_modifier=0.9, health_tick=0.1),
+            WeatherPattern("Helder", 21, "helder", movement_modifier=0.95, hunger_modifier=0.95, regrowth_modifier=1.2, energy_modifier=1.05),
+        ]
+
+        self.biomes = [
+            BiomeRegion(
+                "Rivierdelta",
+                pygame.Rect(self.width // 3 - 80, self.height // 2 - 160, self.width // 2 + 40, 320),
+                (120, 200, 150),
+                marsh_patterns,
+                movement_modifier=0.85,
+                hunger_modifier=0.95,
+                regrowth_modifier=1.4,
+                energy_modifier=0.95,
+                health_modifier=0.05,
+            ),
+            BiomeRegion(
+                "Bosrand",
+                pygame.Rect(60, 60, self.width // 3 - 20, self.height // 2),
+                (80, 170, 120),
+                forest_patterns,
+                movement_modifier=0.8,
+                hunger_modifier=0.9,
+                regrowth_modifier=1.5,
+                energy_modifier=1.0,
+                health_modifier=0.02,
+            ),
+            BiomeRegion(
+                "Steppe",
+                pygame.Rect(self.width // 3 + 20, 100, self.width // 3 + 160, self.height // 2 - 40),
+                (180, 200, 120),
+                temperate_patterns,
+                movement_modifier=1.05,
+                hunger_modifier=0.95,
+                regrowth_modifier=1.0,
+                energy_modifier=1.1,
+            ),
+            BiomeRegion(
+                "Woestijnrand",
+                pygame.Rect(self.width // 2 + 120, self.height - 320, self.width // 2 - 160, 240),
+                (210, 190, 120),
+                desert_patterns,
+                movement_modifier=0.75,
+                hunger_modifier=1.3,
+                regrowth_modifier=0.6,
+                energy_modifier=0.8,
+                health_modifier=-0.1,
+            ),
+            BiomeRegion(
+                "Toendra",
+                pygame.Rect(self.width - 420, 40, 360, 260),
+                (180, 210, 220),
+                tundra_patterns,
+                movement_modifier=0.7,
+                hunger_modifier=1.2,
+                regrowth_modifier=0.65,
+                energy_modifier=0.85,
+                health_modifier=-0.05,
+            ),
+        ]
+
+    def update(self, now_ms: int) -> None:
+        for biome in self.biomes:
+            biome.update_weather(now_ms)
+
+    def draw(self, surface: pygame.Surface) -> None:
+        surface.fill(self.background_color)
+        for biome in self.biomes:
+            overlay = pygame.Surface((biome.rect.width, biome.rect.height), pygame.SRCALPHA)
+            overlay.fill((*biome.color, 80))
+            surface.blit(overlay, biome.rect.topleft)
+
+        for water in self.water_bodies:
+            for segment in water.segments:
+                pygame.draw.rect(surface, water.color, segment)
+
+        for barrier in self.barriers:
+            pygame.draw.rect(surface, barrier.color, barrier.rect)
+
+    def draw_weather_overview(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
+        panel_width = 320
+        panel_height = 26 + 20 * len(self.biomes)
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        panel.fill((255, 255, 255, 170))
+        surface.blit(panel, (surface.get_width() // 2 - panel_width // 2, 12))
+
+        title = font.render("Weer per biome", True, black)
+        surface.blit(title, (surface.get_width() // 2 - title.get_width() // 2, 20))
+
+        y_offset = 46
+        for biome in self.biomes:
+            effects = biome.get_effects()
+            text = font.render(
+                f"{biome.name}: {effects['weather_name']} ({effects['temperature']}°C, {effects['precipitation']})",
+                True,
+                black,
+            )
+            surface.blit(text, (surface.get_width() // 2 - panel_width // 2 + 10, y_offset))
+            y_offset += 20
+
+    def get_biome_at(self, x: float, y: float) -> Optional[BiomeRegion]:
+        point = (int(x), int(y))
+        for biome in self.biomes:
+            if biome.rect.collidepoint(point):
+                return biome
+        if self.biomes:
+            return self.biomes[0]
+        return None
+
+    def get_environment_context(self, x: float, y: float) -> Tuple[Optional[BiomeRegion], dict]:
+        biome = self.get_biome_at(x, y)
+        effects = biome.get_effects() if biome else {
+            "movement": 1.0,
+            "hunger": 1.0,
+            "regrowth": 1.0,
+            "energy": 1.0,
+            "health": 0.0,
+            "temperature": 20,
+            "precipitation": "helder",
+            "weather_name": "Stabiel",
+        }
+        return biome, effects
+
+    def get_regrowth_modifier(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["regrowth"]
+
+    def get_hunger_modifier(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["hunger"]
+
+    def get_energy_modifier(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["energy"]
+
+    def get_health_tick(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["health"]
+
+    def is_blocked(self, rect: pygame.Rect, include_water: bool = True) -> bool:
+        for barrier in self.barriers:
+            if rect.colliderect(barrier.rect):
+                return True
+        if include_water:
+            for water in self.water_bodies:
+                if water.collides(rect):
+                    return True
+        return False
+
+    def resolve_entity_movement(self, entity_rect: pygame.Rect, previous_pos: Tuple[float, float]) -> Tuple[float, float]:
+        x, y = entity_rect.x, entity_rect.y
+        if x < 0:
+            x = 0
+        if y < 0:
+            y = 0
+        if entity_rect.right > self.width:
+            x = self.width - entity_rect.width
+        if entity_rect.bottom > self.height:
+            y = self.height - entity_rect.height
+
+        entity_rect.update(int(x), int(y), entity_rect.width, entity_rect.height)
+
+        if self.is_blocked(entity_rect):
+            x, y = previous_pos
+            entity_rect.update(int(x), int(y), entity_rect.width, entity_rect.height)
+        return x, y
+
+    def random_position(
+        self,
+        width: int,
+        height: int,
+        preferred_biome: Optional[BiomeRegion] = None,
+        avoid_water: bool = True,
+    ) -> Tuple[float, float, Optional[BiomeRegion]]:
+        attempts = 0
+        x = random.randint(0, max(1, self.width - width))
+        y = random.randint(0, max(1, self.height - height))
+        while attempts < 160:
+            biome = preferred_biome or random.choice(self.biomes)
+            spawn_rect = biome.rect if biome else pygame.Rect(0, 0, self.width, self.height)
+            x = random.randint(spawn_rect.left, max(spawn_rect.left, spawn_rect.right - width))
+            y = random.randint(spawn_rect.top, max(spawn_rect.top, spawn_rect.bottom - height))
+            candidate = pygame.Rect(x, y, width, height)
+            if candidate.right > self.width or candidate.bottom > self.height:
+                attempts += 1
+                continue
+            if self.is_blocked(candidate, include_water=avoid_water):
+                attempts += 1
+                continue
+            return float(x), float(y), self.get_biome_at(candidate.centerx, candidate.centery)
+        return float(x), float(y), self.get_biome_at(x, y)
+
+
+world = World(screen.get_width(), screen.get_height())
 
 
 @dataclass
@@ -294,9 +649,6 @@ def action_log(message):
     if 'show_action' in globals() and show_action:
         notification_manager.add(message, sea, duration=duration)
 
-# Set the size and position of the barrier rectangle
-barrier_rect = pygame.Rect(700, 00, 15, 700)
-
 # Variabele range instellen
 n_lifeforms = 100  # number of life forms
 n_vegetation = 100  # number of vegetation
@@ -328,8 +680,6 @@ vision_max = 80
 
 degrade_tipping = 3000
 
-spawn_range = 50
-
 lifeform_id_counter = 0
 
 background = white
@@ -341,6 +691,7 @@ dna_profiles = []
 plants = []
 
 dna_id_counts = {}
+dna_home_biome = {}
 
 
 death_ages = []
@@ -417,7 +768,7 @@ class Lifeform:
         self.angle = 0
         self.angular_velocity = 0.1
 
-        self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
         self.defence_power = dna_profile['defence_power']
         self.attack_power = dna_profile['attack_power']
@@ -440,6 +791,18 @@ class Lifeform:
         self.closest_follower = None
         self.closest_plant = None
 
+        self.current_biome: Optional[BiomeRegion] = None
+        self.environment_effects = {
+            "movement": 1.0,
+            "hunger": 1.0,
+            "regrowth": 1.0,
+            "energy": 1.0,
+            "health": 0.0,
+            "temperature": 20,
+            "precipitation": "helder",
+            "weather_name": "Stabiel",
+        }
+
         self.follow_range = 30
 
         self.is_leader = False
@@ -452,9 +815,18 @@ class Lifeform:
         self.group_state_timer = 0
 
     def movement(self):
+        previous_position = (self.x, self.y)
         # Determine the direction in which the Lifeform object should move
         self.x += self.x_direction * self.speed
         self.y += self.y_direction * self.speed
+
+        self.rect.update(int(self.x), int(self.y), self.width, self.height)
+        resolved_x, resolved_y = world.resolve_entity_movement(self.rect.copy(), previous_position)
+        if resolved_x != self.x or resolved_y != self.y:
+            self.x_direction = -self.x_direction
+            self.y_direction = -self.y_direction
+        self.x, self.y = resolved_x, resolved_y
+        self.rect.update(int(self.x), int(self.y), self.width, self.height)
 
         if self.closest_enemy:
             debug_log(f"{self.id} ziet vijand {self.closest_enemy.id}")
@@ -464,20 +836,6 @@ class Lifeform:
             debug_log(f"{self.id} heeft partner {self.closest_partner.id}")
 
         # Check if the object has reached the edges of the screen
-        if self.x < 0:
-            self.x = 0
-            self.x_direction = -self.x_direction  # Reverse the direction of movement along the x-axis
-        elif self.x + self.width > screen.get_width():
-            self.x = screen.get_width() - self.width
-            self.x_direction = -self.x_direction  # Reverse the direction of movement along the x-axis
-
-        if self.y < 0:
-            self.y = 0
-            self.y_direction = -self.y_direction  # Reverse the direction of movement along the y-axis
-        elif self.y + self.height > screen.get_height():
-            self.y = screen.get_height() - self.height
-            self.y_direction = -self.y_direction  # Reverse the direction of movement along the y-axis
-
         # Iterate over all lifeform objects in the lifeforms list
         for lifeform in lifeforms:
             if self.distance_to(lifeform) < self.vision and lifeform != self:
@@ -784,6 +1142,11 @@ class Lifeform:
         self.speed += (self.health_now / 200)
         self.speed += (self.energy / 100)
 
+        biome, effects = world.get_environment_context(self.x + self.width / 2, self.y + self.height / 2)
+        self.current_biome = biome
+        self.environment_effects = effects
+        self.speed *= effects["movement"]
+
 
         if self.age < self.maturity:
             average_maturity = total_maturity / len(lifeforms)
@@ -795,8 +1158,8 @@ class Lifeform:
         if self.speed < 1:
             self.speed = 1
 
-        if self.speed > 10:
-            self.speed = 10
+        if self.speed > 12:
+            self.speed = 12
 
     def draw(self, surface):
         if self.health_now > 0:
@@ -1029,10 +1392,16 @@ class Lifeform:
             #     print("New dna_id: " + str(child_lifeform.dna_id))
 
     def progression(self):
-        self.hunger += environment_modifiers.get("hunger_rate", 1.0)
+        biome, effects = world.get_environment_context(self.x + self.width / 2, self.y + self.height / 2)
+        self.current_biome = biome
+        self.environment_effects = effects
+
+        hunger_rate = environment_modifiers.get("hunger_rate", 1.0) * effects["hunger"]
+        self.hunger += hunger_rate
         self.age += 1
-        self.energy_now += 0.5
+        self.energy_now += 0.5 * effects["energy"]
         self.wounded -= 1
+        self.health_now += effects["health"]
 
         if self.age > self.longevity:
             self.health_now -= 1
@@ -1049,6 +1418,9 @@ class Lifeform:
             self.energy_now = 1
         if self.energy_now > self.energy:
             self.energy_now = self.energy
+
+        if self.health_now > self.health:
+            self.health_now = self.health
 
 
 
@@ -1113,7 +1485,8 @@ class Vegetation:
             self.resource = 0
 
     def regrow(self):
-        growth = self.regrowth_rate * environment_modifiers.get("plant_regrowth", 1.0)
+        biome_modifier = world.get_regrowth_modifier(self.x + self.width / 2, self.y + self.height / 2)
+        growth = self.regrowth_rate * environment_modifiers.get("plant_regrowth", 1.0) * biome_modifier
         self.resource += growth
         max_resource = 200 if self.variant != "normal" else 120
         if self.resource > max_resource:
@@ -1175,6 +1548,7 @@ def reset_list_values():
     pheromones = []
     plants = []
     death_ages = []
+    world.regenerate()
     notification_manager.clear()
     event_manager.reset()
     event_manager.schedule_default_events()
@@ -1185,6 +1559,7 @@ def reset_list_values():
 
 
 def reset_dna_profiles():
+    dna_home_biome.clear()
     for i in range(n_dna_profiles):
         dna_profile = {
             'dna_id': i,
@@ -1200,6 +1575,10 @@ def reset_dna_profiles():
             'longevity': random.randint(1000, 5000)
         }
         dna_profiles.append(dna_profile)
+        if world.biomes:
+            dna_home_biome[dna_profile['dna_id']] = random.choice(world.biomes)
+        else:
+            dna_home_biome[dna_profile['dna_id']] = None
 
 # # Levensvorm-objecten maken met behulp van een for-lus
 # for i in range(n_lifeforms):
@@ -1232,43 +1611,39 @@ def init_lifeforms():
         dna_profile = random.choice(dna_profiles)
         generation = 1
 
-        # Find the center point of all life forms with the same DNA profile
-        center_x, center_y = 0, 0
-        same_dna_count = 0
-        for lifeform in lifeforms:
-            if lifeform.dna_id == dna_profile['dna_id']:
-                center_x += lifeform.x
-                center_y += lifeform.y
-                same_dna_count += 1
-        if same_dna_count > 0:
-            center_x /= same_dna_count
-            center_y /= same_dna_count
-        else:
-            center_x = random.randint(0, screen.get_width())
-            center_y = random.randint(0, screen.get_height())
-
-        # Generate random x and y coordinates within a certain distance of the center point
-        x = random.uniform(center_x - spawn_range, center_x + spawn_range)
-        y = random.uniform(center_y - spawn_range, center_y + spawn_range)
+        preferred_biome = dna_home_biome.get(dna_profile['dna_id'])
+        x, y, biome = world.random_position(dna_profile['width'], dna_profile['height'], preferred_biome=preferred_biome)
 
         lifeform = Lifeform(x, y, dna_profile, generation)
+        lifeform.current_biome = biome
         lifeforms.append(lifeform)
 
 def init_vegetation():
     for i in range(n_vegetation):
-        x = (random.randint(0, screen.get_width()))
-        y = (random.randint(0, screen.get_height()))
-
         width = 20
         height = 20
+        biome = random.choice(world.biomes) if world.biomes else None
+        spawn_x, spawn_y, _ = world.random_position(width, height, preferred_biome=biome)
+
+        weights = [0.65, 0.15, 0.12, 0.08]
+        if biome:
+            if "Woestijn" in biome.name:
+                weights = [0.5, 0.05, 0.15, 0.3]
+            elif "Bos" in biome.name:
+                weights = [0.45, 0.25, 0.15, 0.15]
+            elif "Rivier" in biome.name:
+                weights = [0.35, 0.25, 0.25, 0.15]
+            elif "Toendra" in biome.name:
+                weights = [0.55, 0.25, 0.1, 0.1]
+
         variant = random.choices([
             "normal",
             "radiant",
             "spore",
             "fortified"
-        ], weights=[0.65, 0.15, 0.12, 0.08])[0]
+        ], weights=weights)[0]
 
-        plant = Vegetation(x, y, width, height, variant)
+        plant = Vegetation(int(spawn_x), int(spawn_y), width, height, variant)
         plants.append(plant)
 
 def count_dna_ids(lifeforms):
@@ -1431,8 +1806,6 @@ while running:
 ##############################################Game running#############################################################
 
     if not paused:
-        screen.fill(background)
-
         # Set fonts
         font1_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus8-Regular.ttf"
         expanded_path1 = os.path.expanduser(font1_path)
@@ -1445,6 +1818,10 @@ while running:
 
         # Limit the loop to the specified frame rate
         clock.tick(fps)
+
+        world.update(pygame.time.get_ticks())
+        world.draw(screen)
+        world.draw_weather_overview(screen, font2)
 
         current_time = datetime.datetime.now()
         time_passed = current_time - start_time
@@ -1516,12 +1893,6 @@ while running:
                 screen.blit(text, (lifeform.x, lifeform.y - 20))
             if lifeform.reproduced_cooldown > 0:
                 lifeform.reproduced_cooldown -= 1
-            if barrier_rect.colliderect(lifeform.rect):
-                # If the lifeform's position intersects with the barrier rectangle, prevent it from moving any further in that direction
-                lifeform.x_direction = -lifeform.x_direction
-                lifeform.y_direction = -lifeform.y_direction
-
-
         stats = collect_population_stats(formatted_time_passed)
         event_manager.schedule_default_events()
         event_manager.update(pygame.time.get_ticks(), stats, player_controller)
