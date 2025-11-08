@@ -8,10 +8,23 @@ from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
 import pygame
 
+# Global configuration for the playable world. A significantly larger world
+# gives the different lifeforms room to claim their own territory and makes it
+# easier to separate the ecological niches they occupy. The visible window is
+# intentionally smaller and acts as a movable camera viewport so that the GUI
+# stays readable while the world remains expansive.
+WORLD_WIDTH = 2800
+WORLD_HEIGHT = 1600
+WINDOW_WIDTH = 1400
+WINDOW_HEIGHT = 780
+
 pygame.init()
-screen = pygame.display.set_mode((1900, 1000))
-# screen = pygame.Surface((1400, 750), pygame.SRCALPHA)
+screen = pygame.display.set_mode((WINDOW_WIDTH, WINDOW_HEIGHT))
 pygame.display.set_caption("Evolution Sim")
+
+# Off-screen surface that stores the entire simulated world. Each frame this
+# surface is rendered and the camera selects a portion to display in the window.
+world_surface = pygame.Surface((WORLD_WIDTH, WORLD_HEIGHT))
 
 
 
@@ -361,27 +374,81 @@ class World:
         height: int,
         preferred_biome: Optional[BiomeRegion] = None,
         avoid_water: bool = True,
+        avoid_positions: Optional[List[Tuple[float, float]]] = None,
+        min_distance: float = 0.0,
+        biome_padding: int = 0,
     ) -> Tuple[float, float, Optional[BiomeRegion]]:
         attempts = 0
         x = random.randint(0, max(1, self.width - width))
         y = random.randint(0, max(1, self.height - height))
-        while attempts < 160:
-            biome = preferred_biome or random.choice(self.biomes)
-            spawn_rect = biome.rect if biome else pygame.Rect(0, 0, self.width, self.height)
+        avoid_positions = avoid_positions or []
+
+        while attempts < 260:
+            if preferred_biome is None and not self.biomes:
+                biome = None
+            else:
+                biome = preferred_biome or random.choice(self.biomes)
+            if biome:
+                spawn_rect = biome.rect.inflate(-biome_padding, -biome_padding)
+                if spawn_rect.width <= 0 or spawn_rect.height <= 0:
+                    spawn_rect = biome.rect
+            else:
+                spawn_rect = pygame.Rect(0, 0, self.width, self.height)
+
             x = random.randint(spawn_rect.left, max(spawn_rect.left, spawn_rect.right - width))
             y = random.randint(spawn_rect.top, max(spawn_rect.top, spawn_rect.bottom - height))
             candidate = pygame.Rect(x, y, width, height)
+
             if candidate.right > self.width or candidate.bottom > self.height:
                 attempts += 1
                 continue
             if self.is_blocked(candidate, include_water=avoid_water):
                 attempts += 1
                 continue
+
+            if avoid_positions and min_distance > 0:
+                center = (candidate.centerx, candidate.centery)
+                too_close = False
+                for px, py in avoid_positions:
+                    if math.hypot(center[0] - px, center[1] - py) < min_distance:
+                        too_close = True
+                        break
+                if too_close:
+                    attempts += 1
+                    continue
+
             return float(x), float(y), self.get_biome_at(candidate.centerx, candidate.centery)
+
         return float(x), float(y), self.get_biome_at(x, y)
 
 
-world = World(screen.get_width(), screen.get_height())
+world = World(WORLD_WIDTH, WORLD_HEIGHT)
+
+
+class Camera:
+    def __init__(self, width: int, height: int, world_width: int, world_height: int, base_speed: int = 16):
+        self.viewport = pygame.Rect(0, 0, width, height)
+        self.world_rect = pygame.Rect(0, 0, world_width, world_height)
+        self.base_speed = base_speed
+
+    def move(self, dx: float, dy: float, boost: bool = False) -> None:
+        if dx == 0 and dy == 0:
+            return
+        speed = self.base_speed * (2 if boost else 1)
+        self.viewport.x += int(dx * speed)
+        self.viewport.y += int(dy * speed)
+        self.viewport.clamp_ip(self.world_rect)
+
+    def center_on(self, x: float, y: float) -> None:
+        self.viewport.center = (int(x), int(y))
+        self.viewport.clamp_ip(self.world_rect)
+
+    def reset(self) -> None:
+        self.center_on(self.world_rect.width / 2, self.world_rect.height / 2)
+
+
+camera = Camera(WINDOW_WIDTH, WINDOW_HEIGHT, WORLD_WIDTH, WORLD_HEIGHT)
+camera.center_on(WORLD_WIDTH / 2, WORLD_HEIGHT / 2)
 
 
 @dataclass
@@ -714,6 +781,8 @@ total_speed = 0
 total_cooldown = 0
 
 total_spawned_lifeforms = 0
+
+latest_stats = None
 
 start_time = datetime.datetime.now()
 total_time = 0
@@ -1455,13 +1524,13 @@ class Pheromone:
         self.color = color
         self.strength = strength
 
-    def draw(self):
+    def draw(self, surface):
         # Calculate the new color values based on the strength value
         r = int(self.color[0] + (255 - self.color[0]) * (255 - self.strength) / 255)
         g = int(self.color[1] + (255 - self.color[1]) * (255 - self.strength) / 255)
         b = int(self.color[2] + (255 - self.color[2]) * (255 - self.strength) / 255)
         color = (r, g, b)
-        pygame.draw.rect(screen, color, (self.x, self.y, self.width, self.height))
+        pygame.draw.rect(surface, color, (self.x, self.y, self.width, self.height))
 
 class Vegetation:
     def __init__(self, x, y, width, height, variant="normal"):
@@ -1489,8 +1558,8 @@ class Vegetation:
             self.resource = 160
             self.regrowth_rate = 0.06
 
-    def draw(self):
-        pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
+    def draw(self, surface):
+        pygame.draw.rect(surface, self.color, (self.x, self.y, self.width, self.height))
 
     def set_size(self):
         # Calculate the new width and height based on the resource value
@@ -1561,12 +1630,14 @@ def reset_list_values():
     global pheromones
     global plants
     global death_ages
+    global latest_stats
 
     lifeforms = []
     dna_profiles = []
     pheromones = []
     plants = []
     death_ages = []
+    latest_stats = None
     world.regenerate()
     notification_manager.clear()
     event_manager.reset()
@@ -1574,7 +1645,94 @@ def reset_list_values():
     player_controller.reset()
     environment_modifiers["plant_regrowth"] = 1.0
     environment_modifiers["hunger_rate"] = 1.0
+    camera.reset()
 
+
+def _normalize(value: float, minimum: float, maximum: float) -> float:
+    if maximum == minimum:
+        return 0.5
+    return max(0.0, min(1.0, (value - minimum) / (maximum - minimum)))
+
+
+def determine_home_biome(dna_profile, biomes: List[BiomeRegion]) -> Optional[BiomeRegion]:
+    if not biomes:
+        return None
+
+    size = (dna_profile['width'] + dna_profile['height']) / 2
+    min_size = (min_width + min_height) / 2
+    max_size = (max_width + max_height) / 2
+
+    size_norm = _normalize(size, min_size, max_size)
+    heat_tolerance = _normalize(dna_profile['energy'], 60, 120)
+    hydration_dependence = 1.0 - heat_tolerance
+    resilience = (
+        _normalize(dna_profile['health'], 1, 220)
+        + _normalize(dna_profile['defence_power'], 1, 110)
+    ) / 2
+    mobility = (
+        _normalize(dna_profile['vision'], vision_min, vision_max)
+        + (1.0 - size_norm)
+    ) / 2
+    longevity_factor = _normalize(dna_profile['longevity'], 800, 5200)
+    aggression = _normalize(dna_profile['attack_power'], 1, 110)
+
+    preferred_biome = None
+    preferred_score = -1.0
+
+    for biome in biomes:
+        name = biome.name.lower()
+        score = 0.0
+        if "woestijn" in name:
+            score = (
+                heat_tolerance * 0.55
+                + resilience * 0.25
+                + aggression * 0.15
+                + mobility * 0.1
+                - hydration_dependence * 0.2
+            )
+        elif "toendra" in name:
+            score = (
+                (1.0 - heat_tolerance) * 0.35
+                + longevity_factor * 0.35
+                + resilience * 0.2
+                + hydration_dependence * 0.1
+            )
+        elif "bos" in name:
+            score = (
+                mobility * 0.35
+                + hydration_dependence * 0.2
+                + resilience * 0.25
+                + (1.0 - size_norm) * 0.1
+                + aggression * 0.1
+            )
+        elif "rivier" in name or "delta" in name or "moeras" in name:
+            score = (
+                hydration_dependence * 0.45
+                + mobility * 0.2
+                + resilience * 0.2
+                + longevity_factor * 0.15
+            )
+        elif "steppe" in name:
+            score = (
+                mobility * 0.3
+                + heat_tolerance * 0.25
+                + resilience * 0.2
+                + aggression * 0.15
+                + longevity_factor * 0.1
+            )
+        else:
+            score = (
+                resilience * 0.3
+                + mobility * 0.25
+                + longevity_factor * 0.2
+                + (1.0 - abs(heat_tolerance - 0.5)) * 0.25
+            )
+
+        if score > preferred_score:
+            preferred_biome = biome
+            preferred_score = score
+
+    return preferred_biome
 
 
 def reset_dna_profiles():
@@ -1595,7 +1753,7 @@ def reset_dna_profiles():
         }
         dna_profiles.append(dna_profile)
         if world.biomes:
-            dna_home_biome[dna_profile['dna_id']] = random.choice(world.biomes)
+            dna_home_biome[dna_profile['dna_id']] = determine_home_biome(dna_profile, world.biomes)
         else:
             dna_home_biome[dna_profile['dna_id']] = None
 
@@ -1625,13 +1783,40 @@ def create_dna_id(parent_dna_id):
 
 def init_lifeforms():
 
+    spawn_positions_by_dna = {profile['dna_id']: [] for profile in dna_profiles}
+
     for i in range(n_lifeforms):
 
         dna_profile = random.choice(dna_profiles)
         generation = 1
 
         preferred_biome = dna_home_biome.get(dna_profile['dna_id'])
-        x, y, biome = world.random_position(dna_profile['width'], dna_profile['height'], preferred_biome=preferred_biome)
+        other_positions = [
+            pos
+            for dna_id, positions in spawn_positions_by_dna.items()
+            if dna_id != dna_profile['dna_id']
+            for pos in positions
+        ]
+
+        spawn_attempts = 0
+        while True:
+            x, y, biome = world.random_position(
+                dna_profile['width'],
+                dna_profile['height'],
+                preferred_biome=preferred_biome,
+                avoid_positions=other_positions,
+                min_distance=320,
+                biome_padding=40,
+            )
+            center = (x + dna_profile['width'] / 2, y + dna_profile['height'] / 2)
+            same_species_positions = spawn_positions_by_dna.setdefault(dna_profile['dna_id'], [])
+            too_close_same = any(
+                math.hypot(center[0] - px, center[1] - py) < 160 for px, py in same_species_positions
+            )
+            if not too_close_same or spawn_attempts > 120:
+                same_species_positions.append(center)
+                break
+            spawn_attempts += 1
 
         lifeform = Lifeform(x, y, dna_profile, generation)
         lifeform.current_biome = biome
@@ -1800,32 +1985,39 @@ starting_screen = True
 
 ########################################Start Screen###################################################################
 while running:
-    start_button = pygame.Rect(900, 400, 150, 50)  # Create the button rectangle
-    reset_button = pygame.Rect(50, 900, 150, 50)
-    show_dna_button = pygame.Rect(50, 800, 20, 20)
-    show_dna_info_button = pygame.Rect(50, 780, 20, 20)
+    clock.tick(fps)
+    start_button = pygame.Rect(WINDOW_WIDTH - 260, WINDOW_HEIGHT // 2 - 30, 200, 60)
+    reset_button = pygame.Rect(30, WINDOW_HEIGHT - 60, 180, 40)
+    show_dna_button = pygame.Rect(reset_button.left, reset_button.top - 40, 24, 24)
+    show_dna_info_button = pygame.Rect(show_dna_button.right + 10, show_dna_button.top, 24, 24)
 
     if starting_screen:
         screen.fill(background)
+        title_font = pygame.font.Font(None, 48)
+        info_font = pygame.font.Font(None, 26)
+        button_font = pygame.font.Font(None, 30)
 
-        pygame.draw.rect(screen, green, start_button)  # Draw the button
+        pygame.draw.rect(screen, green, start_button)
         pygame.draw.rect(screen, black, start_button, 3)
 
-        # Create the text for the button
-        start_text = "Start"
-        font = pygame.font.Font(None, 30)
-        text_surface = font.render(start_text, True, black)
-        text_rect = text_surface.get_rect()
-        text_rect.center = start_button.center  # Center the text inside the button
+        start_text = button_font.render("Start", True, black)
+        text_rect = start_text.get_rect(center=start_button.center)
+        screen.blit(start_text, text_rect)
 
-        screen.blit(text_surface, text_rect)  # Draw the text on the screen
+        title_surface = title_font.render("Evolution Sim", True, black)
+        screen.blit(title_surface, (50, 40))
 
-        pygame.display.flip()
-
-##############################################Game running#############################################################
-
-    if not paused:
-        # Set fonts
+        instructions = [
+            "Gebruik WASD of de pijltjestoetsen om de camera te bewegen.",
+            "Houd Shift ingedrukt om sneller te scrollen.",
+            "Druk op M om het genlab te openen of sluiten.",
+        ]
+        for idx, line in enumerate(instructions):
+            info_surface = info_font.render(line, True, black)
+            screen.blit(info_surface, (50, 110 + idx * 32))
+        notification_manager.update()
+        notification_manager.draw(screen, info_font)
+    else:
         font1_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus8-Regular.ttf"
         expanded_path1 = os.path.expanduser(font1_path)
         font2_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus-Bold.ttf"
@@ -1835,137 +2027,156 @@ while running:
         font2 = pygame.font.Font(expanded_path1, 18)
         font3 = pygame.font.Font(expanded_path2, 22)
 
-        # Limit the loop to the specified frame rate
-        clock.tick(fps)
+        keys = pygame.key.get_pressed()
+        horizontal = (keys[pygame.K_d] - keys[pygame.K_a])
+        vertical = (keys[pygame.K_s] - keys[pygame.K_w])
+        if not player_controller.management_mode:
+            horizontal += keys[pygame.K_RIGHT] - keys[pygame.K_LEFT]
+            vertical += keys[pygame.K_DOWN] - keys[pygame.K_UP]
+        boost = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
+        camera.move(horizontal, vertical, boost)
 
-        world.update(pygame.time.get_ticks())
-        world.draw(screen)
-        world.draw_weather_overview(screen, font2)
+        if not paused:
+            world.update(pygame.time.get_ticks())
+            world.draw(world_surface)
 
-        current_time = datetime.datetime.now()
-        time_passed = current_time - start_time
-        formatted_time_passed = datetime.timedelta(seconds=int(time_passed.total_seconds()))
-        formatted_time_passed = str(formatted_time_passed).split(".")[0]
+            current_time = datetime.datetime.now()
+            time_passed = current_time - start_time
+            formatted_time_passed = datetime.timedelta(seconds=int(time_passed.total_seconds()))
+            formatted_time_passed = str(formatted_time_passed).split(".")[0]
 
-        if death_ages:
-            death_age_avg = sum(death_ages) / len(death_ages)
+            if death_ages:
+                death_age_avg = sum(death_ages) / len(death_ages)
 
-        dna_count = count_dna_ids(lifeforms)
+            for plant in plants:
+                plant.set_size()
+                plant.regrow()
+                plant.draw(world_surface)
 
+            for pheromone in list(pheromones):
+                pheromone.strength -= 10
+                if pheromone.strength <= 0:
+                    pheromones.remove(pheromone)
+                    continue
+                pheromone.draw(world_surface)
 
-        # # update graph data
-        # graph.update_data(death_ages)
-        # graph.draw(screen)
-        # pygame.display.flip()
-        for plant in plants:
-            plant.set_size()
-            plant.regrow()
-            plant.draw()
+            for lifeform in list(lifeforms):
+                lifeform.set_speed()
+                lifeform.calculate_attack_power()
+                lifeform.calculate_defence_power()
+                lifeform.check_group()
+                lifeform.progression()
+                lifeform.movement()
+                lifeform.update_angle()
+                lifeform.grow()
+                lifeform.set_size()
+                lifeform.add_tail()
+                lifeform.draw(world_surface)
 
-        for pheromone in pheromones:
-            pheromone.strength -= 10
-            if pheromone.strength == 0:
-                pheromones.remove(pheromone)
-            pheromone.draw()
+                if show_debug:
+                    text = font.render(
+                        f"Health: {lifeform.health_now} ID: {lifeform.id} "
+                        f"cooldown {lifeform.reproduced_cooldown} "
+                        f"gen: {lifeform.generation} "
+                        f"dna_id {lifeform.dna_id} "
+                        f"hunger: {lifeform.hunger} "
+                        f"age: {lifeform.age} ",
+                        True,
+                        (0, 0, 0),
+                    )
+                    world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 30)))
+                if show_dna_id:
+                    text = font2.render(f"{lifeform.dna_id}", True, (0, 0, 0))
+                    world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 10)))
+                if show_leader and lifeform.is_leader:
+                    text = font.render("L", True, (0, 0, 0))
+                    world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 30)))
+                if show_action:
+                    text = font.render(
+                        f"Current target, enemy: {lifeform.closest_enemy.id if lifeform.closest_enemy is not None else None}"
+                        f", prey: {lifeform.closest_prey.id if lifeform.closest_prey is not None else None}, partner: "
+                        f"{lifeform.closest_partner.id if lifeform.closest_partner is not None else None}, is following: "
+                        f"{lifeform.closest_follower.id if lifeform.closest_follower is not None else None} ",
+                        True,
+                        black,
+                    )
+                    world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 20)))
+                if lifeform.reproduced_cooldown > 0:
+                    lifeform.reproduced_cooldown -= 1
 
-        # Levensvorm-objecten tekenen met behulp van een for-lus
+            stats = collect_population_stats(formatted_time_passed)
+            latest_stats = stats
+            event_manager.schedule_default_events()
+            event_manager.update(pygame.time.get_ticks(), stats, player_controller)
+            notification_manager.update()
 
-        for lifeform in lifeforms:
+            screen.blit(world_surface, (0, 0), area=camera.viewport)
+            world.draw_weather_overview(screen, font2)
+            draw_stats_panel(screen, font2, font3, stats)
 
-            lifeform.set_speed()
-            lifeform.calculate_attack_power()
-            lifeform.calculate_defence_power()
-            lifeform.check_group()
-            lifeform.progression()
-            lifeform.movement()
-            lifeform.update_angle()
-            lifeform.grow()
-            lifeform.set_size()
-            lifeform.add_tail()
-            lifeform.draw(screen)
+            pygame.draw.rect(screen, green, reset_button)
+            pygame.draw.rect(screen, black, reset_button, 2)
+            pygame.draw.rect(screen, green, show_dna_button)
+            pygame.draw.rect(screen, black, show_dna_button, 2)
+            pygame.draw.rect(screen, green, show_dna_info_button)
+            pygame.draw.rect(screen, black, show_dna_info_button, 2)
 
+            reset_label = font2.render("Reset", True, black)
+            screen.blit(reset_label, (reset_button.x + 28, reset_button.y + 6))
+            dna_label = font.render("DNA", True, black)
+            screen.blit(dna_label, (show_dna_button.right + 8, show_dna_button.y + 4))
+            dna_info_label = font.render("Info", True, black)
+            screen.blit(dna_info_label, (show_dna_info_button.right + 8, show_dna_info_button.y + 4))
 
-            if show_debug:
-                text = font.render(f"Health: {lifeform.health_now} ID: {lifeform.id} "
-                                    f"cooldown {lifeform.reproduced_cooldown} "
-                                    f"gen: {lifeform.generation} "
-                                    f"dna_id {lifeform.dna_id} "
-                                    # f"speed: {lifeform.speed} "
-                                    f"hunger: {lifeform.hunger} "
-                                    f"age: {lifeform.age} ",
-                                    True,
-                                    (0, 0, 0))
-                screen.blit(text, (lifeform.x, lifeform.y - 30))
-            if show_dna_id:
-                text = font2.render(f"{lifeform.dna_id}", True, (0, 0, 0))
-                screen.blit(text, (lifeform.x, lifeform.y - 10))
-            if show_leader:
-                if lifeform.is_leader:
-                    text = font.render(f"L", True, (0, 0, 0))
-                    screen.blit(text, (lifeform.x, lifeform.y - 30))
-            if show_action:
-                text = font.render(
-                    f"Current target, enemy: {lifeform.closest_enemy.id if lifeform.closest_enemy is not None else None}"
-                    f", prey: {lifeform.closest_prey.id if lifeform.closest_prey is not None else None}, partner: "
-                    f"{lifeform.closest_partner.id if lifeform.closest_partner is not None else None}, is following: "
-                    f"{lifeform.closest_follower.id if lifeform.closest_follower is not None else None} ", True, black)
-                screen.blit(text, (lifeform.x, lifeform.y - 20))
-            if lifeform.reproduced_cooldown > 0:
-                lifeform.reproduced_cooldown -= 1
-        stats = collect_population_stats(formatted_time_passed)
-        event_manager.schedule_default_events()
-        event_manager.update(pygame.time.get_ticks(), stats, player_controller)
-        draw_stats_panel(screen, font2, font3, stats)
+            event_manager.draw(screen, font2)
+            notification_manager.draw(screen, font)
+            player_controller.draw_overlay(screen, font2)
+        else:
+            notification_manager.update()
+            screen.blit(world_surface, (0, 0), area=camera.viewport)
+            pause_text = font2.render("sim paused", True, black)
+            text_rect = pause_text.get_rect(center=(WINDOW_WIDTH // 2, WINDOW_HEIGHT // 2))
+            screen.blit(pause_text, text_rect)
+            world.draw_weather_overview(screen, font2)
+            pygame.draw.rect(screen, green, reset_button)
+            pygame.draw.rect(screen, black, reset_button, 2)
+            pygame.draw.rect(screen, green, show_dna_button)
+            pygame.draw.rect(screen, black, show_dna_button, 2)
+            pygame.draw.rect(screen, green, show_dna_info_button)
+            pygame.draw.rect(screen, black, show_dna_info_button, 2)
+            reset_label = font2.render("Reset", True, black)
+            screen.blit(reset_label, (reset_button.x + 28, reset_button.y + 6))
+            dna_label = font.render("DNA", True, black)
+            screen.blit(dna_label, (show_dna_button.right + 8, show_dna_button.y + 4))
+            dna_info_label = font.render("Info", True, black)
+            screen.blit(dna_info_label, (show_dna_info_button.right + 8, show_dna_info_button.y + 4))
+            if latest_stats:
+                draw_stats_panel(screen, font2, font3, latest_stats)
+            notification_manager.draw(screen, font)
+            player_controller.draw_overlay(screen, font2)
+            event_manager.draw(screen, font2)
 
-        pygame.draw.rect(screen, green, reset_button)  # Draw the button
-        pygame.draw.rect(screen, black, reset_button, 3)
-        pygame.draw.rect(screen, green, show_dna_button)
-        pygame.draw.rect(screen, black, show_dna_button, 2)
-        pygame.draw.rect(screen, green, show_dna_info_button)
-        pygame.draw.rect(screen, black, show_dna_info_button, 2)
+    pygame.display.flip()
 
-        event_manager.draw(screen, font2)
-        notification_manager.update()
-        notification_manager.draw(screen, font)
-        player_controller.draw_overlay(screen, font2)
-
-
-        pygame.display.flip()
-
-        if len(lifeforms) > 1:
-            total_health = 0
-            health_avg = 0
-            total_vision = 0
-            average_vision = 0
-            total_gen = 0
-            average_gen = 0
-            total_hunger = 0
-            average_hunger = 0
-            total_size = 0
-            average_size = 0
-            total_age = 0
-            average_age = 0
-            total_maturity = 0
-            average_maturity = 0
-            total_speed = 0
-            average_speed = 0
-            total_cooldown = 0
-            average_cooldown = 0
-
-
-    elif paused:
-        # Display the pause message
-        pause_text = "sim paused"
-        font = pygame.font.Font(None, 20)
-        text_surface = font.render(pause_text, True, black)
-        text_rect = text_surface.get_rect()
-        text_rect.center = (250, 250)
-
-        screen.blit(text_surface, text_rect)
-        notification_manager.update()
-        notification_manager.draw(screen, font)
-        player_controller.draw_overlay(screen, font)
-        event_manager.draw(screen, font)
+    if not paused and not starting_screen and len(lifeforms) > 1:
+        total_health = 0
+        health_avg = 0
+        total_vision = 0
+        average_vision = 0
+        total_gen = 0
+        average_gen = 0
+        total_hunger = 0
+        average_hunger = 0
+        total_size = 0
+        average_size = 0
+        total_age = 0
+        average_age = 0
+        total_maturity = 0
+        average_maturity = 0
+        total_speed = 0
+        average_speed = 0
+        total_cooldown = 0
+        average_cooldown = 0
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -1980,8 +2191,8 @@ while running:
                 else:
                     paused = True
             elif event.key == pygame.K_n:
-                x = (random.randint(0, screen.get_width()))
-                y = (random.randint(0, screen.get_height()))
+                x = random.randint(0, max(0, world.width - 1))
+                y = random.randint(0, max(0, world.height - 1))
 
                 generation = 1
 
@@ -2034,6 +2245,8 @@ while running:
                 notification_manager.add("Simulatie gestart", green)
                 starting_screen = False  # Set the starting screen flag to False to start the simulation
                 paused = False
+                camera.reset()
+                notification_manager.add("Gebruik WASD of pijltjes om de camera te bewegen (Shift = snel)", blue)
             if reset_button.collidepoint(event.pos):
                 reset_list_values()
                 reset_dna_profiles()
