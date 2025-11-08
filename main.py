@@ -4,8 +4,11 @@ import os
 import random
 import itertools
 from dataclasses import dataclass, field
+from enum import Enum, auto
+from typing import List, Optional, Tuple
 import matplotlib.pyplot as plt
 import pygame
+from pygame.math import Vector2
 
 pygame.init()
 screen = pygame.display.set_mode((1900, 1000))
@@ -21,6 +24,366 @@ green = (124, 252, 184)
 red = (255, 150, 150)
 blue = (150, 255, 150)
 sea = (194, 252, 250)
+
+
+@dataclass
+class WeatherPattern:
+    name: str
+    temperature: int
+    precipitation: str
+    movement_modifier: float = 1.0
+    hunger_modifier: float = 1.0
+    regrowth_modifier: float = 1.0
+    energy_modifier: float = 1.0
+    health_tick: float = 0.0
+    duration_range: Tuple[int, int] = (15000, 30000)
+
+    def random_duration(self) -> int:
+        return random.randint(*self.duration_range)
+
+
+@dataclass
+class Barrier:
+    rect: pygame.Rect
+    color: Tuple[int, int, int] = (90, 90, 90)
+    label: str = ""
+
+
+@dataclass
+class WaterBody:
+    kind: str
+    segments: List[pygame.Rect]
+    color: Tuple[int, int, int] = (70, 140, 220)
+
+    def collides(self, rect: pygame.Rect) -> bool:
+        return any(segment.colliderect(rect) for segment in self.segments)
+
+
+@dataclass
+class BiomeRegion:
+    name: str
+    rect: pygame.Rect
+    color: Tuple[int, int, int]
+    weather_patterns: List[WeatherPattern]
+    movement_modifier: float = 1.0
+    hunger_modifier: float = 1.0
+    regrowth_modifier: float = 1.0
+    energy_modifier: float = 1.0
+    health_modifier: float = 0.0
+    active_weather: Optional[WeatherPattern] = None
+    weather_expires_at: int = 0
+
+    def update_weather(self, now_ms: int) -> None:
+        if self.active_weather is None or now_ms >= self.weather_expires_at:
+            self.active_weather = random.choice(self.weather_patterns)
+            self.weather_expires_at = now_ms + self.active_weather.random_duration()
+
+    def get_effects(self) -> dict:
+        weather = self.active_weather
+        if weather is None:
+            weather = WeatherPattern(
+                name="Stabiel",
+                temperature=20,
+                precipitation="helder"
+            )
+        return {
+            "movement": self.movement_modifier * weather.movement_modifier,
+            "hunger": self.hunger_modifier * weather.hunger_modifier,
+            "regrowth": self.regrowth_modifier * weather.regrowth_modifier,
+            "energy": self.energy_modifier * weather.energy_modifier,
+            "health": self.health_modifier + weather.health_tick,
+            "temperature": weather.temperature,
+            "precipitation": weather.precipitation,
+            "weather_name": weather.name,
+        }
+
+
+class World:
+    def __init__(self, width: int, height: int):
+        self.width = width
+        self.height = height
+        self.background_color = (228, 222, 208)
+        self.barriers: List[Barrier] = []
+        self.water_bodies: List[WaterBody] = []
+        self.biomes: List[BiomeRegion] = []
+        self._generate()
+
+    def _generate(self) -> None:
+        self.barriers.clear()
+        self.water_bodies.clear()
+        self.biomes.clear()
+        self._create_border_barriers()
+        self._create_interior_barriers()
+        self._create_water_bodies()
+        self._create_biomes()
+
+    def regenerate(self) -> None:
+        self._generate()
+
+    def _create_border_barriers(self) -> None:
+        border_thickness = 12
+        self.barriers.extend([
+            Barrier(pygame.Rect(0, 0, self.width, border_thickness)),
+            Barrier(pygame.Rect(0, 0, border_thickness, self.height)),
+            Barrier(pygame.Rect(0, self.height - border_thickness, self.width, border_thickness)),
+            Barrier(pygame.Rect(self.width - border_thickness, 0, border_thickness, self.height)),
+        ])
+
+    def _create_interior_barriers(self) -> None:
+        ridge_rect = pygame.Rect(self.width // 3, 140, 40, self.height - 280)
+        canyon_rect = pygame.Rect(2 * self.width // 3, self.height // 2, 30, self.height // 2 - 60)
+        self.barriers.extend([
+            Barrier(ridge_rect, (120, 110, 95), "rotsrug"),
+            Barrier(canyon_rect, (110, 100, 85), "canyon"),
+        ])
+
+    def _create_water_bodies(self) -> None:
+        sea_rect = pygame.Rect(40, self.height - 220, self.width // 2, 220)
+        sea = WaterBody("sea", [sea_rect], color=(64, 140, 200))
+
+        river_segments: List[pygame.Rect] = []
+        segment_width = 32
+        x = self.width - 220
+        y = 0
+        while y < self.height:
+            segment = pygame.Rect(x, y, segment_width, 140)
+            river_segments.append(segment)
+            x += random.randint(-80, 60)
+            x = max(self.width // 3, min(self.width - segment_width - 40, x))
+            y += 120
+        river = WaterBody("river", river_segments, color=(60, 150, 210))
+
+        delta_segments: List[pygame.Rect] = []
+        for idx, segment in enumerate(river_segments[-3:]):
+            offset = idx * 50
+            delta_segments.append(pygame.Rect(segment.x - offset, segment.bottom - 60, segment_width + 100, 80))
+        delta = WaterBody("delta", delta_segments, color=(70, 170, 220))
+
+        self.water_bodies.extend([sea, river, delta])
+
+    def _create_biomes(self) -> None:
+        temperate_patterns = [
+            WeatherPattern("Zonnig", 23, "helder", movement_modifier=1.05, hunger_modifier=0.9, regrowth_modifier=1.15, energy_modifier=1.1),
+            WeatherPattern("Lichte regen", 18, "regen", movement_modifier=0.95, hunger_modifier=1.0, regrowth_modifier=1.35, energy_modifier=0.95),
+            WeatherPattern("Mist", 15, "mist", movement_modifier=0.85, hunger_modifier=1.05, regrowth_modifier=1.2, energy_modifier=0.9, duration_range=(12000, 20000)),
+        ]
+        forest_patterns = [
+            WeatherPattern("Dichte mist", 14, "mist", movement_modifier=0.8, hunger_modifier=1.1, regrowth_modifier=1.4, energy_modifier=0.9),
+            WeatherPattern("Regenstorm", 16, "storm", movement_modifier=0.7, hunger_modifier=1.15, regrowth_modifier=1.55, energy_modifier=0.85, health_tick=-0.2, duration_range=(10000, 18000)),
+            WeatherPattern("Zwoel", 22, "bewolkt", movement_modifier=0.9, hunger_modifier=1.05, regrowth_modifier=1.2, energy_modifier=1.0),
+        ]
+        desert_patterns = [
+            WeatherPattern("Hitteslag", 36, "droog", movement_modifier=0.7, hunger_modifier=1.35, regrowth_modifier=0.6, energy_modifier=0.7, health_tick=-0.3, duration_range=(12000, 20000)),
+            WeatherPattern("Koele nacht", 20, "helder", movement_modifier=1.05, hunger_modifier=0.95, regrowth_modifier=0.8, energy_modifier=1.1),
+            WeatherPattern("Zandstorm", 32, "storm", movement_modifier=0.55, hunger_modifier=1.45, regrowth_modifier=0.5, energy_modifier=0.6, health_tick=-0.4, duration_range=(8000, 15000)),
+        ]
+        tundra_patterns = [
+            WeatherPattern("Sneeuw", -4, "sneeuw", movement_modifier=0.65, hunger_modifier=1.25, regrowth_modifier=0.7, energy_modifier=0.8, health_tick=-0.2),
+            WeatherPattern("Heldere kou", -10, "helder", movement_modifier=0.75, hunger_modifier=1.1, regrowth_modifier=0.5, energy_modifier=0.85),
+            WeatherPattern("Dooi", 2, "regen", movement_modifier=0.85, hunger_modifier=1.0, regrowth_modifier=0.9, energy_modifier=0.9),
+        ]
+        marsh_patterns = [
+            WeatherPattern("Damp", 19, "mist", movement_modifier=0.8, hunger_modifier=1.05, regrowth_modifier=1.5, energy_modifier=0.95),
+            WeatherPattern("Zware regen", 17, "regen", movement_modifier=0.75, hunger_modifier=1.0, regrowth_modifier=1.6, energy_modifier=0.9, health_tick=0.1),
+            WeatherPattern("Helder", 21, "helder", movement_modifier=0.95, hunger_modifier=0.95, regrowth_modifier=1.2, energy_modifier=1.05),
+        ]
+
+        self.biomes = [
+            BiomeRegion(
+                "Rivierdelta",
+                pygame.Rect(self.width // 3 - 80, self.height // 2 - 160, self.width // 2 + 40, 320),
+                (120, 200, 150),
+                marsh_patterns,
+                movement_modifier=0.85,
+                hunger_modifier=0.95,
+                regrowth_modifier=1.4,
+                energy_modifier=0.95,
+                health_modifier=0.05,
+            ),
+            BiomeRegion(
+                "Bosrand",
+                pygame.Rect(60, 60, self.width // 3 - 20, self.height // 2),
+                (80, 170, 120),
+                forest_patterns,
+                movement_modifier=0.8,
+                hunger_modifier=0.9,
+                regrowth_modifier=1.5,
+                energy_modifier=1.0,
+                health_modifier=0.02,
+            ),
+            BiomeRegion(
+                "Steppe",
+                pygame.Rect(self.width // 3 + 20, 100, self.width // 3 + 160, self.height // 2 - 40),
+                (180, 200, 120),
+                temperate_patterns,
+                movement_modifier=1.05,
+                hunger_modifier=0.95,
+                regrowth_modifier=1.0,
+                energy_modifier=1.1,
+            ),
+            BiomeRegion(
+                "Woestijnrand",
+                pygame.Rect(self.width // 2 + 120, self.height - 320, self.width // 2 - 160, 240),
+                (210, 190, 120),
+                desert_patterns,
+                movement_modifier=0.75,
+                hunger_modifier=1.3,
+                regrowth_modifier=0.6,
+                energy_modifier=0.8,
+                health_modifier=-0.1,
+            ),
+            BiomeRegion(
+                "Toendra",
+                pygame.Rect(self.width - 420, 40, 360, 260),
+                (180, 210, 220),
+                tundra_patterns,
+                movement_modifier=0.7,
+                hunger_modifier=1.2,
+                regrowth_modifier=0.65,
+                energy_modifier=0.85,
+                health_modifier=-0.05,
+            ),
+        ]
+
+    def update(self, now_ms: int) -> None:
+        for biome in self.biomes:
+            biome.update_weather(now_ms)
+
+    def draw(self, surface: pygame.Surface) -> None:
+        surface.fill(self.background_color)
+        for biome in self.biomes:
+            overlay = pygame.Surface((biome.rect.width, biome.rect.height), pygame.SRCALPHA)
+            overlay.fill((*biome.color, 80))
+            surface.blit(overlay, biome.rect.topleft)
+
+        for water in self.water_bodies:
+            for segment in water.segments:
+                pygame.draw.rect(surface, water.color, segment)
+
+        for barrier in self.barriers:
+            pygame.draw.rect(surface, barrier.color, barrier.rect)
+
+    def draw_weather_overview(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
+        panel_width = 320
+        panel_height = 26 + 20 * len(self.biomes)
+        panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
+        panel.fill((255, 255, 255, 170))
+        surface.blit(panel, (surface.get_width() // 2 - panel_width // 2, 12))
+
+        title = font.render("Weer per biome", True, black)
+        surface.blit(title, (surface.get_width() // 2 - title.get_width() // 2, 20))
+
+        y_offset = 46
+        for biome in self.biomes:
+            effects = biome.get_effects()
+            text = font.render(
+                f"{biome.name}: {effects['weather_name']} ({effects['temperature']}°C, {effects['precipitation']})",
+                True,
+                black,
+            )
+            surface.blit(text, (surface.get_width() // 2 - panel_width // 2 + 10, y_offset))
+            y_offset += 20
+
+    def get_biome_at(self, x: float, y: float) -> Optional[BiomeRegion]:
+        point = (int(x), int(y))
+        for biome in self.biomes:
+            if biome.rect.collidepoint(point):
+                return biome
+        if self.biomes:
+            return self.biomes[0]
+        return None
+
+    def get_environment_context(self, x: float, y: float) -> Tuple[Optional[BiomeRegion], dict]:
+        biome = self.get_biome_at(x, y)
+        effects = biome.get_effects() if biome else {
+            "movement": 1.0,
+            "hunger": 1.0,
+            "regrowth": 1.0,
+            "energy": 1.0,
+            "health": 0.0,
+            "temperature": 20,
+            "precipitation": "helder",
+            "weather_name": "Stabiel",
+        }
+        return biome, effects
+
+    def get_regrowth_modifier(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["regrowth"]
+
+    def get_hunger_modifier(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["hunger"]
+
+    def get_energy_modifier(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["energy"]
+
+    def get_health_tick(self, x: float, y: float) -> float:
+        _, effects = self.get_environment_context(x, y)
+        return effects["health"]
+
+    def is_blocked(self, rect: pygame.Rect, include_water: bool = True) -> bool:
+        for barrier in self.barriers:
+            if rect.colliderect(barrier.rect):
+                return True
+        if include_water:
+            for water in self.water_bodies:
+                if water.collides(rect):
+                    return True
+        return False
+
+    def resolve_entity_movement(
+        self,
+        entity_rect: pygame.Rect,
+        previous_pos: Tuple[float, float],
+        attempted_pos: Tuple[float, float],
+    ) -> Tuple[float, float, bool, bool, bool]:
+        attempt_x, attempt_y = attempted_pos
+        max_x = self.width - entity_rect.width
+        max_y = self.height - entity_rect.height
+        clamped_x = max(0.0, min(max_x, attempt_x))
+        clamped_y = max(0.0, min(max_y, attempt_y))
+        hit_boundary_x = not math.isclose(clamped_x, attempt_x, abs_tol=1e-3)
+        hit_boundary_y = not math.isclose(clamped_y, attempt_y, abs_tol=1e-3)
+
+        entity_rect.update(int(clamped_x), int(clamped_y), entity_rect.width, entity_rect.height)
+
+        collided = False
+        if self.is_blocked(entity_rect):
+            collided = True
+            clamped_x, clamped_y = previous_pos
+            entity_rect.update(int(clamped_x), int(clamped_y), entity_rect.width, entity_rect.height)
+
+        return clamped_x, clamped_y, hit_boundary_x, hit_boundary_y, collided
+
+    def random_position(
+        self,
+        width: int,
+        height: int,
+        preferred_biome: Optional[BiomeRegion] = None,
+        avoid_water: bool = True,
+    ) -> Tuple[float, float, Optional[BiomeRegion]]:
+        attempts = 0
+        x = random.randint(0, max(1, self.width - width))
+        y = random.randint(0, max(1, self.height - height))
+        while attempts < 160:
+            biome = preferred_biome or random.choice(self.biomes)
+            spawn_rect = biome.rect if biome else pygame.Rect(0, 0, self.width, self.height)
+            x = random.randint(spawn_rect.left, max(spawn_rect.left, spawn_rect.right - width))
+            y = random.randint(spawn_rect.top, max(spawn_rect.top, spawn_rect.bottom - height))
+            candidate = pygame.Rect(x, y, width, height)
+            if candidate.right > self.width or candidate.bottom > self.height:
+                attempts += 1
+                continue
+            if self.is_blocked(candidate, include_water=avoid_water):
+                attempts += 1
+                continue
+            return float(x), float(y), self.get_biome_at(candidate.centerx, candidate.centery)
+        return float(x), float(y), self.get_biome_at(x, y)
+
+
+world = World(screen.get_width(), screen.get_height())
 
 
 @dataclass
@@ -294,9 +657,6 @@ def action_log(message):
     if 'show_action' in globals() and show_action:
         notification_manager.add(message, sea, duration=duration)
 
-# Set the size and position of the barrier rectangle
-barrier_rect = pygame.Rect(700, 00, 15, 700)
-
 # Variabele range instellen
 n_lifeforms = 100  # number of life forms
 n_vegetation = 100  # number of vegetation
@@ -328,8 +688,6 @@ vision_max = 80
 
 degrade_tipping = 3000
 
-spawn_range = 50
-
 lifeform_id_counter = 0
 
 background = white
@@ -341,6 +699,7 @@ dna_profiles = []
 plants = []
 
 dna_id_counts = {}
+dna_home_biome = {}
 
 
 death_ages = []
@@ -384,14 +743,29 @@ show_dna_info = False
 
 
 
+class LifeformState(Enum):
+    WANDERING = auto()
+    FORAGING = auto()
+    HUNTING = auto()
+    COURTING = auto()
+    FLEEING = auto()
+    DEFENDING = auto()
+    REGROUPING = auto()
+
+
 class Lifeform:
     def __init__(self, x, y, dna_profile, generation):
         global lifeform_id_counter
 
         self.x = x
         self.y = y
-        self.x_direction = 0
-        self.y_direction = 0
+        self.direction = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+        if self.direction.length_squared() == 0:
+            self.direction = Vector2(1, 0)
+        else:
+            self.direction = self.direction.normalize()
+        self.x_direction = self.direction.x
+        self.y_direction = self.direction.y
 
         self.dna_id = dna_profile['dna_id']
         self.width = dna_profile['width']
@@ -417,7 +791,7 @@ class Lifeform:
         self.angle = 0
         self.angular_velocity = 0.1
 
-        self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
         self.defence_power = dna_profile['defence_power']
         self.attack_power = dna_profile['attack_power']
@@ -440,21 +814,37 @@ class Lifeform:
         self.closest_follower = None
         self.closest_plant = None
 
+        self.current_biome: Optional[BiomeRegion] = None
+        self.environment_effects = {
+            "movement": 1.0,
+            "hunger": 1.0,
+            "regrowth": 1.0,
+            "energy": 1.0,
+            "health": 0.0,
+            "temperature": 20,
+            "precipitation": "helder",
+            "weather_name": "Stabiel",
+        }
+
         self.follow_range = 30
 
         self.is_leader = False
-
-        self.search = False
         self.in_group = False
         self.group_neighbors = []
         self.group_center = None
         self.group_strength = 0
         self.group_state_timer = 0
+        self.state = LifeformState.WANDERING
+        self.wander_direction = self.direction
+        self.behavior_timer = random.randint(60, 150)
+        self.last_state_change = 0
+
+    def get_position(self) -> Vector2:
+        return Vector2(self.x + self.width / 2, self.y + self.height / 2)
 
     def movement(self):
-        # Determine the direction in which the Lifeform object should move
-        self.x += self.x_direction * self.speed
-        self.y += self.y_direction * self.speed
+        previous_position = (self.x, self.y)
+        self.sense_environment()
 
         if self.closest_enemy:
             debug_log(f"{self.id} ziet vijand {self.closest_enemy.id}")
@@ -463,238 +853,396 @@ class Lifeform:
         if self.closest_partner:
             debug_log(f"{self.id} heeft partner {self.closest_partner.id}")
 
-        # Check if the object has reached the edges of the screen
-        if self.x < 0:
-            self.x = 0
-            self.x_direction = -self.x_direction  # Reverse the direction of movement along the x-axis
-        elif self.x + self.width > screen.get_width():
-            self.x = screen.get_width() - self.width
-            self.x_direction = -self.x_direction  # Reverse the direction of movement along the x-axis
+        desired_direction = self.compute_desired_direction()
+        self._apply_motion(desired_direction, previous_position)
+        self.execute_state_actions()
 
-        if self.y < 0:
-            self.y = 0
-            self.y_direction = -self.y_direction  # Reverse the direction of movement along the y-axis
-        elif self.y + self.height > screen.get_height():
-            self.y = screen.get_height() - self.height
-            self.y_direction = -self.y_direction  # Reverse the direction of movement along the y-axis
+    def sense_environment(self) -> None:
+        energy_ratio = self.energy_now / max(1, self.energy)
+        perception_range = self.vision * (0.7 + 0.3 * energy_ratio)
+        precipitation = self.environment_effects.get("precipitation", "helder")
+        weather_penalty = 1.0
+        if precipitation in ("mist", "storm"):
+            weather_penalty = 0.7
+        elif precipitation in ("regen", "sneeuw"):
+            weather_penalty = 0.85
+        perception_range *= weather_penalty
 
-        # Iterate over all lifeform objects in the lifeforms list
-        for lifeform in lifeforms:
-            if self.distance_to(lifeform) < self.vision and lifeform != self:
-                # Update closest enemy if necessary
-                if self.size < lifeform.size and self.dna_id != lifeform.dna_id and (
-                    self.closest_enemy is None or self.distance_to(lifeform) < self.distance_to(self.closest_enemy)):
-                        self.closest_enemy = lifeform
-                        debug_log(f"{self.id} markeert {self.closest_enemy.id} als vijand")
-                        self.search = False
+        self.closest_enemy = None
+        self.closest_prey = None
+        self.closest_partner = None
+        self.closest_follower = None
+        self.closest_plant = None
 
-                # Update closest prey if necessary
-                elif self.size >= lifeform.size and self.dna_id != lifeform.dna_id and (
-                        self.closest_prey is None or self.distance_to(lifeform) < self.distance_to(self.closest_prey)):
-                    self.closest_prey = lifeform
-                    debug_log(f"{self.id} markeert {self.closest_prey.id} als prooi")
-                    self.search = False
+        best_enemy_score = float("inf")
+        best_prey_score = float("inf")
+        best_partner_score = float("inf")
+        best_follower_distance = float("inf")
 
-                # Update closest partner if necessary
-                elif lifeform.maturity < lifeform.age and \
-                    self.maturity < self.age and \
-                    lifeform.dna_id == self.dna_id and \
-                    lifeform.health_now > 50 and \
-                    (self.closest_partner is None or self.distance_to(lifeform) < self.distance_to(self.closest_partner)):
-                    self.closest_partner = lifeform
-                    debug_log(f"{self.id} vindt partner {self.closest_partner.id}")
-                    self.search = False
+        for other in lifeforms:
+            if other is self or other.health_now <= 0:
+                continue
 
-                #update closest follower if necessary
-                elif lifeform.dna_id == self.dna_id and lifeform.is_leader or lifeform.closest_follower:
-                    self.closest_follower = lifeform
+            distance = self.distance_to(other)
+            if distance > perception_range:
+                continue
 
-        for plant in plants:
-            if self.distance_to(plant) < self.vision and self.hunger > 250:
-                self.closest_plant = plant
+            if other.dna_id == self.dna_id:
+                if other.age > other.maturity and other.reproduced_cooldown == 0 and other.health_now > other.health * 0.6:
+                    compatibility = distance
+                    compatibility -= (other.energy_now / max(1, other.energy)) * 15
+                    compatibility += abs(self.health_now - other.health_now) * 0.05
+                    if compatibility < best_partner_score:
+                        self.closest_partner = other
+                        best_partner_score = compatibility
 
-        # Perform check if closest life forms are still within vision, otherwise reset them to none
-        if self.closest_enemy and self.closest_enemy.health_now <= 1 or self.closest_enemy and self.distance_to(self.closest_enemy) > self.vision:
+                if other.is_leader and not self.is_leader:
+                    if distance < best_follower_distance:
+                        self.closest_follower = other
+                        best_follower_distance = distance
+                continue
+
+            size_ratio = (other.size + 1) / max(1, self.size)
+            attack_ratio = (other.attack_power_now + 1) / max(1, self.defence_power_now)
+            threat_score = distance * 0.6 + size_ratio * 40 + attack_ratio * 35
+            if threat_score < best_enemy_score and (other.size > self.size * 0.9 or other.attack_power_now > self.defence_power_now * 0.9):
+                self.closest_enemy = other
+                best_enemy_score = threat_score
+
+            prey_score = distance + (other.size / max(1, self.size)) * 30 - (self.attack_power_now - other.defence_power_now)
+            if prey_score < best_prey_score and other.size < self.size * 0.95 and other.health_now > 0:
+                self.closest_prey = other
+                best_prey_score = prey_score
+
+        if self.closest_enemy and self.distance_to(self.closest_enemy) > perception_range * 1.1:
             debug_log(f"{self.id} verliest vijand uit zicht")
             self.closest_enemy = None
-        if self.closest_prey and self.closest_prey.health_now <= 1 or self.closest_prey and self.distance_to(self.closest_prey) > self.vision:
+        if self.closest_prey and self.distance_to(self.closest_prey) > perception_range:
             debug_log(f"{self.id} verliest prooi uit zicht")
             self.closest_prey = None
-        if self.closest_partner and self.closest_partner.health_now <= 1 or self.closest_partner and self.distance_to(self.closest_partner) > self.vision:
+        if self.closest_partner and self.distance_to(self.closest_partner) > perception_range:
             debug_log(f"{self.id} verliest partner uit zicht")
             self.closest_partner = None
-        if self.closest_follower and self.closest_follower.health_now <= 20 or self.closest_follower and self.distance_to(self.closest_follower) > self.vision:
+        if self.closest_follower and self.distance_to(self.closest_follower) > perception_range:
             debug_log(f"{self.id} verliest volger uit zicht")
             self.closest_follower = None
-        if self.closest_plant and self.closest_plant.resource <= 1 or self.closest_plant and self.distance_to(self.closest_plant) > self.vision:
+
+        plant_range = perception_range * 0.9
+        best_plant_score = float("inf")
+        for plant in plants:
+            if plant.resource <= 5:
+                continue
+            distance = self.distance_to(plant)
+            if distance > plant_range:
+                continue
+            plant_score = distance - (self.hunger / 8)
+            if plant_score < best_plant_score:
+                self.closest_plant = plant
+                best_plant_score = plant_score
+
+        if self.closest_plant and self.distance_to(self.closest_plant) > perception_range * 1.2:
             debug_log(f"{self.id} verliest plant uit zicht")
             self.closest_plant = None
 
+    def compute_desired_direction(self) -> Vector2:
+        self.evaluate_state()
 
+        desired = Vector2()
 
-        # If an enemy object was found, move away from it
-        if self.closest_enemy and not self.in_group:
-            debug_log(f"{self.id} vlucht voor vijand")
-            x_diff = self.closest_enemy.x - self.x
-            y_diff = self.closest_enemy.y - self.y
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = 0
-                self.y_direction = 0
+        if self.state == LifeformState.FLEEING and self.closest_enemy:
+            desired += self._direction_to(self.closest_enemy, invert=True) * self._threat_weight(self.closest_enemy)
+            desired += self._obstacle_avoidance() * 1.1
+        elif self.state == LifeformState.DEFENDING and self.closest_enemy:
+            desired += self._direction_to(self.closest_enemy) * self._attack_weight(self.closest_enemy)
+            desired += self._obstacle_avoidance() * 0.6
+        elif self.state == LifeformState.HUNTING and self.closest_prey:
+            desired += self._direction_to(self.closest_prey) * self._prey_weight(self.closest_prey)
+            desired += self._obstacle_avoidance() * 0.4
+        elif self.state == LifeformState.FORAGING and self.closest_plant:
+            desired += self._direction_to(self.closest_plant) * 0.9
+            desired += self._obstacle_avoidance() * 0.5
+        elif self.state == LifeformState.COURTING and self.closest_partner:
+            desired += self._direction_to(self.closest_partner) * 0.8
+            desired += self._obstacle_avoidance() * 0.4
+        elif self.state == LifeformState.REGROUPING and self.group_center:
+            desired += self._direction_to(self.group_center) * (0.6 + self.group_strength * 0.4)
+            desired += self._obstacle_avoidance() * 0.5
+        else:
+            desired += self._wander_direction()
+            desired += self._obstacle_avoidance() * 0.7
+            if self.in_group and self.group_center:
+                desired += self._direction_to(self.group_center) * 0.3
+
+        if desired.length_squared() == 0:
+            desired = self._wander_direction()
+
+        return desired
+
+    def evaluate_state(self) -> None:
+        previous_state = self.state
+        now = pygame.time.get_ticks()
+
+        hunger_pressure = self.hunger / 600
+        stamina = self.energy_now / max(1, self.energy)
+        mature = self.age > self.maturity
+
+        if self.closest_enemy:
+            threat_weight = self._threat_weight(self.closest_enemy)
+            counter_weight = self._attack_weight(self.closest_enemy)
+            if self.in_group:
+                counter_weight += self.group_strength
+            if threat_weight > counter_weight * (1.0 + max(0.0, 0.4 - self.group_strength)):
+                self.state = LifeformState.FLEEING
             else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
-                #
-                # total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                # target_angle = math.atan2(y_diff, x_diff)
-                #
-                # angle_diff = target_angle - self.angle
-                # angle_diff = (angle_diff + math.pi) % (2 * math.pi) - math.pi
-                #
-                # if abs(angle_diff) > self.angular_velocity:
-                #     angle_diff = math.copysign(self.angular_velocity, angle_diff)
-                #
-                # self.angle += angle_diff
-                # self.x_direction = -math.cos(self.angle)
-                # self.y_direction = -math.sin(self.angle)
+                self.state = LifeformState.DEFENDING
+        elif self.closest_prey and hunger_pressure > 0.65 and stamina > 0.4 and mature:
+            self.state = LifeformState.HUNTING
+        elif self.closest_plant and self.hunger > 260:
+            self.state = LifeformState.FORAGING
+        elif (
+            self.closest_partner
+            and self.reproduced_cooldown == 0
+            and mature
+            and self.hunger < 450
+            and stamina > 0.55
+        ):
+            self.state = LifeformState.COURTING
+        elif self.in_group and self.group_center and self.distance_to(self.group_center) > self.follow_range * 1.2:
+            self.state = LifeformState.REGROUPING
+        else:
+            self.state = LifeformState.WANDERING
 
-        if self.closest_enemy and self.distance_to(self.closest_enemy) < 3:
-            if self.in_group and self.hunger > 250:
-                attack = self.attack_power_now
-                self.health_now += attack
-                self.closest_enemy.health_now -= self.defence_power_now
-                self.energy_now -= 2
-                self.hunger -= 25
+        if self.state != previous_state:
+            self.behavior_timer = random.randint(45, 120)
+            self.last_state_change = now
+
+    def _direction_to(self, target, invert: bool = False) -> Vector2:
+        origin = self.get_position()
+        destination = self._center_of(target)
+        vector = destination - origin
+        if invert:
+            vector = -vector
+        if vector.length_squared() == 0:
+            return Vector2()
+        return vector.normalize()
+
+    def _center_of(self, target) -> Vector2:
+        if isinstance(target, Lifeform):
+            return target.get_position()
+        if isinstance(target, Vector2):
+            return Vector2(target)
+        if hasattr(target, "x") and hasattr(target, "y"):
+            width = getattr(target, "width", 0)
+            height = getattr(target, "height", 0)
+            return Vector2(target.x + width / 2, target.y + height / 2)
+        if isinstance(target, (tuple, list)) and len(target) >= 2:
+            return Vector2(target[0], target[1])
+        return self.get_position()
+
+    def _direction_to_point(self, point: Tuple[float, float]) -> Vector2:
+        return self._direction_to(point)
+
+    def _obstacle_avoidance(self) -> Vector2:
+        avoidance = Vector2()
+        pos = self.get_position()
+        margin = 40 + self.speed * 2
+
+        if pos.x < margin:
+            avoidance.x += (margin - pos.x) / margin
+        if pos.x > world.width - margin:
+            avoidance.x -= (pos.x - (world.width - margin)) / margin
+        if pos.y < margin:
+            avoidance.y += (margin - pos.y) / margin
+        if pos.y > world.height - margin:
+            avoidance.y -= (pos.y - (world.height - margin)) / margin
+
+        detection_rect = pygame.Rect(int(pos.x - margin), int(pos.y - margin), int(margin * 2), int(margin * 2))
+        for barrier in world.barriers:
+            inflated = barrier.rect.inflate(8, 8)
+            if detection_rect.colliderect(inflated):
+                diff = Vector2(pos.x - barrier.rect.centerx, pos.y - barrier.rect.centery)
+                if diff.length_squared() == 0:
+                    diff = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+                avoidance += diff.normalize() * 1.1
+        for water in world.water_bodies:
+            for segment in water.segments:
+                inflated = segment.inflate(6, 6)
+                if detection_rect.colliderect(inflated):
+                    diff = Vector2(pos.x - segment.centerx, pos.y - segment.centery)
+                    if diff.length_squared() == 0:
+                        diff = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+                    avoidance += diff.normalize() * 0.8
+
+        return avoidance
+
+    def _wander_direction(self) -> Vector2:
+        self.behavior_timer -= 1
+        if self.behavior_timer <= 0:
+            self.wander_direction = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+            if self.wander_direction.length_squared() == 0:
+                self.wander_direction = Vector2(1, 0)
+            else:
+                self.wander_direction = self.wander_direction.normalize()
+            self.behavior_timer = random.randint(60, 160)
+
+        jitter = max(0.05, 0.25 * (1.0 - (self.energy_now / max(1, self.energy))))
+        jitter_angle = random.uniform(-12, 12) * jitter
+        return self.wander_direction.rotate(jitter_angle)
+
+    def _compute_agility(self) -> float:
+        stamina = self.energy_now / max(1, self.energy)
+        weight_penalty = max(0.05, 1 - (self.size / 500))
+        precipitation = self.environment_effects.get("precipitation", "helder")
+        weather_penalty = 1.0
+        if precipitation in ("storm", "sneeuw"):
+            weather_penalty = 0.6
+        elif precipitation == "mist":
+            weather_penalty = 0.8
+        agility = 0.12 + 0.18 * stamina * weight_penalty * weather_penalty
+        return max(0.06, min(0.4, agility))
+
+    def _update_motion(self, desired_direction: Vector2) -> None:
+        if desired_direction.length_squared() == 0:
+            desired_direction = self.wander_direction
+        desired_direction = desired_direction.normalize()
+        agility = self._compute_agility()
+        self.direction = self.direction.lerp(desired_direction, agility)
+        if self.direction.length_squared() == 0:
+            self.direction = desired_direction
+        self.direction = self.direction.normalize()
+        self.x_direction = self.direction.x
+        self.y_direction = self.direction.y
+
+    def _apply_motion(self, desired_direction: Vector2, previous_position: Tuple[float, float]) -> None:
+        self._update_motion(desired_direction)
+
+        attempted_x = self.x + self.x_direction * self.speed
+        attempted_y = self.y + self.y_direction * self.speed
+
+        candidate_rect = self.rect.copy()
+        candidate_rect.update(int(attempted_x), int(attempted_y), self.width, self.height)
+        resolved_x, resolved_y, hit_boundary_x, hit_boundary_y, collided = world.resolve_entity_movement(
+            candidate_rect,
+            previous_position,
+            (attempted_x, attempted_y),
+        )
+
+        if collided:
+            self.direction = -self.direction
+        else:
+            if hit_boundary_x:
+                self.direction.x *= -0.8
+            if hit_boundary_y:
+                self.direction.y *= -0.8
+
+        if self.direction.length_squared() == 0:
+            self.direction = self._wander_direction()
+            if self.direction.length_squared() == 0:
+                self.direction = Vector2(1, 0)
+        self.direction = self.direction.normalize()
+        self.x_direction = self.direction.x
+        self.y_direction = self.direction.y
+
+        self.x, self.y = resolved_x, resolved_y
+        self.rect.update(int(self.x), int(self.y), self.width, self.height)
+
+    def _threat_weight(self, enemy) -> float:
+        distance = max(1.0, self.distance_to(enemy))
+        strength = enemy.attack_power_now + enemy.size * 0.3
+        resilience = self.defence_power_now + self.size * 0.3 + self.group_strength * 55
+        morale = (self.health_now / max(1, self.health)) + (self.energy_now / max(1, self.energy))
+        return (strength / max(1.0, resilience)) * (2.0 - min(1.5, morale)) + (1.0 / distance)
+
+    def _attack_weight(self, enemy) -> float:
+        base = self.attack_power_now + self.size * 0.2
+        defence = enemy.defence_power_now + enemy.size * 0.1
+        stamina = self.energy_now / max(1, self.energy)
+        morale = self.health_now / max(1, self.health)
+        return max(0.6, (base / max(1.0, defence))) * (0.6 + stamina + morale)
+
+    def _prey_weight(self, prey) -> float:
+        hunger_drive = min(1.8, 0.6 + self.hunger / 500)
+        prey_resistance = max(0.6, (prey.defence_power_now + prey.size * 0.1) / max(1.0, self.attack_power_now))
+        return hunger_drive / prey_resistance
+
+    def execute_state_actions(self) -> None:
+        if self.closest_enemy and self.state == LifeformState.DEFENDING:
+            self._attempt_attack(self.closest_enemy, defensive=True)
+        if self.closest_prey and self.state == LifeformState.HUNTING:
+            self._attempt_attack(self.closest_prey, feed=True)
+        if self.closest_plant and self.state == LifeformState.FORAGING:
+            self._attempt_feed_from_plant(self.closest_plant)
+        if self.closest_partner and self.state == LifeformState.COURTING:
+            self._attempt_reproduce_with(self.closest_partner)
+
+    def _attempt_attack(self, target, defensive: bool = False, feed: bool = False) -> None:
+        if target.health_now <= 0:
+            return
+
+        attack_range = max(4.0, (self.width + self.height) * 0.4)
+        if self.distance_to(target) > attack_range:
+            return
+
+        if defensive:
+            if self.in_group and self.group_strength >= 0.6:
+                damage = self.attack_power_now * (1.0 + self.group_strength * 0.4)
+                target.health_now -= damage
+                self.energy_now = max(0, self.energy_now - 2)
+                self.hunger = max(0, self.hunger - 25)
+                self.health_now = min(self.health, self.health_now + damage * 0.2)
                 action_log(f"{self.id} verdedigt zich succesvol")
             else:
-                attack = self.closest_enemy.attack_power_now - (0.2 * self.defence_power_now)
-                self.energy_now -= 10
-                self.health_now -= attack
-                self.wounded += 25
+                incoming = max(1, target.attack_power_now - self.defence_power_now * 0.45)
+                self.energy_now = max(0, self.energy_now - 8)
+                self.health_now -= incoming
+                self.wounded = min(100, self.wounded + 15)
                 action_log(f"{self.id} raakt gewond")
-
-        if self.closest_enemy and self.in_group:
-            debug_log(f"{self.id} valt vijand aan met groep")
-            x_diff = self.closest_enemy.x - self.x
-            y_diff = self.closest_enemy.y - self.y
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = 0
-                self.y_direction = 0
-            else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
+        elif feed:
+            if target.in_group and target.group_strength > 0.3:
+                retaliation = max(1, target.defence_power_now * 0.4)
+                self.health_now -= retaliation
+                self.energy_now = max(0, self.energy_now - 6)
+            damage = max(1, self.attack_power_now * (0.7 + self.hunger / 800))
+            target.health_now -= damage
+            self.health_now = min(self.health, self.health_now + damage * 0.3)
+            self.energy_now = min(self.energy, self.energy_now + 25)
+            self.hunger = max(0, self.hunger - 80)
+            action_log(f"{self.id} eet {target.id}")
         else:
-            if random.randint(0, 100) < 5:
-                self.x_direction = random.uniform(-1, 1)
-                self.y_direction = random.uniform(-1, 1)
+            damage = max(1, self.attack_power_now * 0.8)
+            target.health_now -= damage
+            self.energy_now = max(0, self.energy_now - 4)
 
+    def _attempt_feed_from_plant(self, plant) -> None:
+        if plant.resource <= 0:
+            return
+        feed_range = max(6.0, (plant.width + plant.height) * 0.5)
+        if self.distance_to(plant) > feed_range:
+            return
+        plant.decrement_resource(10 + self.speed * 1.5)
+        plant.apply_effect(self)
+        self.hunger = max(0, self.hunger - 70)
+        action_log(f"{self.id} eet van een plant")
 
-        # If a prey object was found, move towards it
-        if self.closest_prey and not self.closest_enemy and not self.closest_partner and self.hunger > 500 and self.age > self.maturity:
-            debug_log(f"{self.id} jaagt op {self.closest_prey.id}")
-            x_diff = self.closest_prey.x - self.x
-            y_diff = self.closest_prey.y - self.y
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = 0
-                self.y_direction = 0
-            else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
-        if self.closest_prey and not self.closest_enemy and self.distance_to(self.closest_prey) < 3 and self.hunger > 500:
-            if not self.closest_prey.in_group:
-                action_log(f"{self.id} eet {self.closest_prey.id}")
-                self.health_now += self.attack_power_now
-                self.closest_prey.health_now -= self.attack_power_now
-                self.hunger -= 50
-                self.energy_now += 25
-            else:
-                self.closest_prey.health_now -= self.defence_power_now
-                self.energy_now -= 1000 / self.closest_prey.attack_power_now
-                self.health_now -= 1000 / self.defence_power_now
+    def _attempt_reproduce_with(self, partner) -> None:
+        if len(lifeforms) >= max_lifeforms:
+            return
+        reproduction_range = max(6.0, (self.width + self.height + partner.width + partner.height) * 0.25)
+        if self.distance_to(partner) > reproduction_range:
+            return
 
-        # If a partner object was found, move towards it and reproduce if close enough
-        if self.reproduced_cooldown == 0 and not self.closest_enemy and self.closest_partner and self.hunger < 500 and self.age > self.maturity:
-            debug_log(f"{self.id} zoekt partner {self.closest_partner.id}")
-            x_diff = self.closest_partner.x - self.x
-            y_diff = self.closest_partner.y - self.y
-            if len(lifeforms) < max_lifeforms and self.distance_to(self.closest_partner) < 3:
-                self.reproduce(self.closest_partner)
-                self.reproduced += 1
-                self.reproduced_cooldown = reproducing_cooldown_value
-                self.energy_now -= 50
-                self.health_now -= 50
-                self.hunger += 50
-                action_log(f"{self.id} plant zich voort")
-
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = 0
-                self.y_direction = 0
-            else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
-
-        # If a plant object was found, move towards it and eat if close enough
-        if self.closest_plant and self.hunger > 250 and not self.closest_enemy and not self.closest_partner and self.closest_plant.resource > 10:
-            x_diff = self.closest_plant.x - self.x
-            y_diff = self.closest_plant.y - self.y
-            if self.distance_to(self.closest_plant) < 3:
-                action_log(f"{self.id} eet van een plant")
-                self.closest_plant.apply_effect(self)
-                self.closest_plant.decrement_resource(12)
-                self.hunger -= 60
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = 0
-                self.y_direction = 0
-            else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
-
-
-        if self.in_group and not self.closest_enemy and not self.closest_prey and not self.closest_partner and not self.closest_plant and self.group_center:
-            x_diff = self.group_center[0] - self.x
-            y_diff = self.group_center[1] - self.y
-            total_distance = math.hypot(x_diff, y_diff)
-            if total_distance > self.follow_range:
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
-                self.search = False
-
-        # If there is no target nearby, start searching
-        if not self.search and not self.closest_enemy and not self.closest_prey and not self.closest_partner and not self.closest_plant:
-            debug_log(f"{self.id} zoekt naar doelen")
-            self.x_direction = random.uniform(-1, 1)
-            self.y_direction = random.uniform(-1, 1)
-            self.search = True
-
-        if self.search:
-            if self.closest_follower and not self.is_leader and self.closest_follower.closest_follower != self and self.hunger < 500:
-                x_diff = self.closest_follower.x - self.x
-                y_diff = self.closest_follower.y - self.y
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                if total_distance > 0:
-                    if total_distance > self.follow_range:  # Check if the distance is outside of the follow range
-                        self.x_direction = x_diff / total_distance
-                        self.y_direction = y_diff / total_distance
-                    else:  # If the distance is within the follow range, adjust the direction to move away from the leader
-                        self.x_direction = -x_diff / total_distance
-                        self.y_direction = -y_diff / total_distance
-                else:
-                    self.x_direction = random.uniform(-1, 1)
-                    self.y_direction = random.uniform(-1, 1)
-
-
-
-            elif random.randint(0, 100) < 25:
-                self.x_direction = random.uniform(-1, 1)
-                self.y_direction = random.uniform(-1, 1)
-                # self.x_direction = (self.x_direction + random.uniform(-0.1, 0.1))
-                # self.y_direction = (self.y_direction + random.uniform(-0.1, 0.1))
-
-            debug_log(f"{self.id} zoekstatus: {self.search}")
+        self.reproduce(partner)
+        self.reproduced += 1
+        partner.reproduced += 1
+        self.reproduced_cooldown = reproducing_cooldown_value
+        partner.reproduced_cooldown = reproducing_cooldown_value
+        self.energy_now = max(0, self.energy_now - 50)
+        partner.energy_now = max(0, partner.energy_now - 45)
+        self.health_now = max(1, self.health_now - 45)
+        partner.health_now = max(1, partner.health_now - 40)
+        self.hunger += 45
+        partner.hunger += 40
+        action_log(f"{self.id} plant zich voort")
 
     def add_tail(self):
         # add a pheromone trail
@@ -703,10 +1251,8 @@ class Lifeform:
 
 
     def distance_to(self, other):
-        # Calculate the distance between two Lifeform objects
-        dx = self.x - other.x
-        dy = self.y - other.y
-        return math.sqrt(dx ** 2 + dy ** 2)
+        other_center = self._center_of(other)
+        return self.get_position().distance_to(other_center)
 
 
     def set_size(self):
@@ -784,6 +1330,11 @@ class Lifeform:
         self.speed += (self.health_now / 200)
         self.speed += (self.energy / 100)
 
+        biome, effects = world.get_environment_context(self.x + self.width / 2, self.y + self.height / 2)
+        self.current_biome = biome
+        self.environment_effects = effects
+        self.speed *= effects["movement"]
+
 
         if self.age < self.maturity:
             average_maturity = total_maturity / len(lifeforms)
@@ -795,8 +1346,8 @@ class Lifeform:
         if self.speed < 1:
             self.speed = 1
 
-        if self.speed > 10:
-            self.speed = 10
+        if self.speed > 12:
+            self.speed = 12
 
     def draw(self, surface):
         if self.health_now > 0:
@@ -1029,10 +1580,16 @@ class Lifeform:
             #     print("New dna_id: " + str(child_lifeform.dna_id))
 
     def progression(self):
-        self.hunger += environment_modifiers.get("hunger_rate", 1.0)
+        biome, effects = world.get_environment_context(self.x + self.width / 2, self.y + self.height / 2)
+        self.current_biome = biome
+        self.environment_effects = effects
+
+        hunger_rate = environment_modifiers.get("hunger_rate", 1.0) * effects["hunger"]
+        self.hunger += hunger_rate
         self.age += 1
-        self.energy_now += 0.5
+        self.energy_now += 0.5 * effects["energy"]
         self.wounded -= 1
+        self.health_now += effects["health"]
 
         if self.age > self.longevity:
             self.health_now -= 1
@@ -1049,6 +1606,9 @@ class Lifeform:
             self.energy_now = 1
         if self.energy_now > self.energy:
             self.energy_now = self.energy
+
+        if self.health_now > self.health:
+            self.health_now = self.health
 
 
 
@@ -1113,7 +1673,8 @@ class Vegetation:
             self.resource = 0
 
     def regrow(self):
-        growth = self.regrowth_rate * environment_modifiers.get("plant_regrowth", 1.0)
+        biome_modifier = world.get_regrowth_modifier(self.x + self.width / 2, self.y + self.height / 2)
+        growth = self.regrowth_rate * environment_modifiers.get("plant_regrowth", 1.0) * biome_modifier
         self.resource += growth
         max_resource = 200 if self.variant != "normal" else 120
         if self.resource > max_resource:
@@ -1175,6 +1736,7 @@ def reset_list_values():
     pheromones = []
     plants = []
     death_ages = []
+    world.regenerate()
     notification_manager.clear()
     event_manager.reset()
     event_manager.schedule_default_events()
@@ -1185,6 +1747,7 @@ def reset_list_values():
 
 
 def reset_dna_profiles():
+    dna_home_biome.clear()
     for i in range(n_dna_profiles):
         dna_profile = {
             'dna_id': i,
@@ -1200,6 +1763,10 @@ def reset_dna_profiles():
             'longevity': random.randint(1000, 5000)
         }
         dna_profiles.append(dna_profile)
+        if world.biomes:
+            dna_home_biome[dna_profile['dna_id']] = random.choice(world.biomes)
+        else:
+            dna_home_biome[dna_profile['dna_id']] = None
 
 # # Levensvorm-objecten maken met behulp van een for-lus
 # for i in range(n_lifeforms):
@@ -1232,43 +1799,39 @@ def init_lifeforms():
         dna_profile = random.choice(dna_profiles)
         generation = 1
 
-        # Find the center point of all life forms with the same DNA profile
-        center_x, center_y = 0, 0
-        same_dna_count = 0
-        for lifeform in lifeforms:
-            if lifeform.dna_id == dna_profile['dna_id']:
-                center_x += lifeform.x
-                center_y += lifeform.y
-                same_dna_count += 1
-        if same_dna_count > 0:
-            center_x /= same_dna_count
-            center_y /= same_dna_count
-        else:
-            center_x = random.randint(0, screen.get_width())
-            center_y = random.randint(0, screen.get_height())
-
-        # Generate random x and y coordinates within a certain distance of the center point
-        x = random.uniform(center_x - spawn_range, center_x + spawn_range)
-        y = random.uniform(center_y - spawn_range, center_y + spawn_range)
+        preferred_biome = dna_home_biome.get(dna_profile['dna_id'])
+        x, y, biome = world.random_position(dna_profile['width'], dna_profile['height'], preferred_biome=preferred_biome)
 
         lifeform = Lifeform(x, y, dna_profile, generation)
+        lifeform.current_biome = biome
         lifeforms.append(lifeform)
 
 def init_vegetation():
     for i in range(n_vegetation):
-        x = (random.randint(0, screen.get_width()))
-        y = (random.randint(0, screen.get_height()))
-
         width = 20
         height = 20
+        biome = random.choice(world.biomes) if world.biomes else None
+        spawn_x, spawn_y, _ = world.random_position(width, height, preferred_biome=biome)
+
+        weights = [0.65, 0.15, 0.12, 0.08]
+        if biome:
+            if "Woestijn" in biome.name:
+                weights = [0.5, 0.05, 0.15, 0.3]
+            elif "Bos" in biome.name:
+                weights = [0.45, 0.25, 0.15, 0.15]
+            elif "Rivier" in biome.name:
+                weights = [0.35, 0.25, 0.25, 0.15]
+            elif "Toendra" in biome.name:
+                weights = [0.55, 0.25, 0.1, 0.1]
+
         variant = random.choices([
             "normal",
             "radiant",
             "spore",
             "fortified"
-        ], weights=[0.65, 0.15, 0.12, 0.08])[0]
+        ], weights=weights)[0]
 
-        plant = Vegetation(x, y, width, height, variant)
+        plant = Vegetation(int(spawn_x), int(spawn_y), width, height, variant)
         plants.append(plant)
 
 def count_dna_ids(lifeforms):
@@ -1431,8 +1994,6 @@ while running:
 ##############################################Game running#############################################################
 
     if not paused:
-        screen.fill(background)
-
         # Set fonts
         font1_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus8-Regular.ttf"
         expanded_path1 = os.path.expanduser(font1_path)
@@ -1445,6 +2006,10 @@ while running:
 
         # Limit the loop to the specified frame rate
         clock.tick(fps)
+
+        world.update(pygame.time.get_ticks())
+        world.draw(screen)
+        world.draw_weather_overview(screen, font2)
 
         current_time = datetime.datetime.now()
         time_passed = current_time - start_time
@@ -1516,12 +2081,6 @@ while running:
                 screen.blit(text, (lifeform.x, lifeform.y - 20))
             if lifeform.reproduced_cooldown > 0:
                 lifeform.reproduced_cooldown -= 1
-            if barrier_rect.colliderect(lifeform.rect):
-                # If the lifeform's position intersects with the barrier rectangle, prevent it from moving any further in that direction
-                lifeform.x_direction = -lifeform.x_direction
-                lifeform.y_direction = -lifeform.y_direction
-
-
         stats = collect_population_stats(formatted_time_passed)
         event_manager.schedule_default_events()
         event_manager.update(pygame.time.get_ticks(), stats, player_controller)
