@@ -3,6 +3,7 @@ import math
 import os
 import random
 import itertools
+from dataclasses import dataclass, field
 import matplotlib.pyplot as plt
 import pygame
 
@@ -21,6 +22,278 @@ red = (255, 150, 150)
 blue = (150, 255, 150)
 sea = (194, 252, 250)
 
+
+@dataclass
+class Notification:
+    message: str
+    color: tuple
+    frames_left: int
+
+
+class NotificationManager:
+    def __init__(self):
+        self.notifications = []
+
+    def add(self, message, color=black, duration=None):
+        if duration is None:
+            duration = fps * 3 if 'fps' in globals() else 180
+        self.notifications.append(Notification(message, color, duration))
+
+    def clear(self):
+        self.notifications.clear()
+
+    def update(self):
+        for notification in list(self.notifications):
+            notification.frames_left -= 1
+            if notification.frames_left <= 0:
+                self.notifications.remove(notification)
+
+    def draw(self, surface, font):
+        y_offset = 20
+        for notification in self.notifications[-6:]:
+            text_surface = font.render(notification.message, True, notification.color)
+            surface.blit(text_surface, (surface.get_width() - text_surface.get_width() - 40, y_offset))
+            y_offset += 20
+
+
+@dataclass
+class Event:
+    name: str
+    description: str
+    duration_ms: int
+    objective: dict
+    reward: dict
+    environment_effects: dict = field(default_factory=dict)
+    start_time: int = None
+    completed: bool = False
+    failed: bool = False
+    applied_effects: dict = field(default_factory=dict)
+
+    def time_left(self, current_time):
+        if self.start_time is None:
+            return self.duration_ms
+        remaining = self.duration_ms - (current_time - self.start_time)
+        return max(0, remaining)
+
+
+class EventManager:
+    def __init__(self):
+        self.events = []
+        self.active_event = None
+
+    def schedule_default_events(self):
+        if self.events:
+            return
+        famine = Event(
+            name="Drought Alert",
+            description="Houd de gemiddelde honger onder 350 terwijl de vegetatie traag groeit.",
+            duration_ms=90_000,
+            objective={"metric": "average_hunger", "type": "below", "value": 350},
+            reward={"dna_points": 45},
+            environment_effects={"plant_regrowth": 0.6}
+        )
+        defence = Event(
+            name="Groeispurt",
+            description="Vergroot de populatie tot 120 levensvormen.",
+            duration_ms=120_000,
+            objective={"metric": "lifeform_count", "type": "above", "value": 120},
+            reward={"dna_points": 60},
+            environment_effects={"hunger_rate": 1.2}
+        )
+        harmony = Event(
+            name="Veiligheidsprotocol",
+            description="Bereik een gemiddelde gezondheid van minstens 140.",
+            duration_ms=75_000,
+            objective={"metric": "average_health", "type": "above", "value": 140},
+            reward={"dna_points": 35}
+        )
+        self.events = [famine, defence, harmony]
+
+    def start_next_event(self, current_time):
+        if self.active_event or not self.events:
+            return
+        self.active_event = self.events.pop(0)
+        self.active_event.start_time = current_time
+        self._apply_environment_effects(self.active_event)
+        notification_manager.add(f"Nieuwe missie: {self.active_event.name}", blue)
+        notification_manager.add(self.active_event.description, blue)
+
+    def _apply_environment_effects(self, event):
+        for key, value in event.environment_effects.items():
+            environment_modifiers[key] = environment_modifiers.get(key, 1.0) * value
+        event.applied_effects = event.environment_effects.copy()
+
+    def _revert_environment_effects(self, event):
+        for key, value in event.applied_effects.items():
+            environment_modifiers[key] = environment_modifiers.get(key, 1.0) / value if value else environment_modifiers.get(key, 1.0)
+        event.applied_effects.clear()
+
+    def update(self, current_time, stats, player_controller):
+        if not self.active_event:
+            self.start_next_event(current_time)
+            return
+
+        event = self.active_event
+        if event.completed or event.failed:
+            self._revert_environment_effects(event)
+            self.active_event = None
+            self.start_next_event(current_time)
+            return
+
+        metric_value = stats.get(event.objective.get("metric"))
+        target = event.objective.get("value")
+        comparison_type = event.objective.get("type")
+
+        if metric_value is not None:
+            if comparison_type == "below" and metric_value <= target:
+                self.complete_event(player_controller)
+                return
+            if comparison_type == "above" and metric_value >= target:
+                self.complete_event(player_controller)
+                return
+
+        if current_time - event.start_time >= event.duration_ms:
+            self.fail_event()
+
+    def complete_event(self, player_controller):
+        if not self.active_event or self.active_event.completed:
+            return
+        self.active_event.completed = True
+        notification_manager.add(f"Missie voltooid: {self.active_event.name}", green)
+        player_controller.apply_reward(self.active_event.reward)
+
+    def fail_event(self):
+        if not self.active_event or self.active_event.failed:
+            return
+        self.active_event.failed = True
+        notification_manager.add(f"Missie mislukt: {self.active_event.name}", red)
+
+    def draw(self, surface, font):
+        if not self.active_event:
+            return
+        event = self.active_event
+        current_time = pygame.time.get_ticks()
+        remaining_seconds = int(event.time_left(current_time) / 1000)
+        lines = [event.name, event.description, f"Doel: {event.objective['metric']} {event.objective['type']} {event.objective['value']}", f"Tijd resterend: {remaining_seconds}s"]
+        x = surface.get_width() - 420
+        y = surface.get_height() - 140
+        for line in lines:
+            text_surface = font.render(line, True, black)
+            surface.blit(text_surface, (x, y))
+            y += 20
+
+    def reset(self):
+        if self.active_event:
+            self._revert_environment_effects(self.active_event)
+        self.active_event = None
+        self.events = []
+
+
+class PlayerController:
+    def __init__(self):
+        self.resources = {"dna_points": 120}
+        self.management_mode = False
+        self.selected_profile = 0
+        self.attributes = ["health", "vision", "attack_power", "defence_power", "energy", "longevity"]
+        self.selected_attribute_index = 0
+
+    def reset(self):
+        self.resources = {"dna_points": 120}
+        self.management_mode = False
+        self.selected_profile = 0
+        self.selected_attribute_index = 0
+
+    def toggle_management(self):
+        self.management_mode = not self.management_mode
+        state = "geopend" if self.management_mode else "gesloten"
+        notification_manager.add(f"Genlab {state}.")
+
+    def cycle_profile(self, dna_profiles, direction):
+        if not dna_profiles:
+            return
+        self.selected_profile = (self.selected_profile + direction) % len(dna_profiles)
+
+    def cycle_attribute(self, direction):
+        self.selected_attribute_index = (self.selected_attribute_index + direction) % len(self.attributes)
+
+    def adjust_attribute(self, dna_profiles, direction):
+        if not dna_profiles:
+            return
+        profile = dna_profiles[self.selected_profile]
+        attribute = self.attributes[self.selected_attribute_index]
+        cost = 6
+        modifier = 3 * direction
+        if direction > 0:
+            if self.resources["dna_points"] < cost:
+                notification_manager.add("Onvoldoende DNA-punten.", red)
+                return
+            profile[attribute] += modifier
+            self.resources["dna_points"] -= cost
+            notification_manager.add(f"DNA {profile['dna_id']}: +{modifier} {attribute}.", green)
+        else:
+            new_value = max(1, profile[attribute] + modifier)
+            profile[attribute] = new_value
+            self.resources["dna_points"] += cost // 2
+            notification_manager.add(f"DNA {profile['dna_id']}: -{abs(modifier)} {attribute} voor punten.", blue)
+
+        for lifeform in lifeforms:
+            if lifeform.dna_id == profile['dna_id']:
+                setattr(lifeform, attribute, profile[attribute])
+                if attribute == "health":
+                    lifeform.health_now = min(lifeform.health, lifeform.health_now)
+                if attribute == "energy":
+                    lifeform.energy_now = min(lifeform.energy, lifeform.energy_now)
+
+    def apply_reward(self, reward):
+        points = reward.get("dna_points", 0)
+        if points:
+            self.resources["dna_points"] += points
+            notification_manager.add(f"Beloning: {points} DNA-punten ontvangen!", green)
+
+    def on_birth(self):
+        self.resources["dna_points"] += 1
+
+    def draw_overlay(self, surface, font):
+        panel_x = surface.get_width() - 220
+        panel_y = 20
+        pygame.draw.rect(surface, (240, 240, 240), (panel_x - 10, panel_y - 10, 200, 120), border_radius=6)
+        pygame.draw.rect(surface, black, (panel_x - 10, panel_y - 10, 200, 120), 2, border_radius=6)
+        dna_text = font.render(f"DNA-punten: {self.resources['dna_points']}", True, black)
+        surface.blit(dna_text, (panel_x, panel_y))
+        if self.management_mode and dna_profiles:
+            profile = dna_profiles[self.selected_profile]
+            attribute = self.attributes[self.selected_attribute_index]
+            lines = [
+                f"Genlab actief",
+                f"Profiel: {profile['dna_id']}",
+                f"Attribuut: {attribute}",
+                f"Waarde: {profile[attribute]}"
+            ]
+            y_offset = panel_y + 20
+            for line in lines:
+                text_surface = font.render(line, True, black)
+                surface.blit(text_surface, (panel_x, y_offset))
+                y_offset += 20
+
+
+environment_modifiers = {"plant_regrowth": 1.0, "hunger_rate": 1.0}
+
+notification_manager = NotificationManager()
+event_manager = EventManager()
+player_controller = PlayerController()
+
+
+def debug_log(message):
+    duration = fps if 'fps' in globals() else 180
+    if 'show_debug' in globals() and show_debug:
+        notification_manager.add(message, blue, duration=duration)
+
+
+def action_log(message):
+    duration = fps * 2 if 'fps' in globals() else 360
+    if 'show_action' in globals() and show_action:
+        notification_manager.add(message, sea, duration=duration)
+
 # Set the size and position of the barrier rectangle
 barrier_rect = pygame.Rect(700, 00, 15, 700)
 
@@ -34,6 +307,12 @@ reproducing_cooldown_value = 80
 
 dna_change_threshold = 0.1  # Change the DNA ID if the DNA has changed more than 50% from the original initialization
 color_change_threshold = 0.1
+
+group_min_neighbors = 3
+group_max_radius = 120
+group_cohesion_threshold = 0.35
+group_persistence_frames = 45
+group_maturity_ratio = 0.6
 
 max_width = 20
 min_width = 8
@@ -167,6 +446,10 @@ class Lifeform:
 
         self.search = False
         self.in_group = False
+        self.group_neighbors = []
+        self.group_center = None
+        self.group_strength = 0
+        self.group_state_timer = 0
 
     def movement(self):
         # Determine the direction in which the Lifeform object should move
@@ -174,11 +457,11 @@ class Lifeform:
         self.y += self.y_direction * self.speed
 
         if self.closest_enemy:
-            print("closest_enemy " + str(self.closest_enemy.id) + " own number: " + str(self.id))
+            debug_log(f"{self.id} ziet vijand {self.closest_enemy.id}")
         if self.closest_prey:
-            print("closest_prey " + str(self.closest_prey.id) + " own number: " + str(self.id))
+            debug_log(f"{self.id} heeft prooi {self.closest_prey.id}")
         if self.closest_partner:
-            print("closest_partner " + str(self.closest_partner.id) + " own number: " + str(self.id))
+            debug_log(f"{self.id} heeft partner {self.closest_partner.id}")
 
         # Check if the object has reached the edges of the screen
         if self.x < 0:
@@ -202,15 +485,14 @@ class Lifeform:
                 if self.size < lifeform.size and self.dna_id != lifeform.dna_id and (
                     self.closest_enemy is None or self.distance_to(lifeform) < self.distance_to(self.closest_enemy)):
                         self.closest_enemy = lifeform
-                        print("enemy is set " + str(self.id))
-                        print("closest_enemy after set " + str(self.closest_enemy.id) + " own number: " + str(self.id))
+                        debug_log(f"{self.id} markeert {self.closest_enemy.id} als vijand")
                         self.search = False
 
                 # Update closest prey if necessary
                 elif self.size >= lifeform.size and self.dna_id != lifeform.dna_id and (
                         self.closest_prey is None or self.distance_to(lifeform) < self.distance_to(self.closest_prey)):
                     self.closest_prey = lifeform
-                    print("prey is set " + str(self.id))
+                    debug_log(f"{self.id} markeert {self.closest_prey.id} als prooi")
                     self.search = False
 
                 # Update closest partner if necessary
@@ -220,7 +502,7 @@ class Lifeform:
                     lifeform.health_now > 50 and \
                     (self.closest_partner is None or self.distance_to(lifeform) < self.distance_to(self.closest_partner)):
                     self.closest_partner = lifeform
-                    print("partner is set " + str(self.id) + "own id: " + str(self.id))
+                    debug_log(f"{self.id} vindt partner {self.closest_partner.id}")
                     self.search = False
 
                 #update closest follower if necessary
@@ -233,26 +515,26 @@ class Lifeform:
 
         # Perform check if closest life forms are still within vision, otherwise reset them to none
         if self.closest_enemy and self.closest_enemy.health_now <= 1 or self.closest_enemy and self.distance_to(self.closest_enemy) > self.vision:
-            print("reset enemy" + str(self.id))
+            debug_log(f"{self.id} verliest vijand uit zicht")
             self.closest_enemy = None
         if self.closest_prey and self.closest_prey.health_now <= 1 or self.closest_prey and self.distance_to(self.closest_prey) > self.vision:
-            print("reset prey" + str(self.id))
+            debug_log(f"{self.id} verliest prooi uit zicht")
             self.closest_prey = None
         if self.closest_partner and self.closest_partner.health_now <= 1 or self.closest_partner and self.distance_to(self.closest_partner) > self.vision:
-            print("reset partner" + str(self.id))
+            debug_log(f"{self.id} verliest partner uit zicht")
             self.closest_partner = None
         if self.closest_follower and self.closest_follower.health_now <= 20 or self.closest_follower and self.distance_to(self.closest_follower) > self.vision:
-            print("reset follower" + str(self.id))
+            debug_log(f"{self.id} verliest volger uit zicht")
             self.closest_follower = None
         if self.closest_plant and self.closest_plant.resource <= 1 or self.closest_plant and self.distance_to(self.closest_plant) > self.vision:
-            print("reset plant" + str(self.id))
+            debug_log(f"{self.id} verliest plant uit zicht")
             self.closest_plant = None
 
 
 
         # If an enemy object was found, move away from it
         if self.closest_enemy and not self.in_group:
-            print("going from enemy " + str(self.id))
+            debug_log(f"{self.id} vlucht voor vijand")
             x_diff = self.closest_enemy.x - self.x
             y_diff = self.closest_enemy.y - self.y
             if x_diff == 0 and y_diff == 0:
@@ -283,16 +565,16 @@ class Lifeform:
                 self.closest_enemy.health_now -= self.defence_power_now
                 self.energy_now -= 2
                 self.hunger -= 25
-                print("defended!!.. " + str(self.id))
+                action_log(f"{self.id} verdedigt zich succesvol")
             else:
                 attack = self.closest_enemy.attack_power_now - (0.2 * self.defence_power_now)
                 self.energy_now -= 10
                 self.health_now -= attack
                 self.wounded += 25
-                print("ouch.. " + str(self.id))
+                action_log(f"{self.id} raakt gewond")
 
         if self.closest_enemy and self.in_group:
-            print("going to enemy because in group " + str(self.id))
+            debug_log(f"{self.id} valt vijand aan met groep")
             x_diff = self.closest_enemy.x - self.x
             y_diff = self.closest_enemy.y - self.y
             if x_diff == 0 and y_diff == 0:
@@ -310,7 +592,7 @@ class Lifeform:
 
         # If a prey object was found, move towards it
         if self.closest_prey and not self.closest_enemy and not self.closest_partner and self.hunger > 500 and self.age > self.maturity:
-            print("going to prey " + str(self.id) + " " + str(self.closest_prey.id))
+            debug_log(f"{self.id} jaagt op {self.closest_prey.id}")
             x_diff = self.closest_prey.x - self.x
             y_diff = self.closest_prey.y - self.y
             if x_diff == 0 and y_diff == 0:
@@ -322,7 +604,7 @@ class Lifeform:
                 self.y_direction = y_diff / total_distance
         if self.closest_prey and not self.closest_enemy and self.distance_to(self.closest_prey) < 3 and self.hunger > 500:
             if not self.closest_prey.in_group:
-                print("Eating prey: " + str(self.closest_prey.id) + "own id: " + str(self.id))
+                action_log(f"{self.id} eet {self.closest_prey.id}")
                 self.health_now += self.attack_power_now
                 self.closest_prey.health_now -= self.attack_power_now
                 self.hunger -= 50
@@ -334,7 +616,7 @@ class Lifeform:
 
         # If a partner object was found, move towards it and reproduce if close enough
         if self.reproduced_cooldown == 0 and not self.closest_enemy and self.closest_partner and self.hunger < 500 and self.age > self.maturity:
-            print("going to partner " + str(self.id) + " " + str(self.closest_partner.id))
+            debug_log(f"{self.id} zoekt partner {self.closest_partner.id}")
             x_diff = self.closest_partner.x - self.x
             y_diff = self.closest_partner.y - self.y
             if len(lifeforms) < max_lifeforms and self.distance_to(self.closest_partner) < 3:
@@ -344,7 +626,7 @@ class Lifeform:
                 self.energy_now -= 50
                 self.health_now -= 50
                 self.hunger += 50
-                print("reproduced " + str(self.id))
+                action_log(f"{self.id} plant zich voort")
 
             if x_diff == 0 and y_diff == 0:
                 self.x_direction = 0
@@ -359,11 +641,10 @@ class Lifeform:
             x_diff = self.closest_plant.x - self.x
             y_diff = self.closest_plant.y - self.y
             if self.distance_to(self.closest_plant) < 3:
-                print("eating plant")
-                self.health_now += 50
-                self.closest_plant.decrement_resource(10)
-                self.hunger -= 50
-                self.energy_now += 25
+                action_log(f"{self.id} eet van een plant")
+                self.closest_plant.apply_effect(self)
+                self.closest_plant.decrement_resource(12)
+                self.hunger -= 60
             if x_diff == 0 and y_diff == 0:
                 self.x_direction = 0
                 self.y_direction = 0
@@ -373,12 +654,21 @@ class Lifeform:
                 self.y_direction = y_diff / total_distance
 
 
+        if self.in_group and not self.closest_enemy and not self.closest_prey and not self.closest_partner and not self.closest_plant and self.group_center:
+            x_diff = self.group_center[0] - self.x
+            y_diff = self.group_center[1] - self.y
+            total_distance = math.hypot(x_diff, y_diff)
+            if total_distance > self.follow_range:
+                self.x_direction = x_diff / total_distance
+                self.y_direction = y_diff / total_distance
+                self.search = False
+
         # If there is no target nearby, start searching
         if not self.search and not self.closest_enemy and not self.closest_prey and not self.closest_partner and not self.closest_plant:
-                print("searching.... " + str(self.id))
-                self.x_direction = random.uniform(-1, 1)
-                self.y_direction = random.uniform(-1, 1)
-                self.search = True
+            debug_log(f"{self.id} zoekt naar doelen")
+            self.x_direction = random.uniform(-1, 1)
+            self.y_direction = random.uniform(-1, 1)
+            self.search = True
 
         if self.search:
             if self.closest_follower and not self.is_leader and self.closest_follower.closest_follower != self and self.hunger < 500:
@@ -404,7 +694,7 @@ class Lifeform:
                 # self.x_direction = (self.x_direction + random.uniform(-0.1, 0.1))
                 # self.y_direction = (self.y_direction + random.uniform(-0.1, 0.1))
 
-            print("self.search = " + str(self.search) + str(self.id))
+            debug_log(f"{self.id} zoekstatus: {self.search}")
 
     def add_tail(self):
         # add a pheromone trail
@@ -427,14 +717,65 @@ class Lifeform:
             self.height = 1
 
     def check_group(self):
-        group_count = 0
+        relevant_radius = min(self.vision, group_max_radius)
+        if relevant_radius <= 0:
+            self.in_group = False
+            self.group_neighbors = []
+            self.group_center = None
+            self.group_strength = 0
+            self.group_state_timer = 0
+            return
+
+        neighbors = []
+        total_distance = 0
+        total_x = self.x
+        total_y = self.y
+
         for lifeform in lifeforms:
-            if lifeform.dna_id == self.dna_id and self.distance_to(lifeform) < self.vision:
-                group_count += 1
-        if group_count >= 5:
+            if lifeform is self:
+                continue
+            if lifeform.dna_id != self.dna_id or lifeform.health_now <= 0:
+                continue
+            if lifeform.age < lifeform.maturity * group_maturity_ratio:
+                continue
+            distance = self.distance_to(lifeform)
+            if distance <= relevant_radius:
+                neighbors.append((lifeform, distance))
+                total_distance += distance
+                total_x += lifeform.x
+                total_y += lifeform.y
+
+        self.group_neighbors = [lf for lf, _ in neighbors]
+        neighbor_count = len(neighbors)
+
+        qualified = False
+        cohesion = 0.0
+        if neighbor_count >= group_min_neighbors:
+            avg_distance = total_distance / neighbor_count if neighbor_count else 0
+            radius = max(relevant_radius, 1)
+            cohesion = max(0.0, min(1.0, 1 - (avg_distance / radius)))
+            self.group_strength = cohesion * (neighbor_count / group_min_neighbors)
+            self.group_center = (
+                total_x / (neighbor_count + 1),
+                total_y / (neighbor_count + 1)
+            )
+            if cohesion >= group_cohesion_threshold:
+                qualified = True
+        else:
+            self.group_strength = 0
+            self.group_center = None
+
+        if qualified:
+            self.in_group = True
+            self.group_state_timer = group_persistence_frames
+        elif self.group_state_timer > 0:
+            self.group_state_timer -= 1
             self.in_group = True
         else:
             self.in_group = False
+            self.group_neighbors = []
+            self.group_center = None
+            self.group_strength = 0
 
     def set_speed(self):
         global average_maturity
@@ -486,6 +827,7 @@ class Lifeform:
 
 
         else:
+            action_log(f"{self.id} is gestorven")
             lifeforms.remove(self)
             death_ages.append(self.age)
 
@@ -601,13 +943,13 @@ class Lifeform:
         color_change = 0
 
         for attribute, value in child_dna_profile.items():
-            print("2 self.dna_id: " + str(self.dna_id))
+            debug_log(f"DNA {self.dna_id} voortplanting start")
             original_value = 0
             dna_id_check = next((profile for profile in dna_profiles if profile["dna_id"] == self.dna_id), None)
             if dna_id_check is not None:
-                print("found dna_id: " + str(dna_id_check))
+                debug_log(f"DNA-match gevonden: {dna_id_check}")
                 original_value = dna_id_check[attribute]
-            print("original values from parent dna_id: " + str(original_value))
+            debug_log(f"Ouderwaarden voor DNA {self.dna_id}: {original_value}")
             if isinstance(value, tuple):  # Check if the attribute is a color tuple
                 color_change = sum([abs(v - ov) for v, ov in zip(value, original_value)]) / sum(original_value)
                 dna_change += sum([abs(v - ov) for v, ov in zip(value, original_value)]) / sum(original_value)
@@ -622,9 +964,9 @@ class Lifeform:
                     # Handle the case where the original value is zero
                     # For example, you could skip the calculation for this attribute
                     pass
-        print("dna_change: " + str(dna_change))
+        debug_log(f"DNA mutatie-index: {dna_change}")
         dna_change /= len(child_dna_profile)  # Calculate the average DNA change
-        print("dna_change after divide: " + str(dna_change))
+        debug_log(f"DNA mutatie na normalisatie: {dna_change}")
 
         # Create a new Lifeform object with the mixed DNA profile
 
@@ -657,13 +999,13 @@ class Lifeform:
                             # For example, you could skip the calculation for this attribute
                             pass
                 dna_change_between /= len(child_dna_profile)
-                print("profile dna_id: " + str(profile["dna_id"]) + " change between value: " + str(dna_change_between) + " own child_dna_profile: " + str(child_dna_profile["dna_id"]))
+                debug_log(f"DNA {profile['dna_id']} afwijking {dna_change_between}")
                 # Check if the dna_change_between is less than the threshold and the dna_id is not the parent's dna_id
                 if dna_change_between < dna_change_threshold or color_change_between < color_change_threshold and profile["dna_id"] != self.dna_id:
-                    print("Own dna_id " + str(self.dna_id) + "Change is within already existing dna_id: " + str(profile["dna_id"]))
+                    debug_log(f"DNA {self.dna_id} wijkt weinig af, behoud profielen")
                     child_dna_profile = profile
                     found = True
-                    print('full profile list: ' + str([profile["dna_id"] for profile in dna_profiles]))
+                    debug_log(f"Beschikbare DNA-profielen: {[profile['dna_id'] for profile in dna_profiles]}")
             if not found:
                 parent_dna_id = self.dna_id
                 if parent_dna_id in dna_id_counts:
@@ -678,6 +1020,8 @@ class Lifeform:
         if random.randint(0, 100) < 10:
             child_lifeform.is_leader = True
         lifeforms.append(child_lifeform)
+        if player_controller:
+            player_controller.on_birth()
 
             # if not found:
             #     child_lifeform.dna_id = len(dna_profiles)  # Assign a new DNA ID to the child Lifeform object
@@ -685,7 +1029,7 @@ class Lifeform:
             #     print("New dna_id: " + str(child_lifeform.dna_id))
 
     def progression(self):
-        self.hunger += 1
+        self.hunger += environment_modifiers.get("hunger_rate", 1.0)
         self.age += 1
         self.energy_now += 0.5
         self.wounded -= 1
@@ -729,22 +1073,39 @@ class Pheromone:
         pygame.draw.rect(screen, color, (self.x, self.y, self.width, self.height))
 
 class Vegetation:
-    def __init__(self, x, y, width, height):
+    def __init__(self, x, y, width, height, variant="normal"):
         self.x = x
         self.y = y
 
         self.width = width
         self.height = height
-        self.size = self.width * self.height
+        self.base_size = self.width * self.height
         self.resource = 100
+        self.variant = variant
+        self.color = green
+        self.regrowth_rate = 0.1
+
+        if variant == "radiant":
+            self.color = (150, 230, 255)
+            self.resource = 140
+            self.regrowth_rate = 0.05
+        elif variant == "spore":
+            self.color = (180, 120, 255)
+            self.resource = 110
+            self.regrowth_rate = 0.08
+        elif variant == "fortified":
+            self.color = (90, 200, 160)
+            self.resource = 160
+            self.regrowth_rate = 0.06
 
     def draw(self):
-        pygame.draw.rect(screen, green, (self.x, self.y, self.width, self.height))
+        pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
 
     def set_size(self):
         # Calculate the new width and height based on the resource value
-        self.width = int(self.resource / 1000 * self.size)
-        self.height = int(self.resource / 1000 * self.size)
+        factor = max(0.1, self.resource / 100)
+        self.width = int(self.base_size * factor ** 0.5)
+        self.height = int(self.base_size * factor ** 0.5)
 
     def decrement_resource(self, amount):
         self.resource -= amount
@@ -752,9 +1113,25 @@ class Vegetation:
             self.resource = 0
 
     def regrow(self):
-        self.resource += 0.1
-        if self.resource > 100:
-            self.resource = 100
+        growth = self.regrowth_rate * environment_modifiers.get("plant_regrowth", 1.0)
+        self.resource += growth
+        max_resource = 200 if self.variant != "normal" else 120
+        if self.resource > max_resource:
+            self.resource = max_resource
+
+    def apply_effect(self, lifeform):
+        if self.variant == "radiant":
+            lifeform.health_now = min(lifeform.health, lifeform.health_now + 60)
+            lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + 40)
+        elif self.variant == "spore":
+            lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + 25)
+            lifeform.vision = min(vision_max, lifeform.vision + 1)
+        elif self.variant == "fortified":
+            lifeform.health_now = min(lifeform.health, lifeform.health_now + 35)
+            lifeform.defence_power = min(100, lifeform.defence_power + 1)
+        else:
+            lifeform.health_now = min(lifeform.health, lifeform.health_now + 30)
+            lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + 20)
 
 
 ########################################################################################################################
@@ -798,6 +1175,12 @@ def reset_list_values():
     pheromones = []
     plants = []
     death_ages = []
+    notification_manager.clear()
+    event_manager.reset()
+    event_manager.schedule_default_events()
+    player_controller.reset()
+    environment_modifiers["plant_regrowth"] = 1.0
+    environment_modifiers["hunger_rate"] = 1.0
 
 
 
@@ -878,8 +1261,14 @@ def init_vegetation():
 
         width = 20
         height = 20
+        variant = random.choices([
+            "normal",
+            "radiant",
+            "spore",
+            "fortified"
+        ], weights=[0.65, 0.15, 0.12, 0.08])[0]
 
-        plant = Vegetation(x, y, width, height)
+        plant = Vegetation(x, y, width, height, variant)
         plants.append(plant)
 
 def count_dna_ids(lifeforms):
@@ -934,12 +1323,82 @@ def get_average_rect(lifeforms, dna_id):
     else:
         return None
 
+def collect_population_stats(formatted_time_passed):
+    stats = {
+        "lifeform_count": len(lifeforms),
+        "formatted_time": formatted_time_passed,
+        "average_health": 0,
+        "average_vision": 0,
+        "average_gen": 0,
+        "average_hunger": 0,
+        "average_size": 0,
+        "average_age": 0,
+        "average_maturity": 0,
+        "average_speed": 0,
+        "average_cooldown": 0,
+        "death_age_avg": sum(death_ages) / len(death_ages) if death_ages else 0,
+        "dna_count": count_dna_ids(lifeforms)
+    }
+
+    if lifeforms:
+        count = len(lifeforms)
+        stats["average_health"] = sum(l.health_now for l in lifeforms) / count
+        stats["average_vision"] = sum(l.vision for l in lifeforms) / count
+        stats["average_gen"] = sum(l.generation for l in lifeforms) / count
+        stats["average_hunger"] = sum(l.hunger for l in lifeforms) / count
+        stats["average_size"] = sum(l.size for l in lifeforms) / count
+        stats["average_age"] = sum(l.age for l in lifeforms) / count
+        stats["average_maturity"] = sum(l.maturity for l in lifeforms) / count
+        stats["average_speed"] = sum(l.speed for l in lifeforms) / count
+        stats["average_cooldown"] = sum(l.reproduced_cooldown for l in lifeforms) / count
+
+    return stats
+
+
+def draw_stats_panel(surface, font_small, font_large, stats):
+    text_lines = [
+        f"Number of Lifeforms: {stats['lifeform_count']}",
+        f"Total time passed: {stats['formatted_time']}",
+        f"Average health: {int(stats['average_health'])}",
+        f"Average vision: {int(stats['average_vision'])}",
+        f"Average generation: {int(stats['average_gen'])}",
+        f"Average hunger: {int(stats['average_hunger'])}",
+        f"Average size: {int(stats['average_size'])}",
+        f"Average age: {int(stats['average_age'])}",
+        f"Average age of dying: {int(stats['death_age_avg'])}",
+        f"Average maturity age: {int(stats['average_maturity'])}",
+        f"Average speed: {round(stats['average_speed'], 2)}",
+        f"Average reproduction cooldown: {round(stats['average_cooldown'])}",
+        f"Total of DNA id's: {len(dna_profiles)}",
+        "Alive lifeforms: "
+    ]
+
+    for idx, line in enumerate(text_lines):
+        text_surface = font_small.render(line, True, black)
+        surface.blit(text_surface, (50, 20 + idx * 20))
+
+    y_offset = 300
+    dna_count_sorted = sorted(stats['dna_count'].items(), key=lambda item: item[1], reverse=True)
+    for dna_id, count in dna_count_sorted:
+        text = font_large.render(f"Nr. per dna_{dna_id}: {count}", True, black)
+        surface.blit(text, (50, y_offset))
+        y_offset += 35
+
+        if show_dna_info:
+            for attribute in ["health", "vision", "attack_power_now", "defence_power_now", "speed", "maturity", "size", "longevity", "energy"]:
+                attribute_value = get_attribute_value(lifeforms, dna_id, attribute)
+                if attribute_value is not None:
+                    text = font_small.render(f"{attribute}: {round(attribute_value, 2)}", True, black)
+                    surface.blit(text, (50, y_offset))
+                    y_offset += 20
 ######################################################################################################################
 
 
 reset_dna_profiles()
 init_lifeforms()
 init_vegetation()
+event_manager.schedule_default_events()
+player_controller.reset()
 graph = Graph()
 
 running = True
@@ -1029,26 +1488,6 @@ while running:
             lifeform.add_tail()
             lifeform.draw(screen)
 
-            if len(lifeforms) > 1:
-                total_health += lifeform.health_now
-                average_health = total_health / len(lifeforms)
-                total_vision += lifeform.vision
-                average_vision = total_vision / len(lifeforms)
-                total_gen += lifeform.generation
-                average_gen = total_gen / len(lifeforms)
-                total_hunger += lifeform.hunger
-                average_hunger = total_hunger / len(lifeforms)
-                total_size += lifeform.size
-                average_size = total_size / len(lifeforms)
-                total_age += lifeform.age
-                average_age = total_age / len(lifeforms)
-                total_maturity += lifeform.maturity
-                average_maturity = total_maturity / len(lifeforms)
-                total_speed += lifeform.speed
-                average_speed = total_speed / len(lifeforms)
-                total_cooldown += lifeform.reproduced_cooldown
-                average_cooldown = total_cooldown / len(lifeforms)
-
 
             if show_debug:
                 text = font.render(f"Health: {lifeform.health_now} ID: {lifeform.id} "
@@ -1083,126 +1522,22 @@ while running:
                 lifeform.y_direction = -lifeform.y_direction
 
 
-        # dna_ids = [dna_profile["dna_id"] for dna_profile in dna_profiles]
-        # alive_dna_ids = {}
-        # for lifeform in lifeforms:
-        #     dna_id = lifeform.dna_id
-        #     if dna_id in alive_dna_ids:
-        #         alive_dna_ids[dna_id] += 1
-        #     else:
-        #         alive_dna_ids[dna_id] = 1
+        stats = collect_population_stats(formatted_time_passed)
+        event_manager.schedule_default_events()
+        event_manager.update(pygame.time.get_ticks(), stats, player_controller)
+        draw_stats_panel(screen, font2, font3, stats)
 
-
-        text1 = "Number of Lifeforms: " + str(len(lifeforms))
-        text2 = "Total time passed: " + formatted_time_passed
-        text3 = "Average health: " + str(int(average_health))
-        text4 = "Average vision: " + str(int(average_vision))
-        text5 = "Average generation: " + str(int(average_gen))
-        text6 = "Average hunger: " + str(int(average_hunger))
-        text7 = "Average size: " + str(int(average_size))
-        text8 = "Average age: " + str(int(average_age))
-        text9 = "Average age of dying: " + str(int(death_age_avg))
-        text10 = "Average maturity age: " + str(int(average_maturity))
-        text11 = "Average speed: " + str(round(average_speed, 2))
-        text12 = "Average reproduction cooldown: " + str(round(average_cooldown))
-        text13 = "Total of DNA id's: " + str(len(dna_profiles))
-        text14 = "Alive lifeforms: "
-
-
-        # Render the text
-        text_surface = font2.render(text1, True, black)
-        text2_surface = font2.render(text2, True, black)
-        text3_surface = font2.render(text3, True, black)
-        text4_surface = font2.render(text4, True, black)
-        text5_surface = font2.render(text5, True, black)
-        text6_surface = font2.render(text6, True, black)
-        text7_surface = font2.render(text7, True, black)
-        text8_surface = font2.render(text8, True, black)
-        text9_surface = font2.render(text9, True, black)
-        text10_surface = font2.render(text10, True, black)
-        text11_surface = font2.render(text11, True, black)
-        text12_surface = font2.render(text12, True, black)
-        text13_surface = font2.render(text13, True, black)
-        text14_surface = font2.render(text14, True, black)
-
-
-
-        # Get the rect of the text surface
-        text_rect = text_surface.get_rect()
-        text2_rect = text2_surface.get_rect()
-        text3_rect = text3_surface.get_rect()
-        text4_rect = text4_surface.get_rect()
-        text5_rect = text5_surface.get_rect()
-        text6_rect = text6_surface.get_rect()
-        text7_rect = text7_surface.get_rect()
-        text8_rect = text8_surface.get_rect()
-        text9_rect = text9_surface.get_rect()
-        text10_rect = text10_surface.get_rect()
-        text11_rect = text11_surface.get_rect()
-        text12_rect = text12_surface.get_rect()
-        text13_rect = text13_surface.get_rect()
-        text14_rect = text14_surface.get_rect()
-
-
-        # Set the position of the text
-        text_rect.topleft = (50, 20)
-        text2_rect.topleft = (50, 40)
-        text3_rect.topleft = (50, 60)
-        text4_rect.topleft = (50, 80)
-        text5_rect.topleft = (50, 100)
-        text6_rect.topleft = (50, 120)
-        text7_rect.topleft = (50, 140)
-        text8_rect.topleft = (50, 160)
-        text9_rect.topleft = (50, 180)
-        text10_rect.topleft = (50, 200)
-        text11_rect.topleft = (50, 220)
-        text12_rect.topleft = (50, 240)
-        text13_rect.topleft = (50, 260)
-        text14_rect.topleft = (50, 280)
-
-        # Draw the text
-        screen.blit(text_surface, text_rect)
-        screen.blit(text2_surface, text2_rect)
-        screen.blit(text3_surface, text3_rect)
-        screen.blit(text4_surface, text4_rect)
-        screen.blit(text5_surface, text5_rect)
-        screen.blit(text6_surface, text6_rect)
-        screen.blit(text7_surface, text7_rect)
-        screen.blit(text8_surface, text8_rect)
-        screen.blit(text9_surface, text9_rect)
-        screen.blit(text10_surface, text10_rect)
-        screen.blit(text11_surface, text11_rect)
-        screen.blit(text12_surface, text12_rect)
-        screen.blit(text13_surface, text13_rect)
-        screen.blit(text14_surface, text14_rect)
-
-        y_offset = 300
-
-        dna_count_sorted = sorted(dna_count.items(), key=lambda item: item[1], reverse=True)
-        for dna_id, count in dna_count_sorted:
-            text = font3.render("Nr. per dna_" + str(dna_id) + ": " + str(count), True, black)
-            screen.blit(text, (50, y_offset))
-            y_offset += 35
-
-            if show_dna_info:
-                # Get the average attribute value for the lifeforms with the current dna_id
-                for attribute in ["health", "vision", "attack_power_now", "defence_power_now", "speed", "maturity", "size", "longevity", "energy"]:
-                    attribute_value = get_attribute_value(lifeforms, dna_id, attribute)
-                    if attribute_value is not None:
-                        text = font2.render(attribute + ": " + str(round(attribute_value, 2)), True, black)
-                        screen.blit(text, (50, y_offset))
-                        y_offset += 20
-
-        # Draw the barrier rectangle on the screen
-        # pygame.draw.rect(screen, black, barrier_rect)
-
-        # Draw reset button on screen
         pygame.draw.rect(screen, green, reset_button)  # Draw the button
         pygame.draw.rect(screen, black, reset_button, 3)
         pygame.draw.rect(screen, green, show_dna_button)
         pygame.draw.rect(screen, black, show_dna_button, 2)
         pygame.draw.rect(screen, green, show_dna_info_button)
         pygame.draw.rect(screen, black, show_dna_info_button, 2)
+
+        event_manager.draw(screen, font2)
+        notification_manager.update()
+        notification_manager.draw(screen, font)
+        player_controller.draw_overlay(screen, font2)
 
 
         pygame.display.flip()
@@ -1237,6 +1572,10 @@ while running:
         text_rect.center = (250, 250)
 
         screen.blit(text_surface, text_rect)
+        notification_manager.update()
+        notification_manager.draw(screen, font)
+        player_controller.draw_overlay(screen, font)
+        event_manager.draw(screen, font)
 
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
@@ -1284,14 +1623,25 @@ while running:
                 else:
                     show_vision = False
             elif event.key == pygame.K_d:
-                if not show_dna_button:
-                    show_dna_id = True
-                else:
-                    show_dna_id = False
+                show_dna_id = not show_dna_id
+            elif event.key == pygame.K_m:
+                player_controller.toggle_management()
+            elif player_controller.management_mode:
+                if event.key == pygame.K_RIGHT:
+                    player_controller.cycle_profile(dna_profiles, 1)
+                elif event.key == pygame.K_LEFT:
+                    player_controller.cycle_profile(dna_profiles, -1)
+                elif event.key == pygame.K_UP:
+                    player_controller.adjust_attribute(dna_profiles, 1)
+                elif event.key == pygame.K_DOWN:
+                    player_controller.adjust_attribute(dna_profiles, -1)
+                elif event.key == pygame.K_TAB:
+                    direction = -1 if (event.mod & pygame.KMOD_SHIFT) else 1
+                    player_controller.cycle_attribute(direction)
 
         elif event.type == pygame.MOUSEBUTTONDOWN:
             if start_button.collidepoint(event.pos):
-                print("start clicked")
+                notification_manager.add("Simulatie gestart", green)
                 starting_screen = False  # Set the starting screen flag to False to start the simulation
                 paused = False
             if reset_button.collidepoint(event.pos):
@@ -1299,10 +1649,11 @@ while running:
                 reset_dna_profiles()
                 init_lifeforms()
                 init_vegetation()
+                notification_manager.add("Simulatie gereset", blue)
                 starting_screen = True
                 paused = True
             if show_dna_button.collidepoint(event.pos):
-                print('dna_button clicked')
+                notification_manager.add("DNA-ID overlay gewisseld", sea)
                 if not show_dna_id:
                     show_dna_id = True
                 else:
