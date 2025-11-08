@@ -331,23 +331,29 @@ class World:
                     return True
         return False
 
-    def resolve_entity_movement(self, entity_rect: pygame.Rect, previous_pos: Tuple[float, float]) -> Tuple[float, float]:
-        x, y = entity_rect.x, entity_rect.y
-        if x < 0:
-            x = 0
-        if y < 0:
-            y = 0
-        if entity_rect.right > self.width:
-            x = self.width - entity_rect.width
-        if entity_rect.bottom > self.height:
-            y = self.height - entity_rect.height
+    def resolve_entity_movement(
+        self,
+        entity_rect: pygame.Rect,
+        previous_pos: Tuple[float, float],
+        attempted_pos: Tuple[float, float],
+    ) -> Tuple[float, float, bool, bool, bool]:
+        attempt_x, attempt_y = attempted_pos
+        max_x = self.width - entity_rect.width
+        max_y = self.height - entity_rect.height
+        clamped_x = max(0.0, min(max_x, attempt_x))
+        clamped_y = max(0.0, min(max_y, attempt_y))
+        hit_boundary_x = not math.isclose(clamped_x, attempt_x, abs_tol=1e-3)
+        hit_boundary_y = not math.isclose(clamped_y, attempt_y, abs_tol=1e-3)
 
-        entity_rect.update(int(x), int(y), entity_rect.width, entity_rect.height)
+        entity_rect.update(int(clamped_x), int(clamped_y), entity_rect.width, entity_rect.height)
 
+        collided = False
         if self.is_blocked(entity_rect):
-            x, y = previous_pos
-            entity_rect.update(int(x), int(y), entity_rect.width, entity_rect.height)
-        return x, y
+            collided = True
+            clamped_x, clamped_y = previous_pos
+            entity_rect.update(int(clamped_x), int(clamped_y), entity_rect.width, entity_rect.height)
+
+        return clamped_x, clamped_y, hit_boundary_x, hit_boundary_y, collided
 
     def random_position(
         self,
@@ -816,15 +822,28 @@ class Lifeform:
 
     def movement(self):
         previous_position = (self.x, self.y)
-        # Determine the direction in which the Lifeform object should move
-        self.x += self.x_direction * self.speed
-        self.y += self.y_direction * self.speed
+        attempted_x = self.x + self.x_direction * self.speed
+        attempted_y = self.y + self.y_direction * self.speed
 
-        self.rect.update(int(self.x), int(self.y), self.width, self.height)
-        resolved_x, resolved_y = world.resolve_entity_movement(self.rect.copy(), previous_position)
-        if resolved_x != self.x or resolved_y != self.y:
+        candidate_rect = self.rect.copy()
+        candidate_rect.update(int(attempted_x), int(attempted_y), self.width, self.height)
+        (
+            resolved_x,
+            resolved_y,
+            hit_boundary_x,
+            hit_boundary_y,
+            collided,
+        ) = world.resolve_entity_movement(candidate_rect, previous_position, (attempted_x, attempted_y))
+
+        if collided:
             self.x_direction = -self.x_direction
             self.y_direction = -self.y_direction
+        else:
+            if hit_boundary_x:
+                self.x_direction = -self.x_direction
+            if hit_boundary_y:
+                self.y_direction = -self.y_direction
+
         self.x, self.y = resolved_x, resolved_y
         self.rect.update(int(self.x), int(self.y), self.width, self.height)
 
@@ -900,8 +919,8 @@ class Lifeform:
                 self.y_direction = 0
             else:
                 total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
+                self.x_direction = -x_diff / total_distance
+                self.y_direction = -y_diff / total_distance
                 #
                 # total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
                 # target_angle = math.atan2(y_diff, x_diff)
