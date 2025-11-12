@@ -143,29 +143,14 @@ class Lifeform:
         self.x, self.y = resolved_x, resolved_y
         self.rect.update(int(self.x), int(self.y), self.width, self.height)
 
+        self.update_targets()
+
         if self.closest_enemy:
             notification_context.debug(f"{self.id} ziet vijand {self.closest_enemy.id}")
         if self.closest_prey:
             notification_context.debug(f"{self.id} heeft prooi {self.closest_prey.id}")
         if self.closest_partner:
             notification_context.debug(f"{self.id} heeft partner {self.closest_partner.id}")
-
-        for lifeform in lifeforms:
-            if self.distance_to(lifeform) < self.vision and lifeform != self:
-                if lifeform.health_now > 0 and lifeform.attack_power_now > self.defence_power_now:
-                    self.closest_enemy = lifeform
-                if lifeform.health_now > 0 and lifeform.attack_power_now < self.defence_power_now:
-                    self.closest_prey = lifeform
-                if lifeform.health_now > 0 and lifeform.attack_power_now == self.defence_power_now:
-                    self.closest_partner = lifeform
-                if lifeform.is_leader and not self.is_leader:
-                    self.closest_follower = lifeform
-                if self.closest_enemy and self.closest_enemy.health_now <= 0:
-                    self.closest_enemy = None
-                if self.closest_prey and self.closest_prey.health_now <= 0:
-                    self.closest_prey = None
-                if self.closest_partner and self.closest_partner.health_now <= 0:
-                    self.closest_partner = None
 
         if self.closest_enemy and self.closest_enemy.health_now > 0:
             x_diff = self.closest_enemy.x - self.x
@@ -285,6 +270,104 @@ class Lifeform:
         dx = self.x - other.x
         dy = self.y - other.y
         return math.sqrt(dx ** 2 + dy ** 2)
+
+    def is_adult(self) -> bool:
+        return self.age >= self.maturity
+
+    def _distance_squared_to_lifeform(self, other: "Lifeform") -> float:
+        dx = self.rect.centerx - other.rect.centerx
+        dy = self.rect.centery - other.rect.centery
+        return float(dx * dx + dy * dy)
+
+    def _distance_squared_to_point(self, x: float, y: float) -> float:
+        dx = self.rect.centerx - x
+        dy = self.rect.centery - y
+        return float(dx * dx + dy * dy)
+
+    def _can_partner_with(self, other: "Lifeform") -> bool:
+        if other is self:
+            return False
+        if other.health_now <= 0:
+            return False
+        if other.dna_id != self.dna_id:
+            return False
+        if not self.is_adult() or not other.is_adult():
+            return False
+        return True
+
+    def update_targets(self) -> None:
+        vision_range = max(0, self.vision)
+        if vision_range <= 0:
+            self.closest_enemy = None
+            self.closest_prey = None
+            self.closest_partner = None
+            self.closest_follower = None
+            self.closest_plant = None
+            return
+
+        vision_sq = vision_range * vision_range
+
+        enemy_candidate = None
+        prey_candidate = None
+        partner_candidate = None
+        follower_candidate = None
+        plant_candidate = None
+
+        enemy_distance = vision_sq
+        prey_distance = vision_sq
+        partner_distance = vision_sq
+        follower_distance = vision_sq
+        plant_distance = vision_sq
+
+        for lifeform in lifeforms:
+            if lifeform is self:
+                continue
+            if lifeform.health_now <= 0:
+                continue
+
+            distance_sq = self._distance_squared_to_lifeform(lifeform)
+            if distance_sq > vision_sq:
+                continue
+
+            if not self.is_leader and lifeform.is_leader and distance_sq < follower_distance:
+                follower_candidate = lifeform
+                follower_distance = distance_sq
+
+            if self._can_partner_with(lifeform):
+                if distance_sq < partner_distance:
+                    partner_candidate = lifeform
+                    partner_distance = distance_sq
+                continue
+
+            if lifeform.attack_power_now > self.defence_power_now:
+                if distance_sq < enemy_distance:
+                    enemy_candidate = lifeform
+                    enemy_distance = distance_sq
+                continue
+
+            if lifeform.attack_power_now < self.defence_power_now:
+                if distance_sq < prey_distance:
+                    prey_candidate = lifeform
+                    prey_distance = distance_sq
+
+        for plant in plants:
+            if plant.resource <= 0:
+                continue
+
+            center_x = plant.x + plant.width / 2
+            center_y = plant.y + plant.height / 2
+            distance_sq = self._distance_squared_to_point(center_x, center_y)
+            if distance_sq > vision_sq:
+                continue
+            if distance_sq < plant_distance:
+                plant_candidate = plant
+                plant_distance = distance_sq
+
+        self.closest_enemy = enemy_candidate
+        self.closest_prey = prey_candidate
+        self.closest_partner = partner_candidate
+        self.closest_follower = follower_candidate if not self.is_leader else None
+        self.closest_plant = plant_candidate
 
     def set_size(self):
         self.size = self.width * self.height
