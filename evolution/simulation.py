@@ -547,27 +547,27 @@ class Lifeform:
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
         partner.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
 
-    def progression(self):
+    def progression(self, delta_time: float):
         biome, effects = world.get_environment_context(self.x + self.width / 2, self.y + self.height / 2)
         self.current_biome = biome
         self.environment_effects = effects
 
         hunger_rate = environment_modifiers.get("hunger_rate", 1.0) * float(effects["hunger"])
-        self.hunger += hunger_rate
-        self.age += 1
-        self.energy_now += 0.5 * float(effects["energy"])
-        self.wounded -= 1
-        self.health_now += float(effects["health"])
+        self.hunger += hunger_rate * settings.HUNGER_RATE_PER_SECOND * delta_time
+        self.age += settings.AGE_RATE_PER_SECOND * delta_time
+        self.energy_now += settings.ENERGY_RECOVERY_PER_SECOND * delta_time * float(effects["energy"])
+        self.wounded -= settings.WOUND_HEAL_PER_SECOND * delta_time
+        self.health_now += float(effects["health"]) * delta_time
 
         if self.age > self.longevity:
-            self.health_now -= 1
+            self.health_now -= settings.LONGEVITY_HEALTH_DECAY_PER_SECOND * delta_time
         if self.age > 10000:
-            self.health_now -= 100
+            self.health_now -= settings.EXTREME_LONGEVITY_DECAY_PER_SECOND * delta_time
 
         if self.hunger > 500:
-            self.health_now -= 0.1
+            self.health_now -= settings.HUNGER_HEALTH_PENALTY_PER_SECOND * delta_time
         if self.hunger > 1000:
-            self.health_now -= 1
+            self.health_now -= settings.EXTREME_HUNGER_HEALTH_PENALTY_PER_SECOND * delta_time
         if self.wounded < 0:
             self.wounded = 0
         if self.energy_now < 1:
@@ -627,8 +627,10 @@ class Vegetation:
 
     def set_size(self):
         factor = max(0.1, self.resource / 100)
-        self.width = int(self.base_size * factor ** 0.5)
-        self.height = int(self.base_size * factor ** 0.5)
+        base_side = math.sqrt(self.base_size)
+        side_length = max(3, int(base_side * factor ** 0.5))
+        self.width = side_length
+        self.height = side_length
 
     def decrement_resource(self, amount):
         self.resource -= amount
@@ -887,8 +889,8 @@ def init_lifeforms():
 
 def init_vegetation():
     for _ in range(settings.N_VEGETATION):
-        width = 20
-        height = 20
+        width = 12
+        height = 12
         biome = random.choice(world.biomes) if world.biomes else None
         spawn_x, spawn_y, _ = world.random_position(width, height, preferred_biome=biome)
 
@@ -1034,7 +1036,7 @@ def run() -> None:
     global show_debug, show_leader, show_action, show_vision, show_dna_id, show_dna_info
 
     while running:
-        clock.tick(fps)
+        delta_time = clock.tick(fps) / 1000.0
         start_button = pygame.Rect(settings.WINDOW_WIDTH - 260, settings.WINDOW_HEIGHT // 2 - 30, 200, 60)
         reset_button = pygame.Rect(30, settings.WINDOW_HEIGHT - 60, 180, 40)
         show_dna_button = pygame.Rect(reset_button.left, reset_button.top - 40, 24, 24)
@@ -1114,7 +1116,7 @@ def run() -> None:
                     lifeform.calculate_attack_power()
                     lifeform.calculate_defence_power()
                     lifeform.check_group()
-                    lifeform.progression()
+                    lifeform.progression(delta_time)
                     lifeform.movement()
                     lifeform.update_angle()
                     lifeform.grow()
