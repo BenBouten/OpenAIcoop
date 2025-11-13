@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import pygame
 
 from .config import settings
+from .entities import movement
 from .entities.lifeform import Lifeform
 from .entities.pheromones import Pheromone
 from .rendering.camera import Camera
@@ -699,19 +700,32 @@ def run() -> None:
                 )
 
                 for lifeform in lifeform_snapshot:
+                    # 1) DNA-afhankelijke eigenschappen & omgeving
                     lifeform.set_speed(average_maturity)
                     lifeform.calculate_attack_power()
                     lifeform.calculate_defence_power()
-                    lifeform.check_group()
+                    lifeform.check_group()  # boids / groepsgedrag, wordt gelezen door AI
+
+                    # 2) Interne levensloop (hunger, age, energy, health, environment)
                     lifeform.progression(delta_time)
-                    lifeform.movement()
+
+                    # 3) AI + movement + collision + boundary + stuck-detectie
+                    #    - ai.update_brain() wordt binnen movement.update_movement aangeroepen
+                    movement.update_movement(lifeform, state, delta_time)
+
+                    # 4) Oriëntatie & groei
                     lifeform.update_angle()
                     lifeform.grow()
-                    lifeform.set_size()
-                    lifeform.add_tail()
+                    lifeform.set_size()  # nieuwe size na groei
+                    lifeform.add_tail()  # pheromone-trail
+
+                    # 5) Death-afhandeling (verwijdert zichzelf uit state.lifeforms)
                     if lifeform.handle_death():
                         continue
+
+                    # 6) Rendering & overlays
                     draw_lifeform(world_surface, lifeform, settings)
+
                     if show_vision:
                         draw_lifeform_vision(world_surface, lifeform, settings)
 
@@ -727,12 +741,15 @@ def run() -> None:
                             (0, 0, 0),
                         )
                         world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 30)))
+
                     if show_dna_id:
                         text = font2.render(f"{lifeform.dna_id}", True, (0, 0, 0))
                         world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 10)))
+
                     if show_leader and lifeform.is_leader:
                         text = font.render("L", True, (0, 0, 0))
                         world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 30)))
+
                     if show_action:
                         text = font.render(
                             f"Current target, enemy: {lifeform.closest_enemy.id if lifeform.closest_enemy is not None else None}"
@@ -743,6 +760,7 @@ def run() -> None:
                             settings.BLACK,
                         )
                         world_surface.blit(text, (int(lifeform.x), int(lifeform.y - 20)))
+
                     if lifeform.reproduced_cooldown > 0:
                         lifeform.reproduced_cooldown -= 1
 
