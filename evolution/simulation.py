@@ -771,6 +771,12 @@ class Lifeform:
                     partner_distance = distance_sq
                 continue
 
+            if lifeform.dna_id == self.dna_id:
+                # Avoid classifying the same species as prey or enemy. Without this guard,
+                # newly spawned juveniles are immediately considered prey by their parents
+                # and get attacked before they can age beyond a few frames.
+                continue
+
             if lifeform.attack_power_now > self.defence_power_now:
                 if distance_sq < enemy_distance:
                     enemy_candidate = lifeform
