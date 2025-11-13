@@ -866,7 +866,7 @@ class Lifeform:
             self.group_center = None
             self.group_strength = 0
 
-    def set_speed(self):
+    def set_speed(self, average_maturity: Optional[float] = None) -> None:
         self.speed = 6 - (self.hunger / 500) - (self.age / 1000) - (self.size / 250) - (self.wounded / 20)
         self.speed += (self.health_now / 200)
         self.speed += (self.energy / 100)
@@ -876,8 +876,9 @@ class Lifeform:
         self.environment_effects = effects
         self.speed *= float(effects["movement"])
 
-        if self.age < self.maturity and lifeforms:
-            average_maturity = sum(l.maturity for l in lifeforms) / len(lifeforms)
+        if self.age < self.maturity:
+            if average_maturity is None and lifeforms:
+                average_maturity = sum(l.maturity for l in lifeforms) / len(lifeforms)
             if average_maturity:
                 factor = self.maturity / average_maturity
                 self.speed *= (factor / 10)
@@ -1425,26 +1426,6 @@ def init_vegetation():
         plants.append(plant)
 
 
-def count_dna_ids(lifeforms: List[Lifeform]):
-    dna_counts: Dict[int, int] = {}
-    for lifeform in lifeforms:
-        dna_id = lifeform.dna_id
-        dna_counts[dna_id] = dna_counts.get(dna_id, 0) + 1
-    return dna_counts
-
-
-def get_attribute_value(lifeforms: List[Lifeform], dna_id: int, attribute: str):
-    total_attribute_value = 0
-    count = 0
-    for lifeform in lifeforms:
-        if lifeform.dna_id == dna_id:
-            total_attribute_value += getattr(lifeform, attribute)
-            count += 1
-    if count == 0:
-        return None
-    return total_attribute_value / count
-
-
 def collect_population_stats(formatted_time_passed: str):
     stats = {
         "lifeform_count": len(lifeforms),
@@ -1459,20 +1440,70 @@ def collect_population_stats(formatted_time_passed: str):
         "average_speed": 0,
         "average_cooldown": 0,
         "death_age_avg": sum(death_ages) / len(death_ages) if death_ages else 0,
-        "dna_count": count_dna_ids(lifeforms)
+        "dna_count": {},
+        "dna_attribute_averages": {},
     }
 
     if lifeforms:
         count = len(lifeforms)
-        stats["average_health"] = sum(l.health_now for l in lifeforms) / count
-        stats["average_vision"] = sum(l.vision for l in lifeforms) / count
-        stats["average_gen"] = sum(l.generation for l in lifeforms) / count
-        stats["average_hunger"] = sum(l.hunger for l in lifeforms) / count
-        stats["average_size"] = sum(l.size for l in lifeforms) / count
-        stats["average_age"] = sum(l.age for l in lifeforms) / count
-        stats["average_maturity"] = sum(l.maturity for l in lifeforms) / count
-        stats["average_speed"] = sum(l.speed for l in lifeforms) / count
-        stats["average_cooldown"] = sum(l.reproduced_cooldown for l in lifeforms) / count
+        totals = {
+            "health_now": 0.0,
+            "vision": 0.0,
+            "generation": 0.0,
+            "hunger": 0.0,
+            "size": 0.0,
+            "age": 0.0,
+            "maturity": 0.0,
+            "speed": 0.0,
+            "reproduced_cooldown": 0.0,
+        }
+        dna_attributes = [
+            "health",
+            "vision",
+            "attack_power_now",
+            "defence_power_now",
+            "speed",
+            "maturity",
+            "size",
+            "longevity",
+            "energy",
+        ]
+        dna_totals: Dict[int, Dict[str, float]] = {}
+
+        for lifeform in lifeforms:
+            totals["health_now"] += lifeform.health_now
+            totals["vision"] += lifeform.vision
+            totals["generation"] += lifeform.generation
+            totals["hunger"] += lifeform.hunger
+            totals["size"] += lifeform.size
+            totals["age"] += lifeform.age
+            totals["maturity"] += lifeform.maturity
+            totals["speed"] += lifeform.speed
+            totals["reproduced_cooldown"] += lifeform.reproduced_cooldown
+
+            dna_entry = dna_totals.setdefault(
+                lifeform.dna_id,
+                {"count": 0, **{attr: 0.0 for attr in dna_attributes}},
+            )
+            dna_entry["count"] += 1
+            for attribute in dna_attributes:
+                dna_entry[attribute] += getattr(lifeform, attribute)
+
+        stats["average_health"] = totals["health_now"] / count
+        stats["average_vision"] = totals["vision"] / count
+        stats["average_gen"] = totals["generation"] / count
+        stats["average_hunger"] = totals["hunger"] / count
+        stats["average_size"] = totals["size"] / count
+        stats["average_age"] = totals["age"] / count
+        stats["average_maturity"] = totals["maturity"] / count
+        stats["average_speed"] = totals["speed"] / count
+        stats["average_cooldown"] = totals["reproduced_cooldown"] / count
+        stats["dna_count"] = {dna_id: data["count"] for dna_id, data in dna_totals.items()}
+        stats["dna_attribute_averages"] = {
+            dna_id: {attr: data[attr] / data["count"] for attr in dna_attributes}
+            for dna_id, data in dna_totals.items()
+            if data["count"]
+        }
 
     return stats
 
@@ -1501,18 +1532,31 @@ def draw_stats_panel(surface, font_small, font_large, stats):
 
     y_offset = 300
     dna_count_sorted = sorted(stats['dna_count'].items(), key=lambda item: item[1], reverse=True)
+    dna_attribute_averages = stats.get('dna_attribute_averages', {})
     for dna_id, count in dna_count_sorted:
         text = font_large.render(f"Nr. per dna_{dna_id}: {count}", True, settings.BLACK)
         surface.blit(text, (50, y_offset))
         y_offset += 35
 
         if show_dna_info:
-            for attribute in ["health", "vision", "attack_power_now", "defence_power_now", "speed", "maturity", "size", "longevity", "energy"]:
-                attribute_value = get_attribute_value(lifeforms, dna_id, attribute)
-                if attribute_value is not None:
-                    text = font_small.render(f"{attribute}: {round(attribute_value, 2)}", True, settings.BLACK)
-                    surface.blit(text, (50, y_offset))
-                    y_offset += 20
+            averages = dna_attribute_averages.get(dna_id)
+            if averages:
+                for attribute in [
+                    "health",
+                    "vision",
+                    "attack_power_now",
+                    "defence_power_now",
+                    "speed",
+                    "maturity",
+                    "size",
+                    "longevity",
+                    "energy",
+                ]:
+                    attribute_value = averages.get(attribute)
+                    if attribute_value is not None:
+                        text = font_small.render(f"{attribute}: {round(attribute_value, 2)}", True, settings.BLACK)
+                        surface.blit(text, (50, y_offset))
+                        y_offset += 20
 
 
 def run() -> None:
@@ -1619,15 +1663,24 @@ def run() -> None:
                     plant.regrow()
                     plant.draw(world_surface)
 
-                for pheromone in list(pheromones):
-                    pheromone.strength -= 10
-                    if pheromone.strength <= 0:
-                        pheromones.remove(pheromone)
-                        continue
-                    pheromone.draw(world_surface)
+                if pheromones:
+                    active_pheromones: List[Pheromone] = []
+                    for pheromone in pheromones:
+                        pheromone.strength -= 10
+                        if pheromone.strength > 0:
+                            pheromone.draw(world_surface)
+                            active_pheromones.append(pheromone)
+                    pheromones[:] = active_pheromones
 
-                for lifeform in list(lifeforms):
-                    lifeform.set_speed()
+                lifeform_snapshot = list(lifeforms)
+                average_maturity = (
+                    sum(l.maturity for l in lifeform_snapshot) / len(lifeform_snapshot)
+                    if lifeform_snapshot
+                    else None
+                )
+
+                for lifeform in lifeform_snapshot:
+                    lifeform.set_speed(average_maturity)
                     lifeform.calculate_attack_power()
                     lifeform.calculate_defence_power()
                     lifeform.check_group()
