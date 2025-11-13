@@ -1,15 +1,20 @@
 """Core simulation loop and entities for the evolution project."""
+
 from __future__ import annotations
 
 import datetime
+import logging
 import math
 import os
 import random
+from collections import deque
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from pathlib import Path
+from typing import Deque, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
 import pygame
+from pygame.math import Vector2
 
 from . import settings
 from .camera import Camera
@@ -35,6 +40,35 @@ class NotificationContext:
 
 
 notification_context = NotificationContext(NotificationManager())
+
+
+def _initialise_logger() -> logging.Logger:
+    log_dir = settings.LOG_DIRECTORY
+    if not isinstance(log_dir, Path):
+        log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / settings.DEBUG_LOG_FILE
+
+    logger = logging.getLogger("evolution.simulation")
+    if logger.handlers:
+        return logger
+
+    level_name = str(settings.DEBUG_LOG_LEVEL).upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logger.setLevel(level)
+
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler.setLevel(level)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.propagate = False
+
+    logger.info("Debug logging initialised at %s", log_path)
+    return logger
+
+
+logger = _initialise_logger()
 
 
 class Lifeform:
@@ -116,7 +150,30 @@ class Lifeform:
         self.group_strength = 0
         self.group_state_timer = 0
 
+        self.diet = dna_profile.get('diet', 'omnivore')
+        self.social_tendency = float(dna_profile.get('social', 0.5))
+        self.risk_tolerance = float(dna_profile.get('risk_tolerance', 0.5))
+
+        self.memory: Dict[str, Deque[dict]] = {
+            'visited': deque(maxlen=settings.MEMORY_MAX_VISITED),
+            'food': deque(maxlen=settings.MEMORY_MAX_FOOD),
+            'threats': deque(maxlen=settings.MEMORY_MAX_THREATS),
+            'partner': deque(maxlen=settings.MEMORY_MAX_PARTNERS),
+        }
+
+        initial_wander = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+        if initial_wander.length_squared() == 0:
+            initial_wander = Vector2(1, 0)
+        self.wander_direction = initial_wander.normalize()
+        self.last_wander_update = 0
+        self._stuck_frames = 0
+        self._boundary_contact_frames = 0
+        self._escape_timer = 0
+        self._escape_vector = Vector2()
+
     def movement(self):
+        self._update_behavior_state()
+
         previous_position = (self.x, self.y)
         attempted_x = self.x + self.x_direction * self.speed
         attempted_y = self.y + self.y_direction * self.speed
@@ -134,16 +191,49 @@ class Lifeform:
         if collided:
             self.x_direction = -self.x_direction
             self.y_direction = -self.y_direction
+            logger.warning(
+                "Lifeform %s collided with obstacle at (%.1f, %.1f)",
+                self.id,
+                resolved_x,
+                resolved_y,
+            )
+            self._trigger_escape_manoeuvre("collision")
+            self._boundary_contact_frames = 0
         else:
             if hit_boundary_x:
                 self.x_direction = -self.x_direction
             if hit_boundary_y:
                 self.y_direction = -self.y_direction
+            if hit_boundary_x or hit_boundary_y:
+                self._boundary_contact_frames += 1
+                if self._boundary_contact_frames >= settings.STUCK_FRAMES_THRESHOLD:
+                    logger.info(
+                        "Lifeform %s hugging boundary at (%.1f, %.1f) for %s frames",
+                        self.id,
+                        resolved_x,
+                        resolved_y,
+                        self._boundary_contact_frames,
+                    )
+                    self._trigger_escape_manoeuvre("boundary")
+            else:
+                self._boundary_contact_frames = 0
 
         self.x, self.y = resolved_x, resolved_y
         self.rect.update(int(self.x), int(self.y), self.width, self.height)
 
-        self.update_targets()
+        displacement = Vector2(self.x - previous_position[0], self.y - previous_position[1])
+        if displacement.length() < 0.25:
+            self._stuck_frames += 1
+            if self._stuck_frames == settings.STUCK_FRAMES_THRESHOLD:
+                logger.warning(
+                    "Lifeform %s stuck near (%.1f, %.1f); triggering escape",
+                    self.id,
+                    self.x,
+                    self.y,
+                )
+                self._trigger_escape_manoeuvre("stuck")
+        else:
+            self._stuck_frames = 0
 
         if self.closest_enemy:
             notification_context.debug(f"{self.id} ziet vijand {self.closest_enemy.id}")
@@ -152,115 +242,457 @@ class Lifeform:
         if self.closest_partner:
             notification_context.debug(f"{self.id} heeft partner {self.closest_partner.id}")
 
+        self._handle_close_interactions()
+
+    def _update_behavior_state(self) -> None:
+        now = pygame.time.get_ticks()
+        self._cleanup_memory(now)
+        self._remember('visited', (self.x, self.y), now, weight=1.0)
+
+        self.update_targets()
+        self._record_current_observations(now)
+
+        desired = Vector2()
+
+        threat_vector = self._compute_threat_vector(now)
+        if threat_vector.length_squared() > 0:
+            desired += threat_vector
+        else:
+            pursuit_vector = self._compute_pursuit_vector(now)
+            desired += pursuit_vector
+            if pursuit_vector.length_squared() == 0:
+                desired += self._memory_target_vector(now)
+
+        desired += self._group_behavior_vector()
+        desired += self._avoid_recent_positions(now)
+        desired += self._boundary_repulsion_vector()
+
+        avoidance = self._obstacle_avoidance_vector(desired)
+        if avoidance.length_squared() > 0:
+            desired += avoidance
+
+        if self._escape_timer > 0 and self._escape_vector.length_squared() > 0:
+            desired += self._escape_vector * settings.ESCAPE_FORCE
+            self._escape_timer -= 1
+        else:
+            self._escape_timer = 0
+
+        if desired.length_squared() == 0:
+            desired = self._wander_vector(now)
+            self.search = True
+        else:
+            self.search = False
+
+        if desired.length_squared() == 0:
+            desired = Vector2(self.x_direction, self.y_direction)
+            if desired.length_squared() == 0:
+                desired = Vector2(1, 0)
+
+        desired = desired.normalize()
+        self.wander_direction = desired
+        self.x_direction = desired.x
+        self.y_direction = desired.y
+
+    def _handle_close_interactions(self) -> None:
         if self.closest_enemy and self.closest_enemy.health_now > 0:
-            x_diff = self.closest_enemy.x - self.x
-            y_diff = self.closest_enemy.y - self.y
-            if math.hypot(x_diff, y_diff) < 5:
+            if self.distance_to(self.closest_enemy) < 5:
                 damage = max(1, self.attack_power_now - self.closest_enemy.defence_power_now / 2)
                 self.closest_enemy.health_now -= damage
                 self.closest_enemy.wounded += 2
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = random.uniform(-1, 1)
-                self.y_direction = random.uniform(-1, 1)
-            else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
 
         if (
             self.closest_prey
             and self.closest_prey.health_now > 0
+            and self._diet_prefers_meat()
             and self.closest_enemy is None
-            and self.closest_partner is None
-            and self.closest_prey.hunger < 500
         ):
-            x_diff = self.closest_prey.x - self.x
-            y_diff = self.closest_prey.y - self.y
-            if math.hypot(x_diff, y_diff) < 5:
+            if self.distance_to(self.closest_prey) < 5:
                 damage = max(1, self.attack_power_now - self.closest_prey.defence_power_now / 2)
                 self.closest_prey.health_now -= damage
                 self.closest_prey.wounded += 3
-                self.hunger -= 40
-                if self.hunger < 0:
-                    self.hunger = 0
+                self.hunger = max(0, self.hunger - 40)
                 notification_context.action(f"{self.id} valt {self.closest_prey.id} aan")
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = random.uniform(-1, 1)
-                self.y_direction = random.uniform(-1, 1)
-            else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
 
         if (
             self.closest_partner
             and self.closest_partner.health_now > 0
-            and self.closest_enemy is None
-            and self.closest_prey is None
-            and self.closest_partner.hunger < 500
+            and self.closest_partner.hunger < settings.HUNGER_CRITICAL_THRESHOLD
+            and self._ready_to_reproduce()
         ):
-            x_diff = self.closest_partner.x - self.x
-            y_diff = self.closest_partner.y - self.y
-            if self.distance_to(self.closest_partner) < 3 and self.age > self.maturity and self.reproduced_cooldown == 0:
+            if self.distance_to(self.closest_partner) < 3:
                 self.reproduce(self.closest_partner)
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = random.uniform(-1, 1)
-                self.y_direction = random.uniform(-1, 1)
-            else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
 
-        if self.closest_plant and self.hunger > 250 and not self.closest_enemy and not self.closest_partner and self.closest_plant.resource > 10:
-            x_diff = self.closest_plant.x - self.x
-            y_diff = self.closest_plant.y - self.y
+        if (
+            self.closest_plant
+            and self.closest_enemy is None
+            and self._diet_prefers_plants()
+            and self.closest_plant.resource > 10
+        ):
             if self.distance_to(self.closest_plant) < 3:
                 notification_context.action(f"{self.id} eet van een plant")
                 self.closest_plant.apply_effect(self)
                 self.closest_plant.decrement_resource(12)
-                self.hunger -= 60
-            if x_diff == 0 and y_diff == 0:
-                self.x_direction = 0
-                self.y_direction = 0
+                self.hunger = max(0, self.hunger - 60)
+
+    def _cleanup_memory(self, timestamp: int) -> None:
+        for key, buffer in self.memory.items():
+            while buffer and timestamp - buffer[0]['time'] > settings.MEMORY_DECAY_MS:
+                buffer.popleft()
+
+    def _remember(self, kind: str, position: Tuple[float, float], timestamp: int, weight: float = 1.0) -> None:
+        entry = {'pos': position, 'time': timestamp, 'weight': float(weight)}
+        if kind not in self.memory:
+            return
+        self.memory[kind].append(entry)
+
+    def _recall(self, kind: str, timestamp: int) -> Optional[Tuple[float, float]]:
+        buffer = self.memory.get(kind)
+        if not buffer:
+            return None
+        candidates: List[Tuple[float, Tuple[float, float]]] = []
+        for entry in buffer:
+            age = timestamp - entry['time']
+            if age > settings.MEMORY_DECAY_MS:
+                continue
+            decay_factor = max(0.0, 1.0 - age / settings.MEMORY_DECAY_MS)
+            weight = entry.get('weight', 1.0) * (0.5 + 0.5 * decay_factor)
+            candidates.append((weight, entry['pos']))
+        if not candidates:
+            return None
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+
+    def _record_current_observations(self, timestamp: int) -> None:
+        if self.closest_enemy and self.closest_enemy.health_now > 0:
+            self._remember('threats', (self.closest_enemy.x, self.closest_enemy.y), timestamp, weight=1.0 + (1.0 - self.risk_tolerance))
+        if (
+            self.closest_prey
+            and self.closest_prey.health_now > 0
+            and self._diet_prefers_meat()
+        ):
+            weight = max(20.0, self.attack_power_now + self.hunger)
+            self._remember('food', (self.closest_prey.x, self.closest_prey.y), timestamp, weight=weight)
+        if (
+            self.closest_plant
+            and self.closest_plant.resource > 0
+            and self._diet_prefers_plants()
+        ):
+            weight = self.closest_plant.resource + max(0, self.hunger - 50)
+            self._remember('food', self._plant_center(self.closest_plant), timestamp, weight=weight)
+        if self.closest_partner and self.closest_partner.health_now > 0:
+            partner_weight = 1.0 + self.social_tendency
+            self._remember('partner', (self.closest_partner.x, self.closest_partner.y), timestamp, weight=partner_weight)
+
+    def _compute_threat_vector(self, timestamp: int) -> Vector2:
+        if self.closest_enemy and self.closest_enemy.health_now > 0:
+            direction, distance = self._direction_to_lifeform(self.closest_enemy)
+            if distance > 0:
+                strength = max(0.2, 1.0 - self.risk_tolerance * 0.8)
+                return direction * -strength
+        remembered_threat = self._recall('threats', timestamp)
+        if remembered_threat:
+            direction, distance = self._direction_to_point(remembered_threat)
+            if distance > 0:
+                strength = max(0.1, 1.0 - self.risk_tolerance)
+                return direction * -strength
+        return Vector2()
+
+    def _compute_pursuit_vector(self, timestamp: int) -> Vector2:
+        desired = Vector2()
+        if self._should_seek_food():
+            food_vector = self._immediate_food_vector()
+            if food_vector.length_squared() == 0:
+                remembered_food = self._recall('food', timestamp)
+                if remembered_food:
+                    direction, _ = self._direction_to_point(remembered_food)
+                    desired += direction
             else:
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
+                desired += food_vector
+        else:
+            desired += self._opportunistic_food_vector()
 
-        if self.in_group and not self.closest_enemy and not self.closest_prey and not self.closest_partner and not self.closest_plant and self.group_center:
-            x_diff = self.group_center[0] - self.x
-            y_diff = self.group_center[1] - self.y
-            total_distance = math.hypot(x_diff, y_diff)
-            if total_distance > self.follow_range:
-                self.x_direction = x_diff / total_distance
-                self.y_direction = y_diff / total_distance
-                self.search = False
+        if desired.length_squared() == 0 and self._ready_to_reproduce():
+            if self.closest_partner and self.closest_partner.health_now > 0:
+                direction, _ = self._direction_to_lifeform(self.closest_partner)
+                desired += direction
+            else:
+                remembered_partner = self._recall('partner', timestamp)
+                if remembered_partner:
+                    direction, _ = self._direction_to_point(remembered_partner)
+                    desired += direction
+        return desired
 
-        if not self.search and not self.closest_enemy and not self.closest_prey and not self.closest_partner and not self.closest_plant:
-            notification_context.debug(f"{self.id} zoekt naar doelen")
-            self.x_direction = random.uniform(-1, 1)
-            self.y_direction = random.uniform(-1, 1)
-            self.search = True
+    def _memory_target_vector(self, timestamp: int) -> Vector2:
+        target = None
+        if self._ready_to_reproduce():
+            target = self._recall('partner', timestamp)
+        if target is None and self._should_seek_food():
+            target = self._recall('food', timestamp)
+        if target is None:
+            return Vector2()
+        direction, _ = self._direction_to_point(target)
+        return direction
 
-        if self.search:
-            if self.closest_follower and not self.is_leader and self.closest_follower.closest_follower != self and self.hunger < 500:
-                x_diff = self.closest_follower.x - self.x
-                y_diff = self.closest_follower.y - self.y
-                total_distance = math.sqrt(x_diff ** 2 + y_diff ** 2)
-                if total_distance > 0:
-                    if total_distance > self.follow_range:
-                        self.x_direction = x_diff / total_distance
-                        self.y_direction = y_diff / total_distance
-                    else:
-                        self.x_direction = -x_diff / total_distance
-                        self.y_direction = -y_diff / total_distance
-                else:
-                    self.x_direction = random.uniform(-1, 1)
-                    self.y_direction = random.uniform(-1, 1)
-            elif random.randint(0, 100) < 25:
-                self.x_direction = random.uniform(-1, 1)
-                self.y_direction = random.uniform(-1, 1)
-            notification_context.debug(f"{self.id} zoekstatus: {self.search}")
+    def _group_behavior_vector(self) -> Vector2:
+        if not self.in_group or not self.group_neighbors:
+            return Vector2()
+
+        alignment = Vector2()
+        cohesion_positions = Vector2()
+        separation = Vector2()
+        active_neighbors = 0
+
+        for neighbor in self.group_neighbors:
+            if neighbor.health_now <= 0:
+                continue
+            alignment += Vector2(neighbor.x_direction, neighbor.y_direction)
+            cohesion_positions += Vector2(neighbor.x, neighbor.y)
+            offset = Vector2(self.x - neighbor.x, self.y - neighbor.y)
+            distance = offset.length()
+            if 0 < distance < settings.BOID_SEPARATION_DISTANCE:
+                separation += offset.normalize() * (1.0 - distance / settings.BOID_SEPARATION_DISTANCE)
+            active_neighbors += 1
+
+        if active_neighbors == 0:
+            return Vector2()
+
+        if alignment.length_squared() > 0:
+            alignment = alignment.normalize()
+        cohesion = (cohesion_positions / active_neighbors) - Vector2(self.x, self.y)
+        if cohesion.length_squared() > 0:
+            cohesion = cohesion.normalize()
+        if separation.length_squared() > 0:
+            separation = separation.normalize()
+
+        influence = Vector2()
+        influence += alignment * settings.BOID_ALIGNMENT_WEIGHT * self.social_tendency
+        influence += cohesion * settings.BOID_COHESION_WEIGHT * self.social_tendency
+        influence += separation * settings.BOID_SEPARATION_WEIGHT
+
+        if self.closest_follower and not self.is_leader and self.closest_follower.health_now > 0:
+            follow_direction, _ = self._direction_to_lifeform(self.closest_follower)
+            influence += follow_direction * 0.35 * self.social_tendency
+
+        return influence
+
+    def _avoid_recent_positions(self, timestamp: int) -> Vector2:
+        buffer = self.memory.get('visited')
+        if not buffer:
+            return Vector2()
+        repulsion = Vector2()
+        for entry in buffer:
+            age = timestamp - entry['time']
+            if age > settings.RECENT_VISIT_MEMORY_MS:
+                continue
+            offset = Vector2(self.x - entry['pos'][0], self.y - entry['pos'][1])
+            distance_sq = offset.length_squared()
+            if distance_sq == 0:
+                continue
+            repulsion += offset / (distance_sq + 1)
+        if repulsion.length_squared() == 0:
+            return Vector2()
+        return repulsion.normalize() * 0.4
+
+    def _wander_vector(self, timestamp: int) -> Vector2:
+        if timestamp - self.last_wander_update > settings.WANDER_INTERVAL_MS:
+            jitter = random.uniform(-settings.WANDER_JITTER_DEGREES, settings.WANDER_JITTER_DEGREES)
+            self.wander_direction = self.wander_direction.rotate(jitter)
+            if self.wander_direction.length_squared() == 0:
+                self.wander_direction = Vector2(1, 0)
+            else:
+                self.wander_direction = self.wander_direction.normalize()
+            self.last_wander_update = timestamp
+        noise = Vector2(random.uniform(-0.2, 0.2), random.uniform(-0.2, 0.2))
+        wander = self.wander_direction + noise
+        if wander.length_squared() == 0:
+            wander = Vector2(1, 0)
+        return wander.normalize()
+
+    def _obstacle_avoidance_vector(self, desired: Vector2) -> Vector2:
+        base = Vector2(desired)
+        if base.length_squared() == 0:
+            base = Vector2(self.x_direction, self.y_direction)
+        if base.length_squared() == 0:
+            base = Vector2(self.wander_direction)
+        if base.length_squared() == 0:
+            return Vector2()
+
+        forward = base.normalize()
+        look_ahead = max(
+            settings.OBSTACLE_LOOKAHEAD_BASE,
+            self.speed * settings.OBSTACLE_LOOKAHEAD_FACTOR,
+        )
+        inflated = self.rect.inflate(8, 8)
+        check_rect = inflated.copy()
+        check_rect.x = int(self.rect.x + forward.x * look_ahead)
+        check_rect.y = int(self.rect.y + forward.y * look_ahead)
+
+        if not world.is_blocked(check_rect):
+            return Vector2()
+
+        logger.debug(
+            "Lifeform %s predicted obstacle ahead; searching alternative path",
+            self.id,
+        )
+
+        angles = [
+            20,
+            -20,
+            35,
+            -35,
+            50,
+            -50,
+            65,
+            -65,
+            90,
+            -90,
+            120,
+            -120,
+            150,
+            -150,
+            180,
+        ]
+        for angle in angles:
+            candidate = forward.rotate(angle)
+            if candidate.length_squared() == 0:
+                continue
+            candidate_rect = inflated.copy()
+            candidate_rect.x = int(self.rect.x + candidate.x * look_ahead)
+            candidate_rect.y = int(self.rect.y + candidate.y * look_ahead)
+            if not world.is_blocked(candidate_rect):
+                return candidate.normalize() * settings.OBSTACLE_AVOID_FORCE
+
+        return (-forward) * (settings.OBSTACLE_AVOID_FORCE * 0.5)
+
+    def _boundary_repulsion_vector(self) -> Vector2:
+        margin = settings.BOUNDARY_REPULSION_MARGIN
+        force = Vector2()
+
+        left_distance = margin - self.x
+        if left_distance > 0:
+            force.x += left_distance / margin
+
+        right_distance = margin - (world.width - (self.x + self.width))
+        if right_distance > 0:
+            force.x -= right_distance / margin
+
+        top_distance = margin - self.y
+        if top_distance > 0:
+            force.y += top_distance / margin
+
+        bottom_distance = margin - (world.height - (self.y + self.height))
+        if bottom_distance > 0:
+            force.y -= bottom_distance / margin
+
+        if force.length_squared() == 0:
+            return Vector2()
+        return force.normalize() * settings.BOUNDARY_REPULSION_WEIGHT
+
+    def _trigger_escape_manoeuvre(self, reason: str) -> None:
+        escape = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+        if escape.length_squared() == 0:
+            escape = Vector2(1, 0)
+        escape = escape.normalize()
+        self._escape_vector = escape
+        self._escape_timer = settings.ESCAPE_OVERRIDE_FRAMES
+        self.wander_direction = escape
+        self.x_direction = escape.x
+        self.y_direction = escape.y
+        self._boundary_contact_frames = 0
+        self._stuck_frames = 0
+        logger.warning(
+            "Lifeform %s executing escape manoeuvre (%s) towards vector (%.2f, %.2f)",
+            self.id,
+            reason,
+            escape.x,
+            escape.y,
+        )
+
+    def _diet_prefers_plants(self) -> bool:
+        return self.diet in ('herbivore', 'omnivore')
+
+    def _diet_prefers_meat(self) -> bool:
+        return self.diet in ('carnivore', 'omnivore')
+
+    def _should_seek_food(self) -> bool:
+        if self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
+            return True
+        if self.energy_now < self.energy * 0.45:
+            return True
+        return False
+
+    def _ready_to_reproduce(self) -> bool:
+        if self.reproduced_cooldown != 0:
+            return False
+        if not self.is_adult():
+            return False
+        if self.hunger > settings.HUNGER_SEEK_THRESHOLD:
+            return False
+        if self.closest_enemy and self.closest_enemy.health_now > 0:
+            return False
+        energy_ratio = self.energy_now / max(1, self.energy)
+        return energy_ratio >= settings.ENERGY_REPRODUCTION_THRESHOLD
+
+    def _immediate_food_vector(self) -> Vector2:
+        candidates: List[Tuple[float, Vector2]] = []
+        if (
+            self.closest_plant
+            and self._diet_prefers_plants()
+            and self.closest_plant.resource > 0
+            and self.closest_enemy is None
+        ):
+            direction, distance = self._direction_to_point(self._plant_center(self.closest_plant))
+            if distance > 0:
+                weight = self.closest_plant.resource + max(0, self.hunger - 80)
+                score = weight / (distance + 1)
+                candidates.append((score, direction))
+        if (
+            self.closest_prey
+            and self._diet_prefers_meat()
+            and self.closest_prey.health_now > 0
+            and self.closest_enemy is None
+        ):
+            direction, distance = self._direction_to_lifeform(self.closest_prey)
+            if distance > 0:
+                weight = self.attack_power_now + max(30, self.hunger)
+                score = weight / (distance + 1)
+                candidates.append((score, direction))
+        if not candidates:
+            return Vector2()
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        return candidates[0][1]
+
+    def _opportunistic_food_vector(self) -> Vector2:
+        if (
+            self.closest_prey
+            and self._diet_prefers_meat()
+            and self.closest_enemy is None
+        ):
+            direction, distance = self._direction_to_lifeform(self.closest_prey)
+            if distance > 0 and distance < max(12, self.vision * 0.6):
+                return direction
+        if (
+            self.closest_plant
+            and self._diet_prefers_plants()
+            and self.closest_enemy is None
+        ):
+            direction, distance = self._direction_to_point(self._plant_center(self.closest_plant))
+            if distance > 0 and distance < max(10, self.vision * 0.5):
+                return direction
+        return Vector2()
+
+    def _plant_center(self, plant: "Vegetation") -> Tuple[float, float]:
+        return (plant.x + plant.width / 2, plant.y + plant.height / 2)
+
+    def _direction_to_point(self, point: Tuple[float, float]) -> Tuple[Vector2, float]:
+        vector = Vector2(point[0] - self.x, point[1] - self.y)
+        distance = vector.length()
+        if distance == 0:
+            return Vector2(), 0.0
+        return vector.normalize(), distance
+
+    def _direction_to_lifeform(self, other: "Lifeform") -> Tuple[Vector2, float]:
+        return self._direction_to_point((other.x, other.y))
 
     def add_tail(self):
         pheromone = Pheromone(self.x, self.y, self.width, self.height, self.color, 100)
@@ -422,6 +854,9 @@ class Lifeform:
         if qualified:
             self.in_group = True
             self.group_state_timer = settings.GROUP_PERSISTENCE_FRAMES
+            total_members = neighbor_count + 1
+            self.group_center = (total_x / total_members, total_y / total_members)
+            self.group_strength = cohesion
         elif self.group_state_timer > 0:
             self.group_state_timer -= 1
             self.in_group = True
@@ -476,6 +911,13 @@ class Lifeform:
 
         else:
             notification_context.action(f"{self.id} is gestorven")
+            logger.info(
+                "Lifeform %s died at age %.1f with hunger %.1f and energy %.1f",
+                self.id,
+                self.age,
+                self.hunger,
+                self.energy_now,
+            )
             lifeforms.remove(self)
             death_ages.append(self.age)
 
@@ -519,6 +961,18 @@ class Lifeform:
             self.width = self.initial_width * factor
 
     def reproduce(self, partner):
+        if len(lifeforms) >= settings.MAX_LIFEFORMS:
+            logger.info(
+                "Lifeform %s attempted to reproduce with %s but cap %s reached",
+                self.id,
+                partner.id,
+                settings.MAX_LIFEFORMS,
+            )
+            retry = max(1, settings.POPULATION_CAP_RETRY_COOLDOWN)
+            self.reproduced_cooldown = retry
+            partner.reproduced_cooldown = retry
+            return False
+
         child_dna_profile = {
                 'dna_id': self.dna_id,
                 'width': (self.width + partner.width) // 2,
@@ -530,7 +984,10 @@ class Lifeform:
                 'defence_power': (self.defence_power + partner.defence_power) // 2,
                 'attack_power': (self.attack_power + partner.attack_power) // 2,
                 'energy': (self.energy + partner.energy) // 2,
-                'longevity': (self.longevity + partner.longevity) // 2
+                'longevity': (self.longevity + partner.longevity) // 2,
+                'diet': self.diet,
+                'social': (self.social_tendency + partner.social_tendency) / 2,
+                'risk_tolerance': (self.risk_tolerance + partner.risk_tolerance) / 2,
             }
         if random.randint(0, 100) < settings.MUTATION_CHANCE:
             child_dna_profile['vision'] = max(settings.VISION_MIN, min(settings.VISION_MAX, child_dna_profile['vision'] + random.randint(-3, 3)))
@@ -538,14 +995,25 @@ class Lifeform:
             child_dna_profile['maturity'] = max(settings.MIN_MATURITY, min(settings.MAX_MATURITY, child_dna_profile['maturity'] + random.randint(-10, 10)))
             child_dna_profile['energy'] = max(1, child_dna_profile['energy'] + random.randint(-3, 3))
             child_dna_profile['longevity'] = max(100, child_dna_profile['longevity'] + random.randint(-20, 20))
+            child_dna_profile['social'] = min(1.0, max(0.0, child_dna_profile['social'] + random.uniform(-0.05, 0.05)))
+            child_dna_profile['risk_tolerance'] = min(1.0, max(0.0, child_dna_profile['risk_tolerance'] + random.uniform(-0.05, 0.05)))
 
         child = Lifeform(self.x, self.y, child_dna_profile, self.generation + 1)
         child.color = self.color
         lifeforms.append(child)
         player_controller.on_birth()
         notification_context.action(f"Nieuwe levensvorm geboren uit {self.id}")
+        logger.info(
+            "Lifeform %s reproduced with %s producing %s at (%.1f, %.1f)",
+            self.id,
+            partner.id,
+            child.id,
+            self.x,
+            self.y,
+        )
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
         partner.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
+        return True
 
     def progression(self, delta_time: float):
         biome, effects = world.get_environment_context(self.x + self.width / 2, self.y + self.height / 2)
@@ -827,6 +1295,36 @@ def reset_dna_profiles():
     dna_profiles.clear()
     dna_home_biome.clear()
     for dna_id in range(settings.N_DNA_PROFILES):
+        diet = random.choices(
+            ['herbivore', 'omnivore', 'carnivore'],
+            weights=[0.4, 0.35, 0.25],
+        )[0]
+
+        if diet == 'herbivore':
+            attack_power = random.randint(5, 45)
+            defence_power = random.randint(35, 85)
+            vision_value = random.randint(settings.VISION_MIN, max(settings.VISION_MIN + 1, settings.VISION_MAX - 10))
+            energy_value = random.randint(88, 110)
+            longevity_value = random.randint(1600, 5200)
+            social_tendency = random.uniform(0.6, 1.0)
+            risk_tolerance = random.uniform(0.1, 0.5)
+        elif diet == 'carnivore':
+            attack_power = random.randint(45, 95)
+            defence_power = random.randint(20, 65)
+            vision_value = random.randint(max(settings.VISION_MIN, 28), settings.VISION_MAX)
+            energy_value = random.randint(78, 96)
+            longevity_value = random.randint(900, 3600)
+            social_tendency = random.uniform(0.2, 0.6)
+            risk_tolerance = random.uniform(0.6, 1.0)
+        else:
+            attack_power = random.randint(30, 85)
+            defence_power = random.randint(25, 75)
+            vision_value = random.randint(max(settings.VISION_MIN, 24), settings.VISION_MAX)
+            energy_value = random.randint(82, 104)
+            longevity_value = random.randint(1200, 4200)
+            social_tendency = random.uniform(0.4, 0.85)
+            risk_tolerance = random.uniform(0.4, 0.8)
+
         dna_profile = {
             'dna_id': dna_id,
             'width': random.randint(settings.MIN_WIDTH, settings.MAX_WIDTH),
@@ -834,11 +1332,14 @@ def reset_dna_profiles():
             'color': (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)),
             'health': random.randint(1, 200),
             'maturity': random.randint(settings.MIN_MATURITY, settings.MAX_MATURITY),
-            'vision': random.randint(settings.VISION_MIN, settings.VISION_MAX),
-            'defence_power': random.randint(1, 70),
-            'attack_power': random.randint(1, 70),
-            'energy': random.randint(80, 100),
-            'longevity': random.randint(1000, 5000)
+            'vision': vision_value,
+            'defence_power': defence_power,
+            'attack_power': attack_power,
+            'energy': energy_value,
+            'longevity': longevity_value,
+            'diet': diet,
+            'social': social_tendency,
+            'risk_tolerance': risk_tolerance,
         }
         dna_profiles.append(dna_profile)
         if world.biomes:
@@ -885,6 +1386,14 @@ def init_lifeforms():
         lifeform = Lifeform(x, y, dna_profile, generation)
         lifeform.current_biome = biome
         lifeforms.append(lifeform)
+        logger.info(
+            "Spawned lifeform %s (dna %s) at (%.1f, %.1f) in biome %s",
+            lifeform.id,
+            dna_profile['dna_id'],
+            x,
+            y,
+            biome.name if biome else "onbekend",
+        )
 
 
 def init_vegetation():
@@ -1017,6 +1526,12 @@ def run() -> None:
     world = World(settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
     camera = Camera(settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT, settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
     camera.center_on(settings.WORLD_WIDTH / 2, settings.WORLD_HEIGHT / 2)
+    logger.info(
+        "Simulation run initialised with world size %sx%s and %s starting lifeforms",
+        settings.WORLD_WIDTH,
+        settings.WORLD_HEIGHT,
+        settings.N_LIFEFORMS,
+    )
 
     notification_manager = notification_context.notification_manager
     event_manager = EventManager(notification_manager, environment_modifiers)
