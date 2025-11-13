@@ -6,7 +6,7 @@ from typing import List, Optional, Tuple
 
 import pygame
 
-from . import settings
+from ..config import settings
 
 Color = Tuple[int, int, int]
 

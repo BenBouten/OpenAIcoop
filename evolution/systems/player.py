@@ -5,7 +5,7 @@ from typing import List
 
 import pygame
 
-from . import settings
+from ..config import settings
 from .notifications import NotificationManager
 
 
