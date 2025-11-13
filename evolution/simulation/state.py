@@ -1,0 +1,21 @@
+from dataclasses import dataclass, field
+from typing import List
+
+
+@dataclass
+class SimulationState:
+    lifeforms: List = field(default_factory=list)
+    plants: List = field(default_factory=list)
+    pheromones: List = field(default_factory=list)
+    world: 'World' = None
+    camera: 'Camera' = None
+    notifications: 'NotificationManager' = None
+    events: 'EventManager' = None
+    player: 'PlayerController' = None
+    environment_modifiers: dict = field(default_factory=lambda: {
+        "plant_regrowth": 1.0,
+        "hunger_rate": 1.0,
+    })
+    death_ages: List[int] = field(default_factory=list)
+    dna_profiles: List[dict] = field(default_factory=list)
+    dna_home_biome: dict = field(default_factory=dict)
