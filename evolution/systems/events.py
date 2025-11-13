@@ -6,7 +6,7 @@ from typing import Dict, List, Optional
 
 import pygame
 
-from . import settings
+from ..config import settings
 from .notifications import NotificationManager
 
 

@@ -16,12 +16,12 @@ import matplotlib.pyplot as plt
 import pygame
 from pygame.math import Vector2
 
-from . import settings
-from .camera import Camera
-from .events import EventManager
-from .notifications import NotificationManager
-from .player import PlayerController
-from .world import BiomeRegion, World
+from .config import settings
+from .rendering.camera import Camera
+from .systems.events import EventManager
+from .systems.notifications import NotificationManager
+from .systems.player import PlayerController
+from .world.world import BiomeRegion, World
 
 
 @dataclass

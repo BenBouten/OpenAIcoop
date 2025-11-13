@@ -8,7 +8,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pygame
 
-from . import settings
+from ..config import settings
 
 
 @dataclass
