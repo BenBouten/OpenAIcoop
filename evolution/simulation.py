@@ -961,6 +961,18 @@ class Lifeform:
             self.width = self.initial_width * factor
 
     def reproduce(self, partner):
+        if len(lifeforms) >= settings.MAX_LIFEFORMS:
+            logger.info(
+                "Lifeform %s attempted to reproduce with %s but cap %s reached",
+                self.id,
+                partner.id,
+                settings.MAX_LIFEFORMS,
+            )
+            retry = max(1, settings.POPULATION_CAP_RETRY_COOLDOWN)
+            self.reproduced_cooldown = retry
+            partner.reproduced_cooldown = retry
+            return False
+
         child_dna_profile = {
                 'dna_id': self.dna_id,
                 'width': (self.width + partner.width) // 2,
@@ -1001,6 +1013,7 @@ class Lifeform:
         )
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
         partner.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
+        return True
 
     def progression(self, delta_time: float):
         biome, effects = world.get_environment_context(self.x + self.width / 2, self.y + self.height / 2)
