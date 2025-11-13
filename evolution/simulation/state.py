@@ -10,6 +10,7 @@ class SimulationState:
     world: 'World' = None
     camera: 'Camera' = None
     notifications: 'NotificationManager' = None
+    notification_context: object = None
     events: 'EventManager' = None
     player: 'PlayerController' = None
     environment_modifiers: dict = field(default_factory=lambda: {
@@ -19,3 +20,4 @@ class SimulationState:
     death_ages: List[int] = field(default_factory=list)
     dna_profiles: List[dict] = field(default_factory=list)
     dna_home_biome: dict = field(default_factory=dict)
+    lifeform_id_counter: int = 0
