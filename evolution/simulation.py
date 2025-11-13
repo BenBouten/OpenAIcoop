@@ -1,12 +1,15 @@
 """Core simulation loop and entities for the evolution project."""
+
 from __future__ import annotations
 
 import datetime
+import logging
 import math
 import os
 import random
 from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Deque, Dict, List, Optional, Tuple
 
 import matplotlib.pyplot as plt
@@ -37,6 +40,35 @@ class NotificationContext:
 
 
 notification_context = NotificationContext(NotificationManager())
+
+
+def _initialise_logger() -> logging.Logger:
+    log_dir = settings.LOG_DIRECTORY
+    if not isinstance(log_dir, Path):
+        log_dir = Path(log_dir)
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / settings.DEBUG_LOG_FILE
+
+    logger = logging.getLogger("evolution.simulation")
+    if logger.handlers:
+        return logger
+
+    level_name = str(settings.DEBUG_LOG_LEVEL).upper()
+    level = getattr(logging, level_name, logging.INFO)
+    logger.setLevel(level)
+
+    file_handler = logging.FileHandler(log_path, mode="w", encoding="utf-8")
+    file_handler.setLevel(level)
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s")
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+    logger.propagate = False
+
+    logger.info("Debug logging initialised at %s", log_path)
+    return logger
+
+
+logger = _initialise_logger()
 
 
 class Lifeform:
@@ -134,6 +166,10 @@ class Lifeform:
             initial_wander = Vector2(1, 0)
         self.wander_direction = initial_wander.normalize()
         self.last_wander_update = 0
+        self._stuck_frames = 0
+        self._boundary_contact_frames = 0
+        self._escape_timer = 0
+        self._escape_vector = Vector2()
 
     def movement(self):
         self._update_behavior_state()
@@ -155,14 +191,49 @@ class Lifeform:
         if collided:
             self.x_direction = -self.x_direction
             self.y_direction = -self.y_direction
+            logger.warning(
+                "Lifeform %s collided with obstacle at (%.1f, %.1f)",
+                self.id,
+                resolved_x,
+                resolved_y,
+            )
+            self._trigger_escape_manoeuvre("collision")
+            self._boundary_contact_frames = 0
         else:
             if hit_boundary_x:
                 self.x_direction = -self.x_direction
             if hit_boundary_y:
                 self.y_direction = -self.y_direction
+            if hit_boundary_x or hit_boundary_y:
+                self._boundary_contact_frames += 1
+                if self._boundary_contact_frames >= settings.STUCK_FRAMES_THRESHOLD:
+                    logger.info(
+                        "Lifeform %s hugging boundary at (%.1f, %.1f) for %s frames",
+                        self.id,
+                        resolved_x,
+                        resolved_y,
+                        self._boundary_contact_frames,
+                    )
+                    self._trigger_escape_manoeuvre("boundary")
+            else:
+                self._boundary_contact_frames = 0
 
         self.x, self.y = resolved_x, resolved_y
         self.rect.update(int(self.x), int(self.y), self.width, self.height)
+
+        displacement = Vector2(self.x - previous_position[0], self.y - previous_position[1])
+        if displacement.length() < 0.25:
+            self._stuck_frames += 1
+            if self._stuck_frames == settings.STUCK_FRAMES_THRESHOLD:
+                logger.warning(
+                    "Lifeform %s stuck near (%.1f, %.1f); triggering escape",
+                    self.id,
+                    self.x,
+                    self.y,
+                )
+                self._trigger_escape_manoeuvre("stuck")
+        else:
+            self._stuck_frames = 0
 
         if self.closest_enemy:
             notification_context.debug(f"{self.id} ziet vijand {self.closest_enemy.id}")
@@ -194,6 +265,17 @@ class Lifeform:
 
         desired += self._group_behavior_vector()
         desired += self._avoid_recent_positions(now)
+        desired += self._boundary_repulsion_vector()
+
+        avoidance = self._obstacle_avoidance_vector(desired)
+        if avoidance.length_squared() > 0:
+            desired += avoidance
+
+        if self._escape_timer > 0 and self._escape_vector.length_squared() > 0:
+            desired += self._escape_vector * settings.ESCAPE_FORCE
+            self._escape_timer -= 1
+        else:
+            self._escape_timer = 0
 
         if desired.length_squared() == 0:
             desired = self._wander_vector(now)
@@ -425,6 +507,106 @@ class Lifeform:
         if wander.length_squared() == 0:
             wander = Vector2(1, 0)
         return wander.normalize()
+
+    def _obstacle_avoidance_vector(self, desired: Vector2) -> Vector2:
+        base = Vector2(desired)
+        if base.length_squared() == 0:
+            base = Vector2(self.x_direction, self.y_direction)
+        if base.length_squared() == 0:
+            base = Vector2(self.wander_direction)
+        if base.length_squared() == 0:
+            return Vector2()
+
+        forward = base.normalize()
+        look_ahead = max(
+            settings.OBSTACLE_LOOKAHEAD_BASE,
+            self.speed * settings.OBSTACLE_LOOKAHEAD_FACTOR,
+        )
+        inflated = self.rect.inflate(8, 8)
+        check_rect = inflated.copy()
+        check_rect.x = int(self.rect.x + forward.x * look_ahead)
+        check_rect.y = int(self.rect.y + forward.y * look_ahead)
+
+        if not world.is_blocked(check_rect):
+            return Vector2()
+
+        logger.debug(
+            "Lifeform %s predicted obstacle ahead; searching alternative path",
+            self.id,
+        )
+
+        angles = [
+            20,
+            -20,
+            35,
+            -35,
+            50,
+            -50,
+            65,
+            -65,
+            90,
+            -90,
+            120,
+            -120,
+            150,
+            -150,
+            180,
+        ]
+        for angle in angles:
+            candidate = forward.rotate(angle)
+            if candidate.length_squared() == 0:
+                continue
+            candidate_rect = inflated.copy()
+            candidate_rect.x = int(self.rect.x + candidate.x * look_ahead)
+            candidate_rect.y = int(self.rect.y + candidate.y * look_ahead)
+            if not world.is_blocked(candidate_rect):
+                return candidate.normalize() * settings.OBSTACLE_AVOID_FORCE
+
+        return (-forward) * (settings.OBSTACLE_AVOID_FORCE * 0.5)
+
+    def _boundary_repulsion_vector(self) -> Vector2:
+        margin = settings.BOUNDARY_REPULSION_MARGIN
+        force = Vector2()
+
+        left_distance = margin - self.x
+        if left_distance > 0:
+            force.x += left_distance / margin
+
+        right_distance = margin - (world.width - (self.x + self.width))
+        if right_distance > 0:
+            force.x -= right_distance / margin
+
+        top_distance = margin - self.y
+        if top_distance > 0:
+            force.y += top_distance / margin
+
+        bottom_distance = margin - (world.height - (self.y + self.height))
+        if bottom_distance > 0:
+            force.y -= bottom_distance / margin
+
+        if force.length_squared() == 0:
+            return Vector2()
+        return force.normalize() * settings.BOUNDARY_REPULSION_WEIGHT
+
+    def _trigger_escape_manoeuvre(self, reason: str) -> None:
+        escape = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
+        if escape.length_squared() == 0:
+            escape = Vector2(1, 0)
+        escape = escape.normalize()
+        self._escape_vector = escape
+        self._escape_timer = settings.ESCAPE_OVERRIDE_FRAMES
+        self.wander_direction = escape
+        self.x_direction = escape.x
+        self.y_direction = escape.y
+        self._boundary_contact_frames = 0
+        self._stuck_frames = 0
+        logger.warning(
+            "Lifeform %s executing escape manoeuvre (%s) towards vector (%.2f, %.2f)",
+            self.id,
+            reason,
+            escape.x,
+            escape.y,
+        )
 
     def _diet_prefers_plants(self) -> bool:
         return self.diet in ('herbivore', 'omnivore')
@@ -729,6 +911,13 @@ class Lifeform:
 
         else:
             notification_context.action(f"{self.id} is gestorven")
+            logger.info(
+                "Lifeform %s died at age %.1f with hunger %.1f and energy %.1f",
+                self.id,
+                self.age,
+                self.hunger,
+                self.energy_now,
+            )
             lifeforms.remove(self)
             death_ages.append(self.age)
 
@@ -802,6 +991,14 @@ class Lifeform:
         lifeforms.append(child)
         player_controller.on_birth()
         notification_context.action(f"Nieuwe levensvorm geboren uit {self.id}")
+        logger.info(
+            "Lifeform %s reproduced with %s producing %s at (%.1f, %.1f)",
+            self.id,
+            partner.id,
+            child.id,
+            self.x,
+            self.y,
+        )
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
         partner.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
 
@@ -1176,6 +1373,14 @@ def init_lifeforms():
         lifeform = Lifeform(x, y, dna_profile, generation)
         lifeform.current_biome = biome
         lifeforms.append(lifeform)
+        logger.info(
+            "Spawned lifeform %s (dna %s) at (%.1f, %.1f) in biome %s",
+            lifeform.id,
+            dna_profile['dna_id'],
+            x,
+            y,
+            biome.name if biome else "onbekend",
+        )
 
 
 def init_vegetation():
@@ -1308,6 +1513,12 @@ def run() -> None:
     world = World(settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
     camera = Camera(settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT, settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
     camera.center_on(settings.WORLD_WIDTH / 2, settings.WORLD_HEIGHT / 2)
+    logger.info(
+        "Simulation run initialised with world size %sx%s and %s starting lifeforms",
+        settings.WORLD_WIDTH,
+        settings.WORLD_HEIGHT,
+        settings.N_LIFEFORMS,
+    )
 
     notification_manager = notification_context.notification_manager
     event_manager = EventManager(notification_manager, environment_modifiers)
