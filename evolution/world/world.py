@@ -10,7 +10,7 @@ import pygame
 from ..config import settings
 
 
-from .map_generator import MapBlueprint, generate_map
+from .map_generator import MapBlueprint, generate_map, normalize_world_type
 from .types import Barrier, BiomeRegion, WaterBody, WeatherPattern
 
 
@@ -19,6 +19,7 @@ class World:
         self,
         width: int,
         height: int,
+        world_type: Optional[str] = None,
         environment_modifiers: Optional[Dict[str, float]] = None,
     ):
         self.width = width
@@ -28,10 +29,15 @@ class World:
         self.water_bodies: List[WaterBody] = []
         self.biomes: List[BiomeRegion] = []
         self.environment_modifiers = environment_modifiers
+        self.world_type = normalize_world_type(world_type)
         self._generate()
 
     def set_environment_modifiers(self, modifiers: Dict[str, float]) -> None:
         self.environment_modifiers = modifiers
+
+    def set_world_type(self, world_type: Optional[str]) -> None:
+        self.world_type = normalize_world_type(world_type)
+        self._generate()
 
     def _generate(self) -> None:
         blueprint: MapBlueprint = generate_map(self.world_type, self.width, self.height)
