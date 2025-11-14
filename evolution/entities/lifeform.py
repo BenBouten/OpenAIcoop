@@ -37,6 +37,7 @@ class Lifeform:
         y: float,
         dna_profile: dict,
         generation: int,
+        parents: Optional[Tuple[str, ...]] = None,
     ) -> None:
         self.state = state
 
@@ -57,6 +58,11 @@ class Lifeform:
         self.energy = dna_profile["energy"]
         self.longevity = dna_profile["longevity"]
         self.generation = generation
+
+        self.parent_ids: Tuple[str, ...] = tuple(parents or ())
+        self.family_signature: Tuple[str, ...] = (
+            tuple(sorted(self.parent_ids)) if self.parent_ids else tuple()
+        )
 
         self.initial_height = self.height
         self.initial_width = self.width
@@ -512,12 +518,14 @@ class Lifeform:
             partner,
         )
 
+        child_parents: Tuple[str, ...] = (self.id, partner.id)
         child = Lifeform(
             self.state,
             self.x,
             self.y,
             child_dna_profile,
             self.generation + 1,
+            parents=child_parents,
         )
         if random.randint(0, 100) < 10:
             child.is_leader = True
@@ -525,7 +533,7 @@ class Lifeform:
 
         self.state.lifeform_genetics[child.id] = {
             "dna_id": child.dna_id,
-            "parents": (self.id, partner.id),
+            "parents": child_parents,
             "source_profile": metadata.source_profile,
             "dna_change": metadata.dna_change,
             "color_change": metadata.color_change,
