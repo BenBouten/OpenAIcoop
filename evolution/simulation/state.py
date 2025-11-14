@@ -8,6 +8,7 @@ class SimulationState:
     plants: List = field(default_factory=list)
     pheromones: List = field(default_factory=list)
     world: 'World' = None
+    world_type: str = "Rift Valley"
     camera: 'Camera' = None
     notifications: 'NotificationManager' = None
     notification_context: object = None
