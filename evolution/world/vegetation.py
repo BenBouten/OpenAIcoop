@@ -12,6 +12,53 @@ import pygame
 GridCell = Tuple[int, int]
 
 from .moss_dna import MossDNA, average_dna, ensure_dna_for_cells, random_moss_dna
+from ..config import settings
+
+
+NEIGHBOR_OFFSETS: Tuple[Tuple[int, int], ...] = (
+    (-1, -1),
+    (-1, 0),
+    (-1, 1),
+    (0, -1),
+    (0, 1),
+    (1, -1),
+    (1, 0),
+    (1, 1),
+)
+
+ORTHOGONAL_OFFSETS: Tuple[Tuple[int, int], ...] = ((1, 0), (-1, 0), (0, 1), (0, -1))
+
+OXYGEN_DEPRIVATION_LIMIT = int(settings.FPS * 60)
+DEAD_NUTRITION_MULTIPLIER = 0.2
+
+
+@dataclass(slots=True)
+class MossCellState:
+    dna: MossDNA
+    alive: bool = True
+    oxygen_deprivation_frames: int = 0
+
+    DEAD_COLOR: ClassVar[Tuple[int, int, int]] = (96, 96, 96)
+
+    def apply_oxygen_state(self, has_oxygen: bool) -> bool:
+        previous_alive = self.alive
+        if has_oxygen:
+            self.oxygen_deprivation_frames = 0
+            self.alive = True
+        else:
+            self.oxygen_deprivation_frames += 1
+            if self.oxygen_deprivation_frames >= OXYGEN_DEPRIVATION_LIMIT:
+                self.alive = False
+        return previous_alive != self.alive
+
+    @property
+    def nutrition(self) -> float:
+        base = self.dna.nutrition
+        return base if self.alive else base * DEAD_NUTRITION_MULTIPLIER
+
+    @property
+    def color(self) -> Tuple[int, int, int]:
+        return self.dna.color if self.alive else self.DEAD_COLOR
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -22,7 +69,7 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
 class MossCluster:
     """A slowly growing moss cluster composed of 2x2 cells."""
 
-    cells: Mapping[GridCell, MossDNA] | Iterable[GridCell]
+    cells: Mapping[GridCell, MossDNA | MossCellState] | Iterable[GridCell]
     color: Tuple[int, int, int] = (68, 132, 88)
     CELL_SIZE: ClassVar[int] = 2
     BASE_GROWTH_DELAY: ClassVar[int] = 180
@@ -44,14 +91,19 @@ class MossCluster:
         raw_cells = self.cells
         self._rng = random.Random()
         if isinstance(raw_cells, Mapping):
-            cell_map: Dict[GridCell, MossDNA] = {}
+            cell_map: Dict[GridCell, MossCellState] = {}
             for cell, dna in raw_cells.items():
                 gx, gy = int(cell[0]), int(cell[1])
-                if not isinstance(dna, MossDNA):
-                    dna = random_moss_dna(self._rng)
-                cell_map[(gx, gy)] = dna
+                if isinstance(dna, MossCellState):
+                    cell_state = dna
+                else:
+                    if not isinstance(dna, MossDNA):
+                        dna = random_moss_dna(self._rng)
+                    cell_state = MossCellState(dna)
+                cell_map[(gx, gy)] = cell_state
         else:
-            cell_map = ensure_dna_for_cells(tuple(raw_cells), self._rng)
+            dna_map = ensure_dna_for_cells(tuple(raw_cells), self._rng)
+            cell_map = {cell: MossCellState(dna) for cell, dna in dna_map.items()}
 
         self.cells = cell_map
         self.surface = pygame.Surface((0, 0), pygame.SRCALPHA)
@@ -74,19 +126,20 @@ class MossCluster:
             self.color = (68, 132, 88)
             return
 
-        total_nutrition = sum(dna.nutrition for dna in self.cells.values())
+        total_nutrition = sum(cell.nutrition for cell in self.cells.values())
         self.resource = float(total_nutrition)
         count = len(self.cells)
         avg_color = (
-            sum(dna.color[0] for dna in self.cells.values()) / count,
-            sum(dna.color[1] for dna in self.cells.values()) / count,
-            sum(dna.color[2] for dna in self.cells.values()) / count,
+            sum(cell.color[0] for cell in self.cells.values()) / count,
+            sum(cell.color[1] for cell in self.cells.values()) / count,
+            sum(cell.color[2] for cell in self.cells.values()) / count,
         )
         self.color = (
             int(_clamp(avg_color[0], 32, 220)),
             int(_clamp(avg_color[1], 32, 220)),
             int(_clamp(avg_color[2], 32, 220)),
         )
+        self._dirty = True
 
     # ------------------------------------------------------------------
     # Geometry helpers
@@ -156,10 +209,10 @@ class MossCluster:
 
         self.surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
 
-        for (gx, gy), dna in self.cells.items():
+        for (gx, gy), cell in self.cells.items():
             px = gx * self.CELL_SIZE - self.rect.left
             py = gy * self.CELL_SIZE - self.rect.top
-            color = tuple(int(_clamp(channel, 24, 220)) for channel in dna.color)
+            color = tuple(int(_clamp(channel, 24, 220)) for channel in cell.color)
             pygame.draw.rect(
                 self.surface,
                 color,
@@ -196,17 +249,17 @@ class MossCluster:
         else:
             self._rng.shuffle(removal_order)
 
-        min_nutrition = min(dna.nutrition for dna in self.cells.values()) if self.cells else 0.0
+        min_nutrition = min(cell.nutrition for cell in self.cells.values()) if self.cells else 0.0
         target_nutrition = max(min_nutrition, float(amount))
 
         consumed = 0.0
         removed = 0
         while removal_order and (consumed < target_nutrition or removed == 0):
             cell = removal_order.pop(0)
-            dna = self.cells.pop(cell, None)
-            if dna is None:
+            state = self.cells.pop(cell, None)
+            if state is None:
                 continue
-            consumed += dna.nutrition
+            consumed += state.nutrition
             removed += 1
 
         self._recalculate_aggregates()
@@ -215,6 +268,9 @@ class MossCluster:
     def regrow(self, world: "World", others: Sequence["MossCluster"]) -> None:
         if not self.cells:
             return
+
+        if self._update_cell_life_state(world, others):
+            self._recalculate_aggregates()
 
         if self._growth_timer > 0:
             self._growth_timer -= 1
@@ -232,57 +288,107 @@ class MossCluster:
         )
         self._growth_timer = max(6, int(self.BASE_GROWTH_DELAY / total_multiplier))
 
-        candidates = self._gather_growth_candidates(world, others)
-        if not candidates:
+        opportunities = self._reproduction_opportunities(world, others)
+        if not opportunities:
             return
 
-        new_cell = self._rng.choice(candidates)
-        self.cells[new_cell] = self._create_offspring_dna(new_cell)
+        indices = list(range(len(opportunities)))
+        weights = [opportunity[2] for opportunity in opportunities]
+        selected_index = self._rng.choices(indices, weights=weights, k=1)[0]
+        _, empty_neighbors, _ = opportunities[selected_index]
+        new_cell = self._rng.choice(empty_neighbors)
+        if new_cell in self.cells:
+            return
+        self.cells[new_cell] = MossCellState(self._create_offspring_dna(new_cell))
         self._recalculate_aggregates()
         self.set_size()
 
-    def _gather_growth_candidates(self, world: "World", others: Sequence["MossCluster"]) -> List[GridCell]:
-        candidates: Set[GridCell] = set()
-        for gx, gy in self.cells:
-            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-                nx, ny = gx + dx, gy + dy
-                if (nx, ny) in self.cells:
-                    continue
-                cell_rect = pygame.Rect(
-                    nx * self.CELL_SIZE,
-                    ny * self.CELL_SIZE,
-                    self.CELL_SIZE,
-                    self.CELL_SIZE,
-                )
-                if (
-                    cell_rect.left < 0
-                    or cell_rect.top < 0
-                    or cell_rect.right > world.width
-                    or cell_rect.bottom > world.height
-                ):
-                    continue
-                if world.is_blocked(cell_rect):
-                    continue
-                if any(other is not self and other.occupies_cell((nx, ny)) for other in others):
-                    continue
-                candidates.add((nx, ny))
-        return list(candidates)
+    def _reproduction_opportunities(
+        self, world: "World", others: Sequence["MossCluster"]
+    ) -> List[Tuple[GridCell, List[GridCell], float]]:
+        opportunities: List[Tuple[GridCell, List[GridCell], float]] = []
+        for cell, state in self.cells.items():
+            if not state.alive:
+                continue
+            empty_neighbors = self._available_neighbor_cells(cell, world, others)
+            if len(empty_neighbors) < 3:
+                continue
+            weight = max(0.1, state.dna.growth_rate)
+            opportunities.append((cell, empty_neighbors, weight))
+        return opportunities
+
+    def _available_neighbor_cells(
+        self, cell: GridCell, world: "World", others: Sequence["MossCluster"]
+    ) -> List[GridCell]:
+        empties: List[GridCell] = []
+        for dx, dy in NEIGHBOR_OFFSETS:
+            nx, ny = cell[0] + dx, cell[1] + dy
+            neighbor = (nx, ny)
+            if self._is_occupied(neighbor, world, others):
+                continue
+            empties.append(neighbor)
+        return empties
+
+    def _is_occupied(
+        self, cell: GridCell, world: "World", others: Sequence["MossCluster"]
+    ) -> bool:
+        if cell in self.cells:
+            return True
+
+        cell_rect = pygame.Rect(
+            cell[0] * self.CELL_SIZE,
+            cell[1] * self.CELL_SIZE,
+            self.CELL_SIZE,
+            self.CELL_SIZE,
+        )
+        if (
+            cell_rect.left < 0
+            or cell_rect.top < 0
+            or cell_rect.right > world.width
+            or cell_rect.bottom > world.height
+        ):
+            return True
+        if world.is_blocked(cell_rect):
+            return True
+        return any(other is not self and other.occupies_cell(cell) for other in others)
+
+    def _update_cell_life_state(
+        self, world: "World", others: Sequence["MossCluster"]
+    ) -> bool:
+        changed = False
+        for cell, state in self.cells.items():
+            has_oxygen = self._cell_has_oxygen(cell, world, others)
+            if state.apply_oxygen_state(has_oxygen):
+                changed = True
+        return changed
+
+    def _cell_has_oxygen(
+        self, cell: GridCell, world: "World", others: Sequence["MossCluster"]
+    ) -> bool:
+        for dx, dy in NEIGHBOR_OFFSETS:
+            neighbor = (cell[0] + dx, cell[1] + dy)
+            if not self._is_occupied(neighbor, world, others):
+                return True
+        return False
 
     def _average_growth_rate(self) -> float:
         if not self.cells:
             return 1.0
-        return sum(dna.growth_rate for dna in self.cells.values()) / len(self.cells)
+        living = [cell for cell in self.cells.values() if cell.alive]
+        if not living:
+            return 0.0
+        return sum(cell.dna.growth_rate for cell in living) / len(living)
 
     def _create_offspring_dna(self, cell: GridCell) -> MossDNA:
         neighbors = list(self._neighbor_dnas(cell))
         return average_dna(neighbors, self._rng)
 
     def _neighbor_dnas(self, cell: GridCell) -> Iterable[MossDNA]:
-        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+        for dx, dy in ORTHOGONAL_OFFSETS:
             neighbor = (cell[0] + dx, cell[1] + dy)
-            dna = self.cells.get(neighbor)
-            if dna is not None:
-                yield dna
+            state = self.cells.get(neighbor)
+            if state is not None and state.alive:
+                yield state.dna
 
     # ------------------------------------------------------------------
     # Interaction helpers
@@ -293,11 +399,12 @@ class MossCluster:
         return 0.0
 
     def apply_effect(self, lifeform: "Lifeform") -> None:
-        dna = self._nearest_cell_dna(lifeform)
-        if dna is None:
+        cell_state = self._nearest_cell_state(lifeform)
+        if cell_state is None:
             return
 
-        base_energy = dna.nutrition * (1.0 + dna.hydration * 0.4)
+        dna = cell_state.dna
+        base_energy = cell_state.nutrition * (1.0 + dna.hydration * 0.4)
         toxin_energy = dna.toxicity * 8.0
         net_energy = base_energy - toxin_energy
         if net_energy >= 0:
@@ -321,7 +428,7 @@ class MossCluster:
         satiety_bonus = dna.fiber_density * 8.0
         lifeform.hunger = max(0.0, lifeform.hunger - satiety_bonus)
 
-    def _nearest_cell_dna(self, lifeform: "Lifeform") -> Optional[MossDNA]:
+    def _nearest_cell_state(self, lifeform: "Lifeform") -> Optional[MossCellState]:
         if not self.cells:
             return None
         center = lifeform.rect.center
@@ -400,7 +507,7 @@ def _generate_seed_cells(
 def create_initial_clusters(
     world: "World",
     *,
-    count: int = 4,
+    count: int = 32,
     min_cells: int = 18,
     max_cells: int = 48,
     rng: Optional[random.Random] = None,
@@ -426,4 +533,4 @@ def create_initial_clusters(
     return clusters
 
 
-__all__ = ["MossCluster", "create_initial_clusters"]
+__all__ = ["MossCellState", "MossCluster", "create_initial_clusters"]

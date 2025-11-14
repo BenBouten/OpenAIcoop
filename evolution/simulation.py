@@ -420,7 +420,7 @@ def init_lifeforms():
 def init_vegetation():
     plants.clear()
     abundance = environment_modifiers.get("plant_regrowth", 1.0)
-    clusters = create_initial_clusters(world, count=4)
+    clusters = create_initial_clusters(world, count=32)
     for cluster in clusters:
         cluster.set_capacity_multiplier(abundance)
         cluster.set_growth_speed_modifier(environment_modifiers.get("moss_growth_speed", 1.0))
