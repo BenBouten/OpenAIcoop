@@ -95,6 +95,13 @@ state.notification_context = notification_context
 state.notifications = notification_context.notification_manager
 
 
+MAP_TYPE_OPTIONS = [
+    "Archipelago",
+    "Rift Valley",
+    "Desert–Jungle Split",
+]
+
+
 # ---------------------------------------------------------------------------
 # Vegetation & grafiek (nog niet uitbesteed)
 # ---------------------------------------------------------------------------
@@ -289,7 +296,7 @@ fps = settings.FPS
 # Helpers
 # ---------------------------------------------------------------------------
 
-def reset_list_values() -> None:
+def reset_list_values(world_type: Optional[str] = None) -> None:
     """Volledige sim-reset: state leegmaken en wereld opnieuw genereren."""
     global latest_stats
     state.lifeforms.clear()
@@ -303,7 +310,11 @@ def reset_list_values() -> None:
     state.lifeform_id_counter = 0
     latest_stats = None
 
-    world.regenerate()
+    if world_type is not None:
+        world.set_world_type(world_type)
+    else:
+        world.regenerate()
+    state.world_type = world.world_type
     notification_manager.clear()
     event_manager.reset()
     event_manager.schedule_default_events()
@@ -725,6 +736,7 @@ def run() -> None:
     """Start de pygame-simulatie."""
     global world, camera, notification_manager, event_manager, player_controller
     global latest_stats, show_debug, show_leader, show_action, show_vision, show_dna_id, show_dna_info
+    global start_time
 
     pygame.init()
     screen = pygame.display.set_mode(
@@ -743,7 +755,7 @@ def run() -> None:
     font3 = _load_font(font2_path, 22)
 
     # Wereld & camera
-    world = World(settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
+    world = World(settings.WORLD_WIDTH, settings.WORLD_HEIGHT, state.world_type)
     camera = Camera(
         settings.WINDOW_WIDTH,
         settings.WINDOW_HEIGHT,
@@ -764,16 +776,13 @@ def run() -> None:
 
     # State koppelen
     state.world = world
+    state.world_type = world.world_type
     state.camera = camera
     state.events = event_manager
     state.player = player_controller
     state.notifications = notification_manager
 
-    reset_dna_profiles()
-    init_lifeforms()
-    init_vegetation()
-    event_manager.schedule_default_events()
-    player_controller.reset()
+    reset_list_values(state.world_type)
     graph = Graph()
 
     running = True
@@ -801,6 +810,7 @@ def run() -> None:
             24,
             24,
         )
+        map_button_rects: List[Tuple[pygame.Rect, str]] = []
 
         if starting_screen:
             screen.fill(settings.BACKGROUND)
@@ -819,6 +829,7 @@ def run() -> None:
             screen.blit(title_surface, (50, 40))
 
             instructions = [
+                "Kies een kaarttype en druk op Start om te beginnen.",
                 "Gebruik WASD of de pijltjestoetsen om de camera te bewegen.",
                 "Houd Shift ingedrukt om sneller te scrollen.",
                 "Druk op M om het genlab te openen of sluiten.",
@@ -826,6 +837,39 @@ def run() -> None:
             for idx, line in enumerate(instructions):
                 info_surface = info_font.render(line, True, settings.BLACK)
                 screen.blit(info_surface, (50, 110 + idx * 32))
+            map_title = info_font.render("Kaarttype", True, settings.BLACK)
+            screen.blit(map_title, (50, 200))
+
+            button_width = 320
+            button_height = 50
+            button_spacing = 18
+            button_left = 50
+            button_top = 240
+            for idx, label in enumerate(MAP_TYPE_OPTIONS):
+                rect = pygame.Rect(
+                    button_left,
+                    button_top + idx * (button_height + button_spacing),
+                    button_width,
+                    button_height,
+                )
+                map_button_rects.append((rect, label))
+                is_selected = state.world_type == label
+                fill_color = settings.SEA if is_selected else (235, 235, 235)
+                pygame.draw.rect(screen, fill_color, rect, border_radius=8)
+                pygame.draw.rect(screen, settings.BLACK, rect, 2, border_radius=8)
+                option_text = button_font.render(label, True, settings.BLACK)
+                screen.blit(option_text, option_text.get_rect(center=rect.center))
+
+            selection_text = info_font.render(
+                f"Geselecteerde kaart: {state.world_type}", True, settings.BLACK
+            )
+            screen.blit(
+                selection_text,
+                (
+                    button_left,
+                    button_top + len(MAP_TYPE_OPTIONS) * (button_height + button_spacing) + 10,
+                ),
+            )
             notification_manager.update()
             notification_manager.draw(screen, info_font)
 
@@ -1044,30 +1088,47 @@ def run() -> None:
                         player_controller.cycle_attribute(direction)
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if start_button.collidepoint(event.pos):
-                    notification_manager.add("Simulatie gestart", settings.GREEN)
-                    starting_screen = False
-                    paused = False
-                    camera.reset()
-                    notification_manager.add(
-                        "Gebruik WASD of pijltjes om de camera te bewegen (Shift = snel)",
-                        settings.BLUE,
-                    )
-                if reset_button.collidepoint(event.pos):
-                    reset_list_values()
-                    reset_dna_profiles()
-                    init_lifeforms()
-                    init_vegetation()
-                    notification_manager.add(
-                        "Simulatie gereset",
-                        settings.BLUE,
-                    )
-                    starting_screen = True
-                    paused = True
-                if show_dna_button.collidepoint(event.pos):
-                    notification_manager.add("DNA-ID overlay gewisseld", settings.SEA)
-                    show_dna_id = not show_dna_id
-                if show_dna_info_button.collidepoint(event.pos):
-                    show_dna_info = not show_dna_info
+                if starting_screen:
+                    if start_button.collidepoint(event.pos):
+                        reset_list_values(state.world_type)
+                        reset_dna_profiles()
+                        init_lifeforms()
+                        init_vegetation()
+                        start_time = datetime.datetime.now()
+                        notification_manager.add("Simulatie gestart", settings.GREEN)
+                        starting_screen = False
+                        paused = False
+                        camera.reset()
+                        notification_manager.add(
+                            "Gebruik WASD of pijltjes om de camera te bewegen (Shift = snel)",
+                            settings.BLUE,
+                        )
+                    else:
+                        previous_type = state.world_type
+                        for rect, label in map_button_rects:
+                            if rect.collidepoint(event.pos):
+                                world.set_world_type(label)
+                                state.world_type = world.world_type
+                                if previous_type != state.world_type:
+                                    notification_manager.add(
+                                        f"Kaarttype ingesteld op {state.world_type}",
+                                        settings.SEA,
+                                    )
+                                camera.reset()
+                                break
+                else:
+                    if reset_button.collidepoint(event.pos):
+                        reset_list_values(state.world_type)
+                        notification_manager.add(
+                            "Simulatie gereset",
+                            settings.BLUE,
+                        )
+                        starting_screen = True
+                        paused = True
+                    elif show_dna_button.collidepoint(event.pos):
+                        notification_manager.add("DNA-ID overlay gewisseld", settings.SEA)
+                        show_dna_id = not show_dna_id
+                    elif show_dna_info_button.collidepoint(event.pos):
+                        show_dna_info = not show_dna_info
 
     pygame.quit()
