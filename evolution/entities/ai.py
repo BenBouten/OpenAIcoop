@@ -255,6 +255,18 @@ def _update_homecoming_state(lifeform: "Lifeform") -> None:
         lifeform.behaviour_phase = PHASE_FORAGE
         lifeform.last_pheromone_drop = 0
         lifeform.follow_trail_target = None
+        state = lifeform.state
+        if state is not None:
+            colony_roots = getattr(state, "colony_roots", {})
+            root_id = colony_roots.get(str(lifeform.dna_id), str(lifeform.dna_id).split("-")[0])
+            scores = getattr(state, "nest_scores", None)
+            if scores is not None:
+                scores[root_id] = scores.get(root_id, 0) + 1
+                context = lifeform.notification_context
+                if context:
+                    label_map = getattr(state, "colony_labels", {})
+                    label = label_map.get(root_id, root_id)
+                    context.action(f"Nest {label} verzamelt een voedselcel")
 
 
 def _select_phase(lifeform: "Lifeform", state: "SimulationState") -> str:

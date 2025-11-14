@@ -37,3 +37,9 @@ class SimulationState:
     dna_lineage: Dict[str, dict] = field(default_factory=dict)
     lifeform_genetics: Dict[str, dict] = field(default_factory=dict)
     lifeform_id_counter: int = 0
+    nest_scores: Dict[str, int] = field(default_factory=dict)
+    colony_roots: Dict[str, str] = field(default_factory=dict)
+    colony_ids: List[str] = field(default_factory=list)
+    colony_colors: Dict[str, Tuple[int, int, int]] = field(default_factory=dict)
+    colony_labels: Dict[str, str] = field(default_factory=dict)
+
