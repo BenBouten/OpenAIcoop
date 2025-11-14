@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import ClassVar, List, Optional, Sequence, Set, Tuple
 
 import pygame
@@ -26,6 +26,17 @@ class MossCluster:
     CELL_SIZE: ClassVar[int] = 2
     CELL_NUTRITION: ClassVar[float] = 12.0
     BASE_GROWTH_DELAY: ClassVar[int] = 240
+
+    surface: pygame.Surface = field(init=False, repr=False)
+    rect: pygame.Rect = field(init=False)
+    width: int = field(init=False)
+    height: int = field(init=False)
+    x: float = field(init=False)
+    y: float = field(init=False)
+    resource: float = field(init=False)
+    _dirty: bool = field(init=False, repr=False)
+    _environment_multiplier: float = field(init=False, repr=False)
+    _growth_timer: int = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.cells = set(self.cells)
