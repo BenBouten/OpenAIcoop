@@ -30,7 +30,7 @@ import pygame
 from ..config import settings
 from ..entities import movement
 from ..entities.lifeform import Lifeform
-from ..entities.pheromones import Pheromone
+from ..entities.pheromone_trail import PheromoneTrail, update_trails
 from ..rendering.camera import Camera
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
@@ -201,7 +201,7 @@ event_manager: EventManager
 player_controller: PlayerController
 
 lifeforms: List[Lifeform] = state.lifeforms
-pheromones: List[Pheromone] = state.pheromones
+pheromones: List[PheromoneTrail] = state.pheromones
 dna_profiles: List[dict] = state.dna_profiles
 plants: List[Vegetation] = state.plants
 
@@ -282,7 +282,15 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     environment_modifiers.setdefault("moss_growth_speed", 1.0)
     _last_food_multiplier = environment_modifiers.get("plant_regrowth", 1.0)
     _last_moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
-    state.gameplay_settings.setdefault("pheromone_decay", 10.0)
+    state.gameplay_settings.setdefault("pheromone_decay", settings.PHEROMONE_EVAPORATION_RATE)
+    state.gameplay_settings.setdefault("pheromone_strength", settings.PHEROMONE_STRENGTH)
+    state.gameplay_settings.setdefault(
+        "pheromone_evaporation_rate", settings.PHEROMONE_EVAPORATION_RATE
+    )
+    state.gameplay_settings.setdefault("follow_trail_chance", settings.FOLLOW_TRAIL_CHANCE)
+    state.gameplay_settings.setdefault(
+        "home_return_speed_multiplier", settings.HOME_RETURN_SPEED_MULTIPLIER
+    )
     camera.reset()
 
 
@@ -379,6 +387,7 @@ def determine_home_biome(
 def reset_dna_profiles() -> None:
     dna_profiles.clear()
     dna_home_biome.clear()
+    state.dna_home_positions.clear()
     for dna_id in range(settings.N_DNA_PROFILES):
         diet = random.choices(
             ['herbivore', 'omnivore', 'carnivore'],
@@ -736,8 +745,17 @@ def run() -> None:
         settings.HUNGER_HEALTH_PENALTY_PER_SECOND = float(value)
         settings.EXTREME_HUNGER_HEALTH_PENALTY_PER_SECOND = float(value) * 10
 
-    def _set_pheromone_decay(value: float) -> None:
-        state.gameplay_settings["pheromone_decay"] = float(value)
+    def _set_pheromone_strength(value: float) -> None:
+        state.gameplay_settings["pheromone_strength"] = float(value)
+
+    def _set_pheromone_evaporation(value: float) -> None:
+        state.gameplay_settings["pheromone_evaporation_rate"] = float(value)
+
+    def _set_follow_trail_chance(value: float) -> None:
+        state.gameplay_settings["follow_trail_chance"] = float(value)
+
+    def _set_home_return_speed(value: float) -> None:
+        state.gameplay_settings["home_return_speed_multiplier"] = float(value)
 
     def _build_slider_configs() -> List[SliderConfig]:
         return [
@@ -842,14 +860,56 @@ def run() -> None:
                 callback=_set_hunger_penalty,
             ),
             SliderConfig(
-                key="pheromone_decay",
-                label="Pheromone decay",
+                key="pheromone_strength",
+                label="Pheromone strength",
+                min_value=20.0,
+                max_value=180.0,
+                start_value=float(
+                    state.gameplay_settings.get("pheromone_strength", settings.PHEROMONE_STRENGTH)
+                ),
+                step=5.0,
+                value_format="{value:.0f}",
+                callback=_set_pheromone_strength,
+            ),
+            SliderConfig(
+                key="pheromone_evaporation_rate",
+                label="Pheromone evaporation",
                 min_value=2.0,
                 max_value=40.0,
-                start_value=float(state.gameplay_settings.get("pheromone_decay", 10.0)),
+                start_value=float(
+                    state.gameplay_settings.get(
+                        "pheromone_evaporation_rate", settings.PHEROMONE_EVAPORATION_RATE
+                    )
+                ),
                 step=1.0,
                 value_format="{value:.0f}/s",
-                callback=_set_pheromone_decay,
+                callback=_set_pheromone_evaporation,
+            ),
+            SliderConfig(
+                key="follow_trail_chance",
+                label="Trail follow chance",
+                min_value=0.0,
+                max_value=1.0,
+                start_value=float(
+                    state.gameplay_settings.get("follow_trail_chance", settings.FOLLOW_TRAIL_CHANCE)
+                ),
+                step=0.05,
+                value_format="{value:.2f}",
+                callback=_set_follow_trail_chance,
+            ),
+            SliderConfig(
+                key="home_return_speed_multiplier",
+                label="Return speed multiplier",
+                min_value=0.5,
+                max_value=3.0,
+                start_value=float(
+                    state.gameplay_settings.get(
+                        "home_return_speed_multiplier", settings.HOME_RETURN_SPEED_MULTIPLIER
+                    )
+                ),
+                step=0.05,
+                value_format="{value:.2f}x",
+                callback=_set_home_return_speed,
             ),
         ]
 
@@ -983,15 +1043,15 @@ def run() -> None:
                     plant.draw(world_surface)
 
                 if pheromones:
-                    active_pheromones: List[Pheromone] = []
-                    decay_rate = float(state.gameplay_settings.get("pheromone_decay", 10.0))
-                    decay_amount = decay_rate * delta_time
+                    evaporation = float(
+                        state.gameplay_settings.get(
+                            "pheromone_evaporation_rate",
+                            state.gameplay_settings.get("pheromone_decay", settings.PHEROMONE_EVAPORATION_RATE),
+                        )
+                    )
+                    update_trails(pheromones, delta_time, evaporation_rate=evaporation)
                     for pheromone in pheromones:
-                        pheromone.strength -= decay_amount
-                        if pheromone.strength > 0:
-                            pheromone.draw(world_surface)
-                            active_pheromones.append(pheromone)
-                    pheromones[:] = active_pheromones
+                        pheromone.draw(world_surface)
 
                 lifeform_snapshot = list(lifeforms)
                 average_maturity = (
