@@ -56,6 +56,13 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
     ):
         if context:
             context.action(f"{lifeform.id} eet van een plant")
-        plant.apply_effect(lifeform)
-        plant.decrement_resource(12, eater=lifeform)
-        lifeform.hunger = max(0, lifeform.hunger - 60)
+        consumption = plant.decrement_resource(
+            settings.PLANT_BITE_NUTRITION_TARGET, eater=lifeform
+        )
+        if consumption:
+            satiety_bonus = plant.apply_effect(lifeform, consumption)
+            total_nutrition = sum(sample.nutrition for sample in consumption)
+            hunger_reduction = (
+                total_nutrition * settings.PLANT_HUNGER_SATIATION_PER_NUTRITION + satiety_bonus
+            )
+            lifeform.hunger = max(0.0, lifeform.hunger - hunger_reduction)

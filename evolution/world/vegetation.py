@@ -37,28 +37,46 @@ class MossCellState:
     dna: MossDNA
     alive: bool = True
     oxygen_deprivation_frames: int = 0
+    _stored_nutrition: float = field(init=False, repr=False)
 
     DEAD_COLOR: ClassVar[Tuple[int, int, int]] = (96, 96, 96)
+
+    def __post_init__(self) -> None:
+        base = self.dna.nutrition
+        self._stored_nutrition = float(base)
 
     def apply_oxygen_state(self, has_oxygen: bool) -> bool:
         previous_alive = self.alive
         if has_oxygen:
             self.oxygen_deprivation_frames = 0
             self.alive = True
+            self._stored_nutrition = max(self._stored_nutrition, self.dna.nutrition)
         else:
             self.oxygen_deprivation_frames += 1
             if self.oxygen_deprivation_frames >= OXYGEN_DEPRIVATION_LIMIT:
                 self.alive = False
+        if not self.alive:
+            self._stored_nutrition = min(
+                self._stored_nutrition, self.dna.nutrition * DEAD_NUTRITION_MULTIPLIER
+            )
         return previous_alive != self.alive
 
     @property
     def nutrition(self) -> float:
-        base = self.dna.nutrition
-        return base if self.alive else base * DEAD_NUTRITION_MULTIPLIER
+        return self._stored_nutrition
 
     @property
     def color(self) -> Tuple[int, int, int]:
         return self.dna.color if self.alive else self.DEAD_COLOR
+
+
+@dataclass(slots=True)
+class ConsumptionSample:
+    """Information about a single moss cell that was eaten."""
+
+    dna: MossDNA
+    nutrition: float
+    alive: bool
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -237,9 +255,11 @@ class MossCluster:
     def set_growth_speed_modifier(self, modifier: float) -> None:
         self._global_growth_modifier = max(0.1, modifier)
 
-    def decrement_resource(self, amount: float, *, eater: Optional["Lifeform"] = None) -> None:
-        if not self.cells:
-            return
+    def decrement_resource(
+        self, amount: float, *, eater: Optional["Lifeform"] = None
+    ) -> List[ConsumptionSample]:
+        if not self.cells or amount <= 0:
+            return []
 
         removal_order = list(self.cells.keys())
 
@@ -249,21 +269,29 @@ class MossCluster:
         else:
             self._rng.shuffle(removal_order)
 
-        min_nutrition = min(cell.nutrition for cell in self.cells.values()) if self.cells else 0.0
+        min_nutrition = (
+            min(cell.nutrition for cell in self.cells.values()) if self.cells else 0.0
+        )
         target_nutrition = max(min_nutrition, float(amount))
 
         consumed = 0.0
         removed = 0
+        samples: List[ConsumptionSample] = []
         while removal_order and (consumed < target_nutrition or removed == 0):
             cell = removal_order.pop(0)
             state = self.cells.pop(cell, None)
             if state is None:
                 continue
-            consumed += state.nutrition
+            nutrition = state.nutrition
+            consumed += nutrition
             removed += 1
+            samples.append(ConsumptionSample(state.dna, nutrition, state.alive))
 
-        self._recalculate_aggregates()
-        self.set_size()
+        if removed:
+            self._recalculate_aggregates()
+            self.set_size()
+
+        return samples
 
     def regrow(self, world: "World", others: Sequence["MossCluster"]) -> None:
         if not self.cells:
@@ -398,46 +426,51 @@ class MossCluster:
         # method simply exists for backwards compatibility.
         return 0.0
 
-    def apply_effect(self, lifeform: "Lifeform") -> None:
-        cell_state = self._nearest_cell_state(lifeform)
-        if cell_state is None:
-            return
+    def apply_effect(
+        self, lifeform: "Lifeform", consumption: Sequence[ConsumptionSample]
+    ) -> float:
+        if not consumption:
+            return 0.0
 
-        dna = cell_state.dna
-        base_energy = cell_state.nutrition * (1.0 + dna.hydration * 0.4)
-        toxin_energy = dna.toxicity * 8.0
-        net_energy = base_energy - toxin_energy
+        energy_gain = 0.0
+        toxin_energy = 0.0
+        heal_amount = 0.0
+        toxin_damage = 0.0
+        soothing = 0.0
+        satiety_bonus = 0.0
+
+        for sample in consumption:
+            nutrition = sample.nutrition
+            if nutrition <= 0.0:
+                continue
+            dna = sample.dna
+            cell_capacity = max(dna.nutrition, 1e-6)
+            portion = nutrition / cell_capacity
+
+            energy_gain += nutrition * (1.0 + dna.hydration * 0.4)
+            toxin_energy += portion * dna.toxicity * 8.0
+            heal_amount += portion * dna.vitality * 12.0
+            toxin_damage += portion * dna.toxicity * 16.0
+            soothing += portion * dna.hydration * 4.0
+            satiety_bonus += portion * dna.fiber_density * 8.0
+
+        net_energy = energy_gain - toxin_energy
         if net_energy >= 0:
             lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + net_energy)
         else:
             lifeform.energy_now = max(0.0, lifeform.energy_now + net_energy)
 
-        heal_amount = dna.vitality * 12.0
-        toxin_damage = dna.toxicity * 16.0
         health_delta = heal_amount - toxin_damage
         if health_delta >= 0:
             lifeform.health_now = min(lifeform.health, lifeform.health_now + health_delta)
         else:
             lifeform.health_now = max(0.0, lifeform.health_now + health_delta)
 
-        soothing = dna.hydration * 4.0
         lifeform.wounded = max(0.0, lifeform.wounded - soothing)
         if toxin_damage > 0:
             lifeform.wounded += toxin_damage * 0.1
 
-        satiety_bonus = dna.fiber_density * 8.0
-        lifeform.hunger = max(0.0, lifeform.hunger - satiety_bonus)
-
-    def _nearest_cell_state(self, lifeform: "Lifeform") -> Optional[MossCellState]:
-        if not self.cells:
-            return None
-        center = lifeform.rect.center
-        closest_cell = min(
-            self.cells.keys(),
-            key=lambda cell: _distance_sq_to_point(cell, center, self.CELL_SIZE),
-        )
-        return self.cells.get(closest_cell)
-
+        return satiety_bonus
 
 def _distance_sq_to_point(cell: GridCell, point: Tuple[int, int], cell_size: int) -> float:
     cell_center = (
