@@ -11,7 +11,6 @@ import pygame
 from pygame.math import Vector2
 
 from ..config import settings
-from .pheromone_trail import PheromoneTrail, strongest_trail
 
 if TYPE_CHECKING:
     from .lifeform import Lifeform
@@ -30,10 +29,6 @@ _WANDER_DRIFT_STRENGTH = 0.35
 _SEARCH_PROXIMITY_RADIUS = 8.0
 _SPEED_DRIFT_INTERVAL = 2.4
 _SPEED_DRIFT_LERP_RATE = 0.45
-
-PHASE_FORAGE = "FORAGE"
-PHASE_RETURN_HOME = "RETURN_HOME"
-PHASE_FOLLOW_TRAIL = "FOLLOW_TRAIL"
 
 # ---------------------------------------------------------
 # Public entry point
@@ -69,42 +64,20 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     lifeform.update_targets()
     _record_current_observations(lifeform, now)
 
-    _update_homecoming_state(lifeform)
-
     desired = Vector2()
 
     # 1) Dreiging eerst
     threat_vector = _compute_threat_vector(lifeform, now)
     if threat_vector.length_squared() > 0:
         desired += threat_vector
-        lifeform.search = False
     else:
-        phase = _select_phase(lifeform, state)
-        lifeform.behaviour_phase = phase
+        # 2) Voedsel / partner
+        pursuit_vector = _compute_pursuit_vector(lifeform, now)
+        desired += pursuit_vector
 
-        if phase == PHASE_RETURN_HOME:
-            desired += _homeward_vector(lifeform)
-            lifeform.search = False
-        elif phase == PHASE_FOLLOW_TRAIL:
-            trail_vector = _trail_follow_vector(lifeform, state)
-            if trail_vector.length_squared() == 0:
-                lifeform.behaviour_phase = phase = PHASE_FORAGE
-            else:
-                desired += trail_vector
-                lifeform.search = False
-
-        if lifeform.behaviour_phase == PHASE_FORAGE:
-            pursuit_vector = _compute_pursuit_vector(lifeform, now)
-            desired += pursuit_vector
-
-            if pursuit_vector.length_squared() == 0:
-                desired += _memory_target_vector(lifeform, now)
-
-            if desired.length_squared() == 0:
-                desired = _wander_vector(lifeform, now, dt)
-                lifeform.search = True
-            else:
-                lifeform.search = False
+        # 3) Geheugen als fallback
+        if pursuit_vector.length_squared() == 0:
+            desired += _memory_target_vector(lifeform, now)
 
     # 4) Groepsgedrag en "laatste posities vermijden" en boundary repulsion
     desired += _group_behavior_vector(lifeform)
@@ -125,6 +98,17 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
 
     # 7) Fallback naar wander / huidige richting
     if desired.length_squared() == 0:
+        desired = _wander_vector(lifeform, now, dt)
+        lifeform.search = True
+    else:
+        lifeform.search = False
+
+    if lifeform.search and _search_mode_active(lifeform):
+        _apply_speed_drift(lifeform, dt)
+    else:
+        _reset_speed_to_base(lifeform)
+
+    if desired.length_squared() == 0:
         desired = Vector2(lifeform.x_direction, lifeform.y_direction)
         if desired.length_squared() == 0:
             desired = Vector2(1, 0)
@@ -133,13 +117,6 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     lifeform.wander_direction = desired
     lifeform.x_direction = desired.x
     lifeform.y_direction = desired.y
-
-    if lifeform.behaviour_phase == PHASE_RETURN_HOME:
-        _reset_speed_to_base(lifeform)
-    elif lifeform.search and _search_mode_active(lifeform):
-        _apply_speed_drift(lifeform, dt)
-    else:
-        _reset_speed_to_base(lifeform)
 
 
 # ---------------------------------------------------------
@@ -240,98 +217,6 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
             timestamp,
             weight=partner_weight,
         )
-
-
-# ---------------------------------------------------------
-# Phase helpers
-# ---------------------------------------------------------
-def _update_homecoming_state(lifeform: "Lifeform") -> None:
-    if not lifeform.carrying_food:
-        return
-
-    home_vector = Vector2(lifeform.home_position[0] - lifeform.x, lifeform.home_position[1] - lifeform.y)
-    if home_vector.length() <= max(12.0, lifeform.width * 1.5):
-        lifeform.carrying_food = False
-        lifeform.behaviour_phase = PHASE_FORAGE
-        lifeform.last_pheromone_drop = 0
-        lifeform.follow_trail_target = None
-
-
-def _select_phase(lifeform: "Lifeform", state: "SimulationState") -> str:
-    if lifeform.carrying_food:
-        return PHASE_RETURN_HOME
-
-    if _has_direct_food_target(lifeform):
-        return PHASE_FORAGE
-
-    sense_radius = max(lifeform.vision, settings.PHEROMONE_RADIUS)
-    target = lifeform.follow_trail_target
-    if (
-        target
-        and target.is_active()
-        and target.position.distance_to(Vector2(lifeform.x, lifeform.y)) <= sense_radius
-    ):
-        return PHASE_FOLLOW_TRAIL
-
-    follow_chance = float(state.gameplay_settings.get("follow_trail_chance", settings.FOLLOW_TRAIL_CHANCE))
-    if random.random() <= follow_chance:
-        trail = strongest_trail(state.pheromones, (lifeform.x, lifeform.y), sense_radius)
-        if trail is not None:
-            lifeform.follow_trail_target = trail
-            return PHASE_FOLLOW_TRAIL
-
-    lifeform.follow_trail_target = None
-    return PHASE_FORAGE
-
-
-def _trail_follow_vector(lifeform: "Lifeform", state: "SimulationState") -> Vector2:
-    sense_radius = max(lifeform.vision, settings.PHEROMONE_RADIUS)
-    target = lifeform.follow_trail_target
-
-    if (
-        target is None
-        or not target.is_active()
-        or target.position.distance_to(Vector2(lifeform.x, lifeform.y)) > sense_radius
-    ):
-        target = strongest_trail(state.pheromones, (lifeform.x, lifeform.y), sense_radius)
-
-    if target is None:
-        lifeform.follow_trail_target = None
-        return Vector2()
-
-    lifeform.follow_trail_target = target
-    direction = target.direction_to_food()
-    if direction.length_squared() == 0:
-        return Vector2()
-    return direction
-
-
-def _homeward_vector(lifeform: "Lifeform") -> Vector2:
-    to_home = Vector2(lifeform.home_position[0] - lifeform.x, lifeform.home_position[1] - lifeform.y)
-    if to_home.length_squared() == 0:
-        return Vector2()
-    return to_home.normalize()
-
-
-def _has_direct_food_target(lifeform: "Lifeform") -> bool:
-    if not _should_seek_food(lifeform):
-        return False
-
-    if (
-        lifeform.closest_plant
-        and lifeform.closest_plant.resource > 0
-        and _diet_prefers_plants(lifeform)
-    ):
-        return True
-
-    if (
-        lifeform.closest_prey
-        and lifeform.closest_prey.health_now > 0
-        and _diet_prefers_meat(lifeform)
-    ):
-        return True
-
-    return False
 
 
 # ---------------------------------------------------------
@@ -693,8 +578,6 @@ def _diet_prefers_meat(lifeform: "Lifeform") -> bool:
 
 
 def _should_seek_food(lifeform: "Lifeform") -> bool:
-    if getattr(lifeform, "carrying_food", False):
-        return False
     if lifeform.hunger >= settings.HUNGER_SEEK_THRESHOLD:
         return True
     if lifeform.energy_now < lifeform.energy * 0.45:
@@ -783,10 +666,6 @@ def _close_to_food_target(lifeform: "Lifeform") -> bool:
     - ze lang genoeg hebben staan eten
     - hun honger laag genoeg is
     """
-    if getattr(lifeform, "carrying_food", False):
-        lifeform._feeding_frames = 0
-        return False
-
     # Dreiging? Altijd prioriteit boven eten.
     if lifeform.closest_enemy and lifeform.closest_enemy.health_now > 0:
         lifeform._feeding_frames = 0
