@@ -24,6 +24,7 @@ from pygame.math import Vector2
 from ..config import settings
 from ..simulation.state import SimulationState
 from ..world.world import BiomeRegion
+from . import reproduction
 from .pheromones import Pheromone
 
 logger = logging.getLogger("evolution.simulation")
@@ -865,63 +866,32 @@ class Lifeform:
             partner.reproduced_cooldown = retry
             return False
 
-        child_dna_profile = {
-            "dna_id": self.dna_id,
-            "width": (self.width + partner.width) // 2,
-            "height": (self.height + partner.height) // 2,
-            "color": self.color,
-            "health": (self.health + partner.health) // 2,
-            "maturity": (self.maturity + partner.maturity) // 2,
-            "vision": (self.vision + partner.vision) // 2,
-            "defence_power": (self.defence_power + partner.defence_power) // 2,
-            "attack_power": (self.attack_power + partner.attack_power) // 2,
-            "energy": (self.energy + partner.energy) // 2,
-            "longevity": (self.longevity + partner.longevity) // 2,
-            "diet": self.diet,
-            "social": (self.social_tendency + partner.social_tendency) / 2,
-            "risk_tolerance": (self.risk_tolerance + partner.risk_tolerance) / 2,
-        }
+        child_dna_profile, metadata = reproduction.create_offspring_profile(
+            self.state,
+            self,
+            partner,
+        )
 
-        if random.randint(0, 100) < settings.MUTATION_CHANCE:
-            child_dna_profile["vision"] = max(
-                settings.VISION_MIN,
-                min(
-                    settings.VISION_MAX,
-                    child_dna_profile["vision"] + random.randint(-3, 3),
-                ),
-            )
-            child_dna_profile["health"] = max(
-                1, child_dna_profile["health"] + random.randint(-5, 5)
-            )
-            child_dna_profile["maturity"] = max(
-                settings.MIN_MATURITY,
-                min(
-                    settings.MAX_MATURITY,
-                    child_dna_profile["maturity"] + random.randint(-10, 10),
-                ),
-            )
-            child_dna_profile["energy"] = max(
-                1, child_dna_profile["energy"] + random.randint(-3, 3)
-            )
-            child_dna_profile["longevity"] = max(
-                100, child_dna_profile["longevity"] + random.randint(-20, 20)
-            )
-            child_dna_profile["social"] = min(
-                1.0,
-                max(0.0, child_dna_profile["social"] + random.uniform(-0.05, 0.05)),
-            )
-            child_dna_profile["risk_tolerance"] = min(
-                1.0,
-                max(
-                    0.0,
-                    child_dna_profile["risk_tolerance"]
-                    + random.uniform(-0.05, 0.05),
-                ),
-            )
-
-        child = Lifeform(self.state, self.x, self.y, child_dna_profile, self.generation + 1)
-        child.color = self.color
+        child = Lifeform(
+            self.state,
+            self.x,
+            self.y,
+            child_dna_profile,
+            self.generation + 1,
+        )
+        if random.randint(0, 100) < 10:
+            child.is_leader = True
         self.state.lifeforms.append(child)
+
+        self.state.lifeform_genetics[child.id] = {
+            "dna_id": child.dna_id,
+            "parents": (self.id, partner.id),
+            "source_profile": metadata.source_profile,
+            "dna_change": metadata.dna_change,
+            "color_change": metadata.color_change,
+            "mutations": list(metadata.mutations),
+            "is_new_profile": metadata.is_new_profile,
+        }
 
         player = getattr(self.state, "player", None)
         if player:
@@ -932,12 +902,13 @@ class Lifeform:
             context.action(f"Nieuwe levensvorm geboren uit {self.id}")
 
         logger.info(
-            "Lifeform %s reproduced with %s producing %s at (%.1f, %.1f)",
+            "Lifeform %s reproduced with %s producing %s at (%.1f, %.1f) [dna %s]",
             self.id,
             partner.id,
             child.id,
             self.x,
             self.y,
+            child.dna_id,
         )
 
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE

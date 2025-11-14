@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List
+from typing import Dict, List
 
 
 @dataclass
@@ -20,4 +20,7 @@ class SimulationState:
     death_ages: List[int] = field(default_factory=list)
     dna_profiles: List[dict] = field(default_factory=list)
     dna_home_biome: dict = field(default_factory=dict)
+    dna_id_counts: Dict[str, int] = field(default_factory=dict)
+    dna_lineage: Dict[str, dict] = field(default_factory=dict)
+    lifeform_genetics: Dict[str, dict] = field(default_factory=dict)
     lifeform_id_counter: int = 0

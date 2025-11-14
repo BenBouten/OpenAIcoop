@@ -294,6 +294,9 @@ def reset_list_values() -> None:
     global latest_stats
     state.lifeforms.clear()
     state.dna_profiles.clear()
+    state.dna_id_counts.clear()
+    state.dna_lineage.clear()
+    state.lifeform_genetics.clear()
     state.pheromones.clear()
     state.plants.clear()
     state.death_ages.clear()
