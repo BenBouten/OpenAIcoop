@@ -137,6 +137,7 @@ latest_stats: Optional[Dict[str, float]] = None
 
 environment_modifiers: Dict[str, float] = state.environment_modifiers
 _last_food_multiplier = environment_modifiers.get("plant_regrowth", 1.0)
+_last_moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
 
 
 def _sync_food_abundance() -> None:
@@ -149,6 +150,16 @@ def _sync_food_abundance() -> None:
         state.world.set_environment_modifiers(state.environment_modifiers)
     for plant in plants:
         plant.set_capacity_multiplier(current)
+
+
+def _sync_moss_growth_speed() -> None:
+    global _last_moss_growth
+    current = environment_modifiers.get("moss_growth_speed", 1.0)
+    if math.isclose(current, _last_moss_growth, rel_tol=1e-4, abs_tol=1e-6):
+        return
+    _last_moss_growth = current
+    for plant in plants:
+        plant.set_growth_speed_modifier(current)
 
 show_debug = False
 show_leader = False
@@ -163,7 +174,7 @@ fps = settings.FPS
 
 
 def reset_list_values(world_type: Optional[str] = None) -> None:
-    global latest_stats, _last_food_multiplier
+    global latest_stats, _last_food_multiplier, _last_moss_growth
     target_world_type = world_type if world_type is not None else world.world_type
     world.set_world_type(target_world_type)
     state.world_type = world.world_type
@@ -183,7 +194,9 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     player_controller.reset()
     environment_modifiers["plant_regrowth"] = 1.0
     environment_modifiers["hunger_rate"] = 1.0
+    environment_modifiers["moss_growth_speed"] = 1.0
     _last_food_multiplier = environment_modifiers["plant_regrowth"]
+    _last_moss_growth = environment_modifiers["moss_growth_speed"]
     camera.reset()
 
 
@@ -410,6 +423,7 @@ def init_vegetation():
     clusters = create_initial_clusters(world, count=4)
     for cluster in clusters:
         cluster.set_capacity_multiplier(abundance)
+        cluster.set_growth_speed_modifier(environment_modifiers.get("moss_growth_speed", 1.0))
         plants.append(cluster)
 
 
@@ -782,6 +796,7 @@ def run() -> None:
                 event_manager.schedule_default_events()
                 event_manager.update(pygame.time.get_ticks(), stats, player_controller)
                 _sync_food_abundance()
+                _sync_moss_growth_speed()
                 notification_manager.update()
 
                 screen.blit(world_surface, (0, 0), area=camera.viewport)

@@ -18,6 +18,7 @@ class SimulationState:
         "plant_regrowth": 1.0,
         "hunger_rate": 1.0,
         "weather_intensity": 1.0,
+        "moss_growth_speed": 1.0,
     })
     gameplay_settings: Dict[str, float] = field(
         default_factory=lambda: {
