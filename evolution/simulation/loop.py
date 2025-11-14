@@ -213,6 +213,7 @@ latest_stats: Optional[Dict[str, float]] = None
 
 environment_modifiers: Dict[str, float] = state.environment_modifiers
 _last_food_multiplier = environment_modifiers.get("plant_regrowth", 1.0)
+_last_moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
 
 
 def _sync_food_abundance() -> None:
@@ -225,6 +226,16 @@ def _sync_food_abundance() -> None:
         state.world.set_environment_modifiers(state.environment_modifiers)
     for plant in plants:
         plant.set_capacity_multiplier(current)
+
+
+def _sync_moss_growth_speed() -> None:
+    global _last_moss_growth
+    current = environment_modifiers.get("moss_growth_speed", 1.0)
+    if math.isclose(current, _last_moss_growth, rel_tol=1e-4, abs_tol=1e-6):
+        return
+    _last_moss_growth = current
+    for plant in plants:
+        plant.set_growth_speed_modifier(current)
 
 show_debug = False
 show_leader = False
@@ -244,7 +255,7 @@ fps = settings.FPS
 
 def reset_list_values(world_type: Optional[str] = None) -> None:
     """Volledige sim-reset: state leegmaken en wereld opnieuw genereren."""
-    global latest_stats, _last_food_multiplier
+    global latest_stats, _last_food_multiplier, _last_moss_growth
     state.lifeforms.clear()
     state.dna_profiles.clear()
     state.dna_id_counts.clear()
@@ -268,7 +279,9 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     environment_modifiers.setdefault("plant_regrowth", 1.0)
     environment_modifiers.setdefault("hunger_rate", 1.0)
     environment_modifiers.setdefault("weather_intensity", 1.0)
+    environment_modifiers.setdefault("moss_growth_speed", 1.0)
     _last_food_multiplier = environment_modifiers.get("plant_regrowth", 1.0)
+    _last_moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
     state.gameplay_settings.setdefault("pheromone_decay", 10.0)
     camera.reset()
 
@@ -500,6 +513,7 @@ def init_vegetation() -> None:
     clusters = create_initial_clusters(world, count=4)
     for cluster in clusters:
         cluster.set_capacity_multiplier(abundance)
+        cluster.set_growth_speed_modifier(environment_modifiers.get("moss_growth_speed", 1.0))
         plants.append(cluster)
 
 
@@ -698,6 +712,8 @@ def run() -> None:
             state.world.set_environment_modifiers(state.environment_modifiers)
         if key == "plant_regrowth":
             _sync_food_abundance()
+        elif key == "moss_growth_speed":
+            _sync_moss_growth_speed()
 
     def _set_mutation_rate(value: float) -> None:
         settings.MUTATION_CHANCE = int(round(value))
@@ -734,6 +750,16 @@ def run() -> None:
                 step=0.05,
                 value_format="{value:.2f}x",
                 callback=lambda value: _set_environment_modifier("plant_regrowth", value),
+            ),
+            SliderConfig(
+                key="moss_growth_speed",
+                label="Moss growth speed",
+                min_value=0.2,
+                max_value=3.0,
+                start_value=environment_modifiers.get("moss_growth_speed", 1.0),
+                step=0.05,
+                value_format="{value:.2f}x",
+                callback=lambda value: _set_environment_modifier("moss_growth_speed", value),
             ),
             SliderConfig(
                 key="hunger_rate",
@@ -1060,6 +1086,7 @@ def run() -> None:
                     player_controller,
                 )
                 _sync_food_abundance()
+                _sync_moss_growth_speed()
                 notification_manager.update()
 
                 screen.blit(world_surface, (0, 0), area=camera.viewport)

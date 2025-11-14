@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
-import math
 import random
 from dataclasses import dataclass, field
-from typing import ClassVar, List, Optional, Sequence, Set, Tuple
+from typing import ClassVar, Dict, Iterable, List, Mapping, Optional, Sequence, Set, Tuple
 
 import pygame
 
 
 GridCell = Tuple[int, int]
+
+from .moss_dna import MossDNA, average_dna, ensure_dna_for_cells, random_moss_dna
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -21,11 +22,10 @@ def _clamp(value: float, minimum: float, maximum: float) -> float:
 class MossCluster:
     """A slowly growing moss cluster composed of 2x2 cells."""
 
-    cells: Set[GridCell]
+    cells: Mapping[GridCell, MossDNA] | Iterable[GridCell]
     color: Tuple[int, int, int] = (68, 132, 88)
     CELL_SIZE: ClassVar[int] = 2
-    CELL_NUTRITION: ClassVar[float] = 12.0
-    BASE_GROWTH_DELAY: ClassVar[int] = 240
+    BASE_GROWTH_DELAY: ClassVar[int] = 180
 
     surface: pygame.Surface = field(init=False, repr=False)
     rect: pygame.Rect = field(init=False)
@@ -37,20 +37,56 @@ class MossCluster:
     _dirty: bool = field(init=False, repr=False)
     _environment_multiplier: float = field(init=False, repr=False)
     _growth_timer: int = field(init=False, repr=False)
+    _global_growth_modifier: float = field(init=False, repr=False)
+    _rng: random.Random = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self.cells = set(self.cells)
+        raw_cells = self.cells
+        self._rng = random.Random()
+        if isinstance(raw_cells, Mapping):
+            cell_map: Dict[GridCell, MossDNA] = {}
+            for cell, dna in raw_cells.items():
+                gx, gy = int(cell[0]), int(cell[1])
+                if not isinstance(dna, MossDNA):
+                    dna = random_moss_dna(self._rng)
+                cell_map[(gx, gy)] = dna
+        else:
+            cell_map = ensure_dna_for_cells(tuple(raw_cells), self._rng)
+
+        self.cells = cell_map
         self.surface = pygame.Surface((0, 0), pygame.SRCALPHA)
         self.rect = pygame.Rect(0, 0, 0, 0)
         self.width = 0
         self.height = 0
         self.x = 0.0
         self.y = 0.0
-        self.resource: float = float(len(self.cells) * self.CELL_NUTRITION)
+        self.resource = 0.0
         self._dirty = True
         self._environment_multiplier = 1.0
-        self._growth_timer = random.randint(self.BASE_GROWTH_DELAY // 2, self.BASE_GROWTH_DELAY)
+        self._global_growth_modifier = 1.0
+        self._growth_timer = self._rng.randint(self.BASE_GROWTH_DELAY // 3, self.BASE_GROWTH_DELAY)
+        self._recalculate_aggregates()
         self.set_size()
+
+    def _recalculate_aggregates(self) -> None:
+        if not self.cells:
+            self.resource = 0.0
+            self.color = (68, 132, 88)
+            return
+
+        total_nutrition = sum(dna.nutrition for dna in self.cells.values())
+        self.resource = float(total_nutrition)
+        count = len(self.cells)
+        avg_color = (
+            sum(dna.color[0] for dna in self.cells.values()) / count,
+            sum(dna.color[1] for dna in self.cells.values()) / count,
+            sum(dna.color[2] for dna in self.cells.values()) / count,
+        )
+        self.color = (
+            int(_clamp(avg_color[0], 32, 220)),
+            int(_clamp(avg_color[1], 32, 220)),
+            int(_clamp(avg_color[2], 32, 220)),
+        )
 
     # ------------------------------------------------------------------
     # Geometry helpers
@@ -119,18 +155,14 @@ class MossCluster:
             return
 
         self.surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-        color_variation = random.randint(-10, 10)
-        tint = tuple(
-            int(_clamp(channel + color_variation, 32, 200))
-            for channel in self.color
-        )
 
-        for gx, gy in self.cells:
+        for (gx, gy), dna in self.cells.items():
             px = gx * self.CELL_SIZE - self.rect.left
             py = gy * self.CELL_SIZE - self.rect.top
+            color = tuple(int(_clamp(channel, 24, 220)) for channel in dna.color)
             pygame.draw.rect(
                 self.surface,
-                tint,
+                color,
                 pygame.Rect(px, py, self.CELL_SIZE, self.CELL_SIZE),
             )
 
@@ -149,27 +181,35 @@ class MossCluster:
     def set_capacity_multiplier(self, multiplier: float) -> None:
         self._environment_multiplier = max(0.1, multiplier)
 
+    def set_growth_speed_modifier(self, modifier: float) -> None:
+        self._global_growth_modifier = max(0.1, modifier)
+
     def decrement_resource(self, amount: float, *, eater: Optional["Lifeform"] = None) -> None:
-        if not self.cells or amount <= 0:
+        if not self.cells:
             return
 
-        cells_to_remove = max(1, int(math.ceil(amount / self.CELL_NUTRITION)))
-        removal_order = list(self.cells)
+        removal_order = list(self.cells.keys())
 
         if eater is not None:
             center = eater.rect.center
             removal_order.sort(key=lambda cell: _distance_sq_to_point(cell, center, self.CELL_SIZE))
         else:
-            random.shuffle(removal_order)
+            self._rng.shuffle(removal_order)
 
+        min_nutrition = min(dna.nutrition for dna in self.cells.values()) if self.cells else 0.0
+        target_nutrition = max(min_nutrition, float(amount))
+
+        consumed = 0.0
         removed = 0
-        for cell in removal_order:
-            self.cells.remove(cell)
+        while removal_order and (consumed < target_nutrition or removed == 0):
+            cell = removal_order.pop(0)
+            dna = self.cells.pop(cell, None)
+            if dna is None:
+                continue
+            consumed += dna.nutrition
             removed += 1
-            if removed >= cells_to_remove:
-                break
 
-        self.resource = float(len(self.cells) * self.CELL_NUTRITION)
+        self._recalculate_aggregates()
         self.set_size()
 
     def regrow(self, world: "World", others: Sequence["MossCluster"]) -> None:
@@ -183,16 +223,22 @@ class MossCluster:
         center_x = self.rect.centerx
         center_y = self.rect.centery
         biome_multiplier = world.get_regrowth_modifier(center_x, center_y)
-        total_multiplier = max(0.05, self._environment_multiplier * biome_multiplier)
-        self._growth_timer = max(12, int(self.BASE_GROWTH_DELAY / total_multiplier))
+        total_multiplier = max(
+            0.05,
+            self._environment_multiplier
+            * biome_multiplier
+            * self._global_growth_modifier
+            * self._average_growth_rate(),
+        )
+        self._growth_timer = max(6, int(self.BASE_GROWTH_DELAY / total_multiplier))
 
         candidates = self._gather_growth_candidates(world, others)
         if not candidates:
             return
 
-        new_cell = random.choice(candidates)
-        self.cells.add(new_cell)
-        self.resource = float(len(self.cells) * self.CELL_NUTRITION)
+        new_cell = self._rng.choice(candidates)
+        self.cells[new_cell] = self._create_offspring_dna(new_cell)
+        self._recalculate_aggregates()
         self.set_size()
 
     def _gather_growth_candidates(self, world: "World", others: Sequence["MossCluster"]) -> List[GridCell]:
@@ -222,6 +268,22 @@ class MossCluster:
                 candidates.add((nx, ny))
         return list(candidates)
 
+    def _average_growth_rate(self) -> float:
+        if not self.cells:
+            return 1.0
+        return sum(dna.growth_rate for dna in self.cells.values()) / len(self.cells)
+
+    def _create_offspring_dna(self, cell: GridCell) -> MossDNA:
+        neighbors = list(self._neighbor_dnas(cell))
+        return average_dna(neighbors, self._rng)
+
+    def _neighbor_dnas(self, cell: GridCell) -> Iterable[MossDNA]:
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            neighbor = (cell[0] + dx, cell[1] + dy)
+            dna = self.cells.get(neighbor)
+            if dna is not None:
+                yield dna
+
     # ------------------------------------------------------------------
     # Interaction helpers
     # ------------------------------------------------------------------
@@ -231,8 +293,43 @@ class MossCluster:
         return 0.0
 
     def apply_effect(self, lifeform: "Lifeform") -> None:
-        lifeform.health_now = min(lifeform.health, lifeform.health_now + 10)
-        lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + 15)
+        dna = self._nearest_cell_dna(lifeform)
+        if dna is None:
+            return
+
+        base_energy = dna.nutrition * (1.0 + dna.hydration * 0.4)
+        toxin_energy = dna.toxicity * 8.0
+        net_energy = base_energy - toxin_energy
+        if net_energy >= 0:
+            lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + net_energy)
+        else:
+            lifeform.energy_now = max(0.0, lifeform.energy_now + net_energy)
+
+        heal_amount = dna.vitality * 12.0
+        toxin_damage = dna.toxicity * 16.0
+        health_delta = heal_amount - toxin_damage
+        if health_delta >= 0:
+            lifeform.health_now = min(lifeform.health, lifeform.health_now + health_delta)
+        else:
+            lifeform.health_now = max(0.0, lifeform.health_now + health_delta)
+
+        soothing = dna.hydration * 4.0
+        lifeform.wounded = max(0.0, lifeform.wounded - soothing)
+        if toxin_damage > 0:
+            lifeform.wounded += toxin_damage * 0.1
+
+        satiety_bonus = dna.fiber_density * 8.0
+        lifeform.hunger = max(0.0, lifeform.hunger - satiety_bonus)
+
+    def _nearest_cell_dna(self, lifeform: "Lifeform") -> Optional[MossDNA]:
+        if not self.cells:
+            return None
+        center = lifeform.rect.center
+        closest_cell = min(
+            self.cells.keys(),
+            key=lambda cell: _distance_sq_to_point(cell, center, self.CELL_SIZE),
+        )
+        return self.cells.get(closest_cell)
 
 
 def _distance_sq_to_point(cell: GridCell, point: Tuple[int, int], cell_size: int) -> float:
@@ -323,7 +420,8 @@ def create_initial_clusters(
         if not cells:
             break
         occupied.update(cells)
-        clusters.append(MossCluster(cells))
+        dna_cells = ensure_dna_for_cells(cells, rng)
+        clusters.append(MossCluster(dna_cells))
 
     return clusters
 
