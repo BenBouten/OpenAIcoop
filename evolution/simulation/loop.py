@@ -31,7 +31,6 @@ from ..entities import movement
 from ..entities.lifeform import Lifeform
 from ..rendering.camera import Camera
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
-from ..rendering.effects import EffectManager
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
 from ..systems import stats as stats_system
 from ..systems.events import EventManager
@@ -494,7 +493,6 @@ def run() -> None:
     notification_manager = notification_context.notification_manager
     event_manager = EventManager(notification_manager, environment_modifiers)
     player_controller = PlayerController(notification_manager, dna_profiles, lifeforms)
-    effects_manager = EffectManager()
 
     bootstrap.reset_simulation(
         state,
@@ -503,7 +501,6 @@ def run() -> None:
         event_manager,
         player_controller,
         notification_manager,
-        effects_manager,
         state.world_type,
     )
     graph = Graph()
@@ -694,9 +691,6 @@ def run() -> None:
                     if lifeform.reproduced_cooldown > 0:
                         lifeform.reproduced_cooldown -= 1
 
-                effects_manager.update(delta_time)
-                effects_manager.draw(world_surface)
-
                 stats = stats_system.collect_population_stats(
                     state, formatted_time_passed
                 )
@@ -825,7 +819,6 @@ def run() -> None:
                             event_manager,
                             player_controller,
                             notification_manager,
-                            effects_manager,
                             state.world_type,
                         )
                         _initialise_population()
@@ -860,7 +853,6 @@ def run() -> None:
                             event_manager,
                             player_controller,
                             notification_manager,
-                            effects_manager,
                             state.world_type,
                         )
                         latest_stats = None

@@ -1,8 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List, TYPE_CHECKING
-
-if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
-    from ..rendering.effects import EffectManager
+from typing import Dict, List
 
 
 @dataclass
@@ -16,7 +13,6 @@ class SimulationState:
     notification_context: object = None
     events: 'EventManager' = None
     player: 'PlayerController' = None
-    effects: 'EffectManager' = None
     environment_modifiers: dict = field(
         default_factory=lambda: {
             "plant_regrowth": 1.0,

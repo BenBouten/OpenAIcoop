@@ -14,7 +14,6 @@ from .state import SimulationState
 
 if TYPE_CHECKING:
     from ..rendering.camera import Camera
-    from ..rendering.effects import EffectManager
     from ..systems.events import EventManager
     from ..systems.notifications import NotificationManager
     from ..systems.player import PlayerController
@@ -33,7 +32,6 @@ def reset_simulation(
     event_manager: "EventManager",
     player_controller: "PlayerController",
     notification_manager: "NotificationManager",
-    effects_manager: "EffectManager",
     world_type: Optional[str] = None,
 ) -> None:
     """Reset all shared simulation state and regenerate the world."""
@@ -59,13 +57,11 @@ def reset_simulation(
     state.events = event_manager
     state.player = player_controller
     state.notifications = notification_manager
-    state.effects = effects_manager
 
     notification_manager.clear()
     event_manager.reset()
     event_manager.schedule_default_events()
     player_controller.reset()
-    effects_manager.clear()
 
     state.environment_modifiers.setdefault("plant_regrowth", 1.0)
     state.environment_modifiers.setdefault("hunger_rate", 1.0)

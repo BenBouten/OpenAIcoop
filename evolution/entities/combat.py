@@ -14,29 +14,12 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
     """Handle melee combat, feeding, and reproduction for a lifeform."""
 
     context = lifeform.notification_context
-    effects = lifeform.effects_manager
-
-    def _lifeform_anchor(entity: "Lifeform") -> tuple[float, float]:
-        return (entity.x + entity.width / 2, entity.y - 10)
 
     enemy = lifeform.closest_enemy
     if enemy and enemy.health_now > 0 and lifeform.distance_to(enemy) < 5:
         damage = max(1, lifeform.attack_power_now - enemy.defence_power_now / 2)
         enemy.health_now -= damage
         enemy.wounded += 2
-        if effects:
-            effects.spawn_damage_label(_lifeform_anchor(enemy), damage)
-            effects.spawn_bite_label(
-                _lifeform_anchor(lifeform),
-                "Chomp!",
-                color=(255, 180, 120),
-            )
-            if enemy.health_now <= 0:
-                effects.spawn_bite_label(
-                    _lifeform_anchor(enemy),
-                    "KO!",
-                    color=(255, 220, 120),
-                )
 
     prey = lifeform.closest_prey
     if (
@@ -52,19 +35,6 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         lifeform.hunger = max(0, lifeform.hunger - 40)
         if context:
             context.action(f"{lifeform.id} valt {prey.id} aan")
-        if effects:
-            effects.spawn_damage_label(_lifeform_anchor(prey), damage)
-            effects.spawn_bite_label(
-                _lifeform_anchor(lifeform),
-                "Chomp!",
-                color=(255, 200, 160),
-            )
-            if prey.health_now <= 0:
-                effects.spawn_bite_label(
-                    _lifeform_anchor(prey),
-                    "KO!",
-                    color=(255, 240, 150),
-                )
 
     partner = lifeform.closest_partner
     if (
@@ -74,13 +44,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         and lifeform.can_reproduce()
         and lifeform.distance_to(partner) < 3
     ):
-        reproduced = lifeform.reproduce(partner)
-        if reproduced and effects:
-            midpoint_x = (
-                lifeform.x + lifeform.width / 2 + partner.x + partner.width / 2
-            ) / 2
-            midpoint_y = (lifeform.y + partner.y) / 2 - 14
-            effects.spawn_woohoo((midpoint_x, midpoint_y))
+        lifeform.reproduce(partner)
 
     plant = lifeform.closest_plant
     if (
@@ -102,21 +66,3 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                 total_nutrition * settings.PLANT_HUNGER_SATIATION_PER_NUTRITION + satiety_bonus
             )
             lifeform.hunger = max(0.0, lifeform.hunger - hunger_reduction)
-            if effects:
-                anchor = _lifeform_anchor(lifeform)
-                bite_text = f"+{int(round(hunger_reduction))}"
-                effects.spawn_bite_label(anchor, bite_text)
-                plant_center = (
-                    plant.x + plant.width / 2,
-                    plant.y + plant.height / 2,
-                )
-                effects.spawn_confetti(
-                    plant_center,
-                    palette=[
-                        (120, 220, 160),
-                        (180, 255, 200),
-                        (120, 200, 255),
-                    ],
-                    count=10,
-                    strength=18,
-                )
