@@ -37,6 +37,15 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
 
     now = pygame.time.get_ticks()
 
+    # ⬇️ NIEUW: als we in escape-modus zitten, NIETS anders doen
+    if lifeform._escape_timer > 0 and lifeform._escape_vector.length_squared() > 0:
+        escape_dir = lifeform._escape_vector.normalize()
+        lifeform.x_direction = escape_dir.x
+        lifeform.y_direction = escape_dir.y
+        lifeform.wander_direction = escape_dir
+        lifeform._escape_timer -= 1
+        return  # ⬅️ heel belangrijk: alle normale gedrag wordt tijdelijk overgeslagen
+
     _cleanup_memory(lifeform, now)
     _remember(lifeform, "visited", (lifeform.x, lifeform.y), now, weight=1.0)
 

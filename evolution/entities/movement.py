@@ -87,15 +87,17 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         lifeform.x_direction = -lifeform.x_direction
         lifeform.y_direction = -lifeform.y_direction
 
-        logger.warning(
-            "Lifeform %s collided with obstacle at (%.1f, %.1f)",
-            lifeform.id,
-            resolved_x,
-            resolved_y,
-        )
+        # ⬇️ NIEUW: alleen een nieuwe escape starten als we NIET al in escape-modus zitten
+        if lifeform._escape_timer == 0:
+            logger.warning(
+                "Lifeform %s collided with obstacle at (%.1f, %.1f)",
+                lifeform.id,
+                resolved_x,
+                resolved_y,
+            )
+            lifeform._trigger_escape_manoeuvre("collision")
+            lifeform._boundary_contact_frames = 0
 
-        lifeform._trigger_escape_manoeuvre("collision")
-        lifeform._boundary_contact_frames = 0
 
     else:
         if hit_boundary_x:

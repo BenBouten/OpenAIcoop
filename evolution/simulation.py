@@ -26,6 +26,8 @@ from .systems.notifications import NotificationManager
 from .systems.player import PlayerController
 from .world.world import BiomeRegion, World
 
+DNA_CLUSTER_RADIUS = 180
+
 
 @dataclass
 class NotificationContext:
@@ -364,19 +366,44 @@ def reset_dna_profiles():
 
 
 def init_lifeforms():
-    spawn_positions_by_dna = {profile['dna_id']: [] for profile in dna_profiles}
+    cluster_centers = {}  # dna_id -> (x, y)
 
     for _ in range(settings.N_LIFEFORMS):
+
         dna_profile = random.choice(dna_profiles)
+        dna_id = dna_profile["dna_id"]
         generation = 1
 
-        preferred_biome = dna_home_biome.get(dna_profile['dna_id'])
-        other_positions = [
-            pos
-            for dna_id, positions in spawn_positions_by_dna.items()
-            if dna_id != dna_profile['dna_id']
-            for pos in positions
-        ]
+        preferred_biome = dna_home_biome.get(dna_id)
+
+        # ---- CLUSTER CENTER PER DNA ----
+        if dna_id not in cluster_centers:
+            # kies eerste spawnpunt als cluster center
+            cx, cy, _ = world.random_position(
+                dna_profile["width"],
+                dna_profile["height"],
+                preferred_biome=preferred_biome
+            )
+            cluster_centers[dna_id] = (cx, cy)
+
+        cx, cy = cluster_centers[dna_id]
+
+        # ---- SPAWN MET CLUSTER RADIUS ----
+        # (vereist kleine update in world.random_position())
+        x = cx + random.randint(-160, 160)
+        y = cy + random.randint(-160, 160)
+
+        # clamp binnen world-bounds
+        x = max(0, min(int(x), world.width - dna_profile["width"]))
+        y = max(0, min(int(y), world.height - dna_profile["height"]))
+
+        lifeform = Lifeform(state, x, y, dna_profile, generation)
+        lifeforms.append(lifeform)
+
+        logger.info(
+            "Spawned lifeform %s (dna %s) cluster at (%.1f, %.1f)",
+            lifeform.id, dna_id, x, y
+        )
 
         spawn_attempts = 0
         while True:
