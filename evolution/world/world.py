@@ -11,6 +11,9 @@ import pygame
 from ..config import settings
 
 
+from .map_generator import MapBlueprint, generate_map
+
+
 @dataclass
 class WeatherPattern:
     name: str
@@ -84,297 +87,43 @@ class BiomeRegion:
 
 
 class World:
-    def __init__(self, width: int, height: int):
+    def __init__(self, width: int, height: int, world_type: Optional[str] = None):
         self.width = width
         self.height = height
         self.background_color = (228, 222, 208)
         self.barriers: List[Barrier] = []
         self.water_bodies: List[WaterBody] = []
         self.biomes: List[BiomeRegion] = []
+        self.vegetation_masks: List[pygame.Rect] = []
+        self.world_type = self._normalise_world_type(world_type)
+        self._generate()
+
+    @staticmethod
+    def _normalise_world_type(world_type: Optional[str]) -> str:
+        if not world_type:
+            return "Rift Valley"
+        cleaned = world_type.strip().lower().replace("_", " ")
+        cleaned = cleaned.replace("–", "-")
+        if cleaned in {"archipelago", "archipel"}:
+            return "Archipelago"
+        if cleaned in {"desert-jungle split", "desert jungle split"}:
+            return "Desert–Jungle Split"
+        return "Rift Valley"
+
+    def set_world_type(self, world_type: Optional[str]) -> None:
+        self.world_type = self._normalise_world_type(world_type)
         self._generate()
 
     def _generate(self) -> None:
-        self.barriers.clear()
-        self.water_bodies.clear()
-        self.biomes.clear()
-        self._create_border_barriers()
-        self._create_interior_barriers()
-        self._create_water_bodies()
-        self._create_biomes()
+        blueprint: MapBlueprint = generate_map(self.world_type, self.width, self.height)
+        self.background_color = blueprint.background_color
+        self.barriers = list(blueprint.barriers)
+        self.water_bodies = list(blueprint.water_bodies)
+        self.biomes = list(blueprint.biomes)
+        self.vegetation_masks = list(blueprint.vegetation_masks)
 
     def regenerate(self) -> None:
         self._generate()
-
-    def _create_border_barriers(self) -> None:
-        border_thickness = 12
-        self.barriers.extend([
-            Barrier(pygame.Rect(0, 0, self.width, border_thickness)),
-            Barrier(pygame.Rect(0, 0, border_thickness, self.height)),
-            Barrier(pygame.Rect(0, self.height - border_thickness, self.width, border_thickness)),
-            Barrier(pygame.Rect(self.width - border_thickness, 0, border_thickness, self.height)),
-        ])
-
-    def _create_interior_barriers(self) -> None:
-        ridge_rect = pygame.Rect(self.width // 3, 140, 40, self.height - 280)
-        canyon_rect = pygame.Rect(2 * self.width // 3, self.height // 2, 30, self.height // 2 - 60)
-        self.barriers.extend([
-            Barrier(ridge_rect, (120, 110, 95), "rotsrug"),
-            Barrier(canyon_rect, (110, 100, 85), "canyon"),
-        ])
-
-    def _create_water_bodies(self) -> None:
-        sea_rect = pygame.Rect(40, self.height - 220, self.width // 2, 220)
-        sea = WaterBody("sea", [sea_rect], color=(64, 140, 200))
-
-        river_segments: List[pygame.Rect] = []
-        segment_width = 32
-        x = self.width - 220
-        y = 0
-        while y < self.height:
-            segment = pygame.Rect(x, y, segment_width, 140)
-            river_segments.append(segment)
-            x += random.randint(-80, 60)
-            x = max(self.width // 3, min(self.width - segment_width - 40, x))
-            y += 120
-        river = WaterBody("river", river_segments, color=(60, 150, 210))
-
-        delta_segments: List[pygame.Rect] = []
-        for idx, segment in enumerate(river_segments[-3:]):
-            offset = idx * 50
-            delta_segments.append(
-                pygame.Rect(segment.x - offset, segment.bottom - 60, segment_width + 100, 80)
-            )
-        delta = WaterBody("delta", delta_segments, color=(70, 170, 220))
-
-        self.water_bodies.extend([sea, river, delta])
-
-    def _create_biomes(self) -> None:
-        temperate_patterns = [
-            WeatherPattern(
-                "Zonnig",
-                23,
-                "helder",
-                movement_modifier=1.05,
-                hunger_modifier=0.9,
-                regrowth_modifier=1.15,
-                energy_modifier=1.1,
-            ),
-            WeatherPattern(
-                "Lichte regen",
-                18,
-                "regen",
-                movement_modifier=0.95,
-                hunger_modifier=1.0,
-                regrowth_modifier=1.35,
-                energy_modifier=0.95,
-            ),
-            WeatherPattern(
-                "Mist",
-                15,
-                "mist",
-                movement_modifier=0.85,
-                hunger_modifier=1.05,
-                regrowth_modifier=1.2,
-                energy_modifier=0.9,
-                duration_range=(12000, 20000),
-            ),
-        ]
-        forest_patterns = [
-            WeatherPattern(
-                "Dichte mist",
-                14,
-                "mist",
-                movement_modifier=0.8,
-                hunger_modifier=1.1,
-                regrowth_modifier=1.4,
-                energy_modifier=0.9,
-            ),
-            WeatherPattern(
-                "Regenstorm",
-                16,
-                "storm",
-                movement_modifier=0.7,
-                hunger_modifier=1.15,
-                regrowth_modifier=1.55,
-                energy_modifier=0.85,
-                health_tick=-0.2,
-                duration_range=(10000, 18000),
-            ),
-            WeatherPattern(
-                "Zwoel",
-                22,
-                "bewolkt",
-                movement_modifier=0.9,
-                hunger_modifier=1.05,
-                regrowth_modifier=1.2,
-                energy_modifier=1.0,
-            ),
-        ]
-        desert_patterns = [
-            WeatherPattern(
-                "Hitteslag",
-                36,
-                "droog",
-                movement_modifier=0.7,
-                hunger_modifier=1.35,
-                regrowth_modifier=0.6,
-                energy_modifier=0.7,
-                health_tick=-0.3,
-                duration_range=(12000, 20000),
-            ),
-            WeatherPattern(
-                "Koele nacht",
-                20,
-                "helder",
-                movement_modifier=1.05,
-                hunger_modifier=0.95,
-                regrowth_modifier=0.8,
-                energy_modifier=1.1,
-            ),
-            WeatherPattern(
-                "Zandstorm",
-                32,
-                "storm",
-                movement_modifier=0.55,
-                hunger_modifier=1.45,
-                regrowth_modifier=0.5,
-                energy_modifier=0.6,
-                health_tick=-0.4,
-                duration_range=(8000, 15000),
-            ),
-        ]
-        tundra_patterns = [
-            WeatherPattern(
-                "Sneeuw",
-                -4,
-                "sneeuw",
-                movement_modifier=0.65,
-                hunger_modifier=1.25,
-                regrowth_modifier=0.7,
-                energy_modifier=0.8,
-                health_tick=-0.2,
-            ),
-            WeatherPattern(
-                "Heldere kou",
-                -10,
-                "helder",
-                movement_modifier=0.75,
-                hunger_modifier=1.1,
-                regrowth_modifier=0.5,
-                energy_modifier=0.85,
-            ),
-            WeatherPattern(
-                "Dooi",
-                2,
-                "regen",
-                movement_modifier=0.85,
-                hunger_modifier=1.0,
-                regrowth_modifier=0.9,
-                energy_modifier=0.9,
-            ),
-        ]
-        marsh_patterns = [
-            WeatherPattern(
-                "Damp",
-                19,
-                "mist",
-                movement_modifier=0.8,
-                hunger_modifier=1.05,
-                regrowth_modifier=1.5,
-                energy_modifier=0.95,
-            ),
-            WeatherPattern(
-                "Zware regen",
-                17,
-                "regen",
-                movement_modifier=0.75,
-                hunger_modifier=1.0,
-                regrowth_modifier=1.6,
-                energy_modifier=0.9,
-                health_tick=0.1,
-            ),
-            WeatherPattern(
-                "Helder",
-                21,
-                "helder",
-                movement_modifier=0.95,
-                hunger_modifier=0.95,
-                regrowth_modifier=1.2,
-                energy_modifier=1.05,
-            ),
-        ]
-
-        self.biomes = [
-            BiomeRegion(
-                "Rivierdelta",
-                pygame.Rect(
-                    self.width // 3 - 80,
-                    self.height // 2 - 160,
-                    self.width // 2 + 40,
-                    320,
-                ),
-                (120, 200, 150),
-                marsh_patterns,
-                movement_modifier=0.85,
-                hunger_modifier=0.95,
-                regrowth_modifier=1.4,
-                energy_modifier=0.95,
-                health_modifier=0.05,
-            ),
-            BiomeRegion(
-                "Bosrand",
-                pygame.Rect(60, 60, self.width // 3 - 20, self.height // 2),
-                (80, 170, 120),
-                forest_patterns,
-                movement_modifier=0.8,
-                hunger_modifier=0.9,
-                regrowth_modifier=1.5,
-                energy_modifier=1.0,
-                health_modifier=0.02,
-            ),
-            BiomeRegion(
-                "Steppe",
-                pygame.Rect(
-                    self.width // 3 + 20,
-                    100,
-                    self.width // 3 + 160,
-                    self.height // 2 - 40,
-                ),
-                (180, 200, 120),
-                temperate_patterns,
-                movement_modifier=1.05,
-                hunger_modifier=0.95,
-                regrowth_modifier=1.0,
-                energy_modifier=1.1,
-            ),
-            BiomeRegion(
-                "Woestijnrand",
-                pygame.Rect(
-                    self.width // 2 + 120,
-                    self.height - 320,
-                    self.width // 2 - 160,
-                    240,
-                ),
-                (210, 190, 120),
-                desert_patterns,
-                movement_modifier=0.75,
-                hunger_modifier=1.3,
-                regrowth_modifier=0.6,
-                energy_modifier=0.8,
-                health_modifier=-0.1,
-            ),
-            BiomeRegion(
-                "Toendra",
-                pygame.Rect(self.width - 420, 40, 360, 260),
-                (180, 210, 220),
-                tundra_patterns,
-                movement_modifier=0.7,
-                hunger_modifier=1.2,
-                regrowth_modifier=0.65,
-                energy_modifier=0.85,
-                health_modifier=-0.05,
-            ),
-        ]
 
     def update(self, now_ms: int) -> None:
         for biome in self.biomes:

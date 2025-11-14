@@ -18,6 +18,7 @@ class SimulationState:
     """Placeholder for the shared simulation state container."""
 
     running: bool = False
+    world_type: str = "Rift Valley"
 
 
 def run_engine(step: SimulationStep, state: SimulationState) -> None:
