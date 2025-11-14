@@ -912,7 +912,8 @@ def run() -> None:
     world = World(
         settings.WORLD_WIDTH,
         settings.WORLD_HEIGHT,
-        environment_modifiers,
+        world_type=state.world_type,
+        environment_modifiers=environment_modifiers,
     )
     camera = Camera(
         settings.WINDOW_WIDTH,

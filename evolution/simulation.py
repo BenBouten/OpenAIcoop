@@ -620,7 +620,12 @@ def run() -> None:
 
     world_surface = pygame.Surface((settings.WORLD_WIDTH, settings.WORLD_HEIGHT))
 
-    world = World(settings.WORLD_WIDTH, settings.WORLD_HEIGHT, state.world_type)
+    world = World(
+        settings.WORLD_WIDTH,
+        settings.WORLD_HEIGHT,
+        world_type=state.world_type,
+        environment_modifiers=environment_modifiers,
+    )
     camera = Camera(settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT, settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
     camera.center_on(settings.WORLD_WIDTH / 2, settings.WORLD_HEIGHT / 2)
     logger.info(

@@ -25,7 +25,7 @@ class MapBlueprint:
     vegetation_masks: List[pygame.Rect]
 
 
-def _normalize_world_type(world_type: str | None) -> str:
+def normalize_world_type(world_type: str | None) -> str:
     if not world_type:
         return "Rift Valley"
     cleaned = world_type.strip().lower().replace("_", " ")
@@ -725,10 +725,10 @@ _GENERATOR_MAP: Dict[str, Callable[[int, int], MapBlueprint]] = {
 def generate_map(world_type: str | None, width: int, height: int) -> MapBlueprint:
     """Generate a map blueprint for the requested world type."""
 
-    canonical = _normalize_world_type(world_type)
+    canonical = normalize_world_type(world_type)
     generator = _GENERATOR_MAP.get(canonical, _generate_rift_valley)
     return generator(width, height)
 
 
-__all__ = ["MapBlueprint", "generate_map"]
+__all__ = ["MapBlueprint", "generate_map", "normalize_world_type"]
 
