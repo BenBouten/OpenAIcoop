@@ -6,7 +6,6 @@ from typing import Dict, List
 class SimulationState:
     lifeforms: List = field(default_factory=list)
     plants: List = field(default_factory=list)
-    pheromones: List = field(default_factory=list)
     world: 'World' = None
     world_type: str = "Rift Valley"
     camera: 'Camera' = None
@@ -20,11 +19,6 @@ class SimulationState:
         "weather_intensity": 1.0,
         "moss_growth_speed": 1.0,
     })
-    gameplay_settings: Dict[str, float] = field(
-        default_factory=lambda: {
-            "pheromone_decay": 10.0,
-        }
-    )
     death_ages: List[int] = field(default_factory=list)
     dna_profiles: List[dict] = field(default_factory=list)
     dna_home_biome: dict = field(default_factory=dict)

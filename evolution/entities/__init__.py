@@ -8,5 +8,4 @@ __all__ = [
     "movement",
     "combat",
     "reproduction",
-    "pheromones",
 ]
