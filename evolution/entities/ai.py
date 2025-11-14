@@ -181,7 +181,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
     if (
         lifeform.closest_prey
         and lifeform.closest_prey.health_now > 0
-        and _diet_prefers_meat(lifeform)
+        and lifeform.prefers_meat()
     ):
         weight = max(20.0, lifeform.attack_power_now + lifeform.hunger)
         _remember(
@@ -196,7 +196,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
     if (
         lifeform.closest_plant
         and lifeform.closest_plant.resource > 0
-        and _diet_prefers_plants(lifeform)
+        and lifeform.prefers_plants()
     ):
         weight = lifeform.closest_plant.resource + max(0, lifeform.hunger - 50)
         _remember(
@@ -244,7 +244,7 @@ def _compute_threat_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
 def _compute_pursuit_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
     desired = Vector2()
 
-    if _should_seek_food(lifeform):
+    if lifeform.should_seek_food():
         food_vector = _immediate_food_vector(lifeform)
         if food_vector.length_squared() == 0:
             remembered_food = _recall(lifeform, "food", timestamp)
@@ -256,7 +256,7 @@ def _compute_pursuit_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
     else:
         desired += _opportunistic_food_vector(lifeform)
 
-    if desired.length_squared() == 0 and _ready_to_reproduce(lifeform):
+    if desired.length_squared() == 0 and lifeform.can_reproduce():
         if lifeform.closest_partner and lifeform.closest_partner.health_now > 0:
             direction, _ = lifeform._direction_to_lifeform(lifeform.closest_partner)
             desired += direction
@@ -272,10 +272,10 @@ def _compute_pursuit_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
 def _memory_target_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
     target = None
 
-    if _ready_to_reproduce(lifeform):
+    if lifeform.can_reproduce():
         target = _recall(lifeform, "partner", timestamp)
 
-    if target is None and _should_seek_food(lifeform):
+    if target is None and lifeform.should_seek_food():
         target = _recall(lifeform, "food", timestamp)
 
     if target is None:
@@ -566,44 +566,12 @@ def _obstacle_avoidance_vector(lifeform: "Lifeform", desired: Vector2) -> Vector
     return (-forward) * (settings.OBSTACLE_AVOID_FORCE * 0.5)
 
 
-# ---------------------------------------------------------
-# Diet / motivation helpers
-# ---------------------------------------------------------
-def _diet_prefers_plants(lifeform: "Lifeform") -> bool:
-    return lifeform.diet in ("herbivore", "omnivore")
-
-
-def _diet_prefers_meat(lifeform: "Lifeform") -> bool:
-    return lifeform.diet in ("carnivore", "omnivore")
-
-
-def _should_seek_food(lifeform: "Lifeform") -> bool:
-    if lifeform.hunger >= settings.HUNGER_SEEK_THRESHOLD:
-        return True
-    if lifeform.energy_now < lifeform.energy * 0.45:
-        return True
-    return False
-
-
-def _ready_to_reproduce(lifeform: "Lifeform") -> bool:
-    if lifeform.reproduced_cooldown != 0:
-        return False
-    if not lifeform.is_adult():
-        return False
-    if lifeform.hunger > settings.HUNGER_SEEK_THRESHOLD:
-        return False
-    if lifeform.closest_enemy and lifeform.closest_enemy.health_now > 0:
-        return False
-    energy_ratio = lifeform.energy_now / max(1, lifeform.energy)
-    return energy_ratio >= settings.ENERGY_REPRODUCTION_THRESHOLD
-
-
 def _immediate_food_vector(lifeform: "Lifeform") -> Vector2:
     candidates: List[Tuple[float, Vector2]] = []
 
     if (
         lifeform.closest_plant
-        and _diet_prefers_plants(lifeform)
+        and lifeform.prefers_plants()
         and lifeform.closest_plant.resource > 0
         and lifeform.closest_enemy is None
     ):
@@ -615,7 +583,7 @@ def _immediate_food_vector(lifeform: "Lifeform") -> Vector2:
 
     if (
         lifeform.closest_prey
-        and _diet_prefers_meat(lifeform)
+        and lifeform.prefers_meat()
         and lifeform.closest_prey.health_now > 0
         and lifeform.closest_enemy is None
     ):
@@ -635,7 +603,7 @@ def _immediate_food_vector(lifeform: "Lifeform") -> Vector2:
 def _opportunistic_food_vector(lifeform: "Lifeform") -> Vector2:
     if (
         lifeform.closest_prey
-        and _diet_prefers_meat(lifeform)
+        and lifeform.prefers_meat()
         and lifeform.closest_enemy is None
     ):
         direction, distance = lifeform._direction_to_lifeform(lifeform.closest_prey)
@@ -644,7 +612,7 @@ def _opportunistic_food_vector(lifeform: "Lifeform") -> Vector2:
 
     if (
         lifeform.closest_plant
-        and _diet_prefers_plants(lifeform)
+        and lifeform.prefers_plants()
         and lifeform.closest_enemy is None
     ):
         direction, distance = lifeform._direction_to_point(_plant_center(lifeform))
@@ -672,12 +640,12 @@ def _close_to_food_target(lifeform: "Lifeform") -> bool:
         return False
 
     # Dit gedrag alleen voor planteters / omnivoren.
-    if not _diet_prefers_plants(lifeform):
+    if not lifeform.prefers_plants():
         lifeform._feeding_frames = 0
         return False
 
     # Als we niet eens in "ik moet eten"-modus zijn, niet blijven hangen.
-    if not _should_seek_food(lifeform):
+    if not lifeform.should_seek_food():
         lifeform._feeding_frames = 0
         return False
 

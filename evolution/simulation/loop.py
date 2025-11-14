@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import datetime
 import logging
-import math
 import os
 import random
 from dataclasses import dataclass
@@ -33,12 +32,13 @@ from ..entities.lifeform import Lifeform
 from ..rendering.camera import Camera
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
-from .state import SimulationState
+from ..systems import stats as stats_system
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
 from ..systems.player import PlayerController
-from ..world.vegetation import MossCluster, create_initial_clusters
-from ..world.world import BiomeRegion, World
+from ..world.world import World
+from . import bootstrap, environment
+from .state import SimulationState
 
 
 # ---------------------------------------------------------------------------
@@ -101,13 +101,6 @@ MAP_TYPE_OPTIONS = [
     "Rift Valley",
     "Desert–Jungle Split",
 ]
-
-
-# ---------------------------------------------------------------------------
-# Vegetation & grafiek (nog niet uitbesteed)
-# ---------------------------------------------------------------------------
-
-Vegetation = MossCluster
 
 
 class Graph:
@@ -201,39 +194,12 @@ player_controller: PlayerController
 
 lifeforms: List[Lifeform] = state.lifeforms
 dna_profiles: List[dict] = state.dna_profiles
-plants: List[Vegetation] = state.plants
-
-dna_id_counts: Dict[int, int] = {}
-dna_home_biome: Dict[int, Optional[BiomeRegion]] = state.dna_home_biome
+plants: List = state.plants
 
 death_ages: List[int] = state.death_ages
 latest_stats: Optional[Dict[str, float]] = None
 
 environment_modifiers: Dict[str, float] = state.environment_modifiers
-_last_food_multiplier = environment_modifiers.get("plant_regrowth", 1.0)
-_last_moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
-
-
-def _sync_food_abundance() -> None:
-    global _last_food_multiplier
-    current = environment_modifiers.get("plant_regrowth", 1.0)
-    if math.isclose(current, _last_food_multiplier, rel_tol=1e-4, abs_tol=1e-6):
-        return
-    _last_food_multiplier = current
-    if state.world is not None:
-        state.world.set_environment_modifiers(state.environment_modifiers)
-    for plant in plants:
-        plant.set_capacity_multiplier(current)
-
-
-def _sync_moss_growth_speed() -> None:
-    global _last_moss_growth
-    current = environment_modifiers.get("moss_growth_speed", 1.0)
-    if math.isclose(current, _last_moss_growth, rel_tol=1e-4, abs_tol=1e-6):
-        return
-    _last_moss_growth = current
-    for plant in plants:
-        plant.set_growth_speed_modifier(current)
 
 show_debug = False
 show_leader = False
@@ -246,355 +212,6 @@ start_time = datetime.datetime.now()
 clock = pygame.time.Clock()
 fps = settings.FPS
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def reset_list_values(world_type: Optional[str] = None) -> None:
-    """Volledige sim-reset: state leegmaken en wereld opnieuw genereren."""
-    global latest_stats, _last_food_multiplier, _last_moss_growth
-    state.lifeforms.clear()
-    state.dna_profiles.clear()
-    state.dna_id_counts.clear()
-    state.dna_lineage.clear()
-    state.lifeform_genetics.clear()
-    state.plants.clear()
-    state.death_ages.clear()
-    state.lifeform_id_counter = 0
-    latest_stats = None
-
-    if world_type is not None:
-        world.set_world_type(world_type)
-    else:
-        world.regenerate()
-    state.world_type = world.world_type
-    notification_manager.clear()
-    event_manager.reset()
-    event_manager.schedule_default_events()
-    player_controller.reset()
-    environment_modifiers.setdefault("plant_regrowth", 1.0)
-    environment_modifiers.setdefault("hunger_rate", 1.0)
-    environment_modifiers.setdefault("weather_intensity", 1.0)
-    environment_modifiers.setdefault("moss_growth_speed", 1.0)
-    _last_food_multiplier = environment_modifiers.get("plant_regrowth", 1.0)
-    _last_moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
-    camera.reset()
-
-
-def _normalize(value: float, minimum: float, maximum: float) -> float:
-    if maximum == minimum:
-        return 0.5
-    return max(0.0, min(1.0, (value - minimum) / (maximum - minimum)))
-
-
-def determine_home_biome(
-    dna_profile: dict,
-    biomes: List[BiomeRegion],
-) -> Optional[BiomeRegion]:
-    if not biomes:
-        return None
-
-    size = (dna_profile['width'] + dna_profile['height']) / 2
-    min_size = (settings.MIN_WIDTH + settings.MIN_HEIGHT) / 2
-    max_size = (settings.MAX_WIDTH + settings.MAX_HEIGHT) / 2
-
-    size_norm = _normalize(size, min_size, max_size)
-    heat_tolerance = _normalize(dna_profile['energy'], 60, 120)
-    hydration_dependence = 1.0 - heat_tolerance
-    resilience = (
-        _normalize(dna_profile['health'], 1, 220)
-        + _normalize(dna_profile['defence_power'], 1, 110)
-    ) / 2
-    mobility = (
-        _normalize(dna_profile['vision'], settings.VISION_MIN, settings.VISION_MAX)
-        + (1.0 - size_norm)
-    ) / 2
-    longevity_factor = _normalize(dna_profile['longevity'], 800, 5200)
-    aggression = _normalize(dna_profile['attack_power'], 1, 110)
-
-    preferred_biome = None
-    preferred_score = -1.0
-
-    for biome in biomes:
-        name = biome.name.lower()
-        score = 0.0
-        if "woestijn" in name:
-            score = (
-                heat_tolerance * 0.55
-                + resilience * 0.25
-                + aggression * 0.15
-                + mobility * 0.1
-                - hydration_dependence * 0.2
-            )
-        elif "toendra" in name:
-            score = (
-                (1.0 - heat_tolerance) * 0.35
-                + longevity_factor * 0.35
-                + resilience * 0.2
-                + hydration_dependence * 0.1
-            )
-        elif "bos" in name:
-            score = (
-                mobility * 0.35
-                + hydration_dependence * 0.2
-                + resilience * 0.25
-                + (1.0 - size_norm) * 0.1
-                + aggression * 0.1
-            )
-        elif "rivier" in name or "delta" in name or "moeras" in name:
-            score = (
-                hydration_dependence * 0.45
-                + mobility * 0.2
-                + resilience * 0.2
-                + longevity_factor * 0.15
-            )
-        elif "steppe" in name:
-            score = (
-                mobility * 0.3
-                + heat_tolerance * 0.25
-                + resilience * 0.2
-                + aggression * 0.15
-                + longevity_factor * 0.1
-            )
-        else:
-            score = (
-                resilience * 0.3
-                + mobility * 0.25
-                + longevity_factor * 0.2
-                + (1.0 - abs(heat_tolerance - 0.5)) * 0.25
-            )
-
-        if score > preferred_score:
-            preferred_biome = biome
-            preferred_score = score
-
-    return preferred_biome
-
-
-def reset_dna_profiles() -> None:
-    dna_profiles.clear()
-    dna_home_biome.clear()
-    for dna_id in range(settings.N_DNA_PROFILES):
-        diet = random.choices(
-            ['herbivore', 'omnivore', 'carnivore'],
-            weights=[0.4, 0.35, 0.25],
-        )[0]
-
-        if diet == 'herbivore':
-            attack_power = random.randint(5, 45)
-            defence_power = random.randint(35, 85)
-            vision_value = random.randint(
-                settings.VISION_MIN,
-                max(settings.VISION_MIN + 1, settings.VISION_MAX - 10),
-            )
-            energy_value = random.randint(88, 110)
-            longevity_value = random.randint(1600, 5200)
-            social_tendency = random.uniform(0.6, 1.0)
-            risk_tolerance = random.uniform(0.1, 0.5)
-        elif diet == 'carnivore':
-            attack_power = random.randint(45, 95)
-            defence_power = random.randint(20, 65)
-            vision_value = random.randint(
-                max(settings.VISION_MIN, 28),
-                settings.VISION_MAX,
-            )
-            energy_value = random.randint(78, 96)
-            longevity_value = random.randint(900, 3600)
-            social_tendency = random.uniform(0.2, 0.6)
-            risk_tolerance = random.uniform(0.6, 1.0)
-        else:
-            attack_power = random.randint(30, 85)
-            defence_power = random.randint(25, 75)
-            vision_value = random.randint(
-                max(settings.VISION_MIN, 24),
-                settings.VISION_MAX,
-            )
-            energy_value = random.randint(82, 104)
-            longevity_value = random.randint(1200, 4200)
-            social_tendency = random.uniform(0.4, 0.85)
-            risk_tolerance = random.uniform(0.4, 0.8)
-
-        dna_profile = {
-            'dna_id': dna_id,
-            'width': random.randint(settings.MIN_WIDTH, settings.MAX_WIDTH),
-            'height': random.randint(settings.MIN_HEIGHT, settings.MAX_HEIGHT),
-            'color': (
-                random.randint(0, 255),
-                random.randint(0, 255),
-                random.randint(0, 255),
-            ),
-            'health': random.randint(1, 200),
-            'maturity': random.randint(
-                settings.MIN_MATURITY,
-                settings.MAX_MATURITY,
-            ),
-            'vision': vision_value,
-            'defence_power': defence_power,
-            'attack_power': attack_power,
-            'energy': energy_value,
-            'longevity': longevity_value,
-            'diet': diet,
-            'social': social_tendency,
-            'risk_tolerance': risk_tolerance,
-        }
-        dna_profiles.append(dna_profile)
-        if world.biomes:
-            dna_home_biome[dna_profile['dna_id']] = determine_home_biome(
-                dna_profile,
-                world.biomes,
-            )
-        else:
-            dna_home_biome[dna_profile['dna_id']] = None
-
-
-def init_lifeforms() -> None:
-    spawn_positions_by_dna = {profile['dna_id']: [] for profile in dna_profiles}
-
-    for _ in range(settings.N_LIFEFORMS):
-        dna_profile = random.choice(dna_profiles)
-        generation = 1
-
-        preferred_biome = dna_home_biome.get(dna_profile['dna_id'])
-        other_positions = [
-            pos
-            for dna_id, positions in spawn_positions_by_dna.items()
-            if dna_id != dna_profile['dna_id']
-            for pos in positions
-        ]
-
-        spawn_attempts = 0
-        while True:
-            x, y, biome = world.random_position(
-                dna_profile['width'],
-                dna_profile['height'],
-                preferred_biome=preferred_biome,
-                avoid_positions=other_positions,
-                min_distance=320,
-                biome_padding=40,
-            )
-            center = (
-                x + dna_profile['width'] / 2,
-                y + dna_profile['height'] / 2,
-            )
-            same_species_positions = spawn_positions_by_dna.setdefault(
-                dna_profile['dna_id'],
-                [],
-            )
-            too_close_same = any(
-                math.hypot(center[0] - px, center[1] - py) < 160
-                for px, py in same_species_positions
-            )
-            if not too_close_same or spawn_attempts > 120:
-                same_species_positions.append(center)
-                break
-            spawn_attempts += 1
-
-        lifeform = Lifeform(state, x, y, dna_profile, generation)
-        lifeform.current_biome = biome
-        lifeforms.append(lifeform)
-        logger.info(
-            "Spawned lifeform %s (dna %s) at (%.1f, %.1f) in biome %s",
-            lifeform.id,
-            dna_profile['dna_id'],
-            x,
-            y,
-            biome.name if biome else "onbekend",
-        )
-
-
-def init_vegetation() -> None:
-    plants.clear()
-    abundance = environment_modifiers.get("plant_regrowth", 1.0)
-    clusters = create_initial_clusters(world, count=32)
-    for cluster in clusters:
-        cluster.set_capacity_multiplier(abundance)
-        cluster.set_growth_speed_modifier(environment_modifiers.get("moss_growth_speed", 1.0))
-        plants.append(cluster)
-
-
-def collect_population_stats(formatted_time_passed: str) -> Dict[str, object]:
-    stats: Dict[str, object] = {
-        "lifeform_count": len(lifeforms),
-        "formatted_time": formatted_time_passed,
-        "average_health": 0,
-        "average_vision": 0,
-        "average_gen": 0,
-        "average_hunger": 0,
-        "average_size": 0,
-        "average_age": 0,
-        "average_maturity": 0,
-        "average_speed": 0,
-        "average_cooldown": 0,
-        "death_age_avg": sum(death_ages) / len(death_ages) if death_ages else 0,
-        "dna_count": {},
-        "dna_attribute_averages": {},
-    }
-
-    if lifeforms:
-        count = len(lifeforms)
-        totals = {
-            "health_now": 0.0,
-            "vision": 0.0,
-            "generation": 0.0,
-            "hunger": 0.0,
-            "size": 0.0,
-            "age": 0.0,
-            "maturity": 0.0,
-            "speed": 0.0,
-            "reproduced_cooldown": 0.0,
-        }
-        dna_attributes = [
-            "health",
-            "vision",
-            "attack_power_now",
-            "defence_power_now",
-            "speed",
-            "maturity",
-            "size",
-            "longevity",
-            "energy",
-        ]
-        dna_totals: Dict[int, Dict[str, float]] = {}
-
-        for lifeform in lifeforms:
-            totals["health_now"] += lifeform.health_now
-            totals["vision"] += lifeform.vision
-            totals["generation"] += lifeform.generation
-            totals["hunger"] += lifeform.hunger
-            totals["size"] += lifeform.size
-            totals["age"] += lifeform.age
-            totals["maturity"] += lifeform.maturity
-            totals["speed"] += lifeform.speed
-            totals["reproduced_cooldown"] += lifeform.reproduced_cooldown
-
-            dna_entry = dna_totals.setdefault(
-                lifeform.dna_id,
-                {"count": 0, **{attr: 0.0 for attr in dna_attributes}},
-            )
-            dna_entry["count"] += 1
-            for attribute in dna_attributes:
-                dna_entry[attribute] += getattr(lifeform, attribute)
-
-        stats["average_health"] = totals["health_now"] / count
-        stats["average_vision"] = totals["vision"] / count
-        stats["average_gen"] = totals["generation"] / count
-        stats["average_hunger"] = totals["hunger"] / count
-        stats["average_size"] = totals["size"] / count
-        stats["average_age"] = totals["age"] / count
-        stats["average_maturity"] = totals["maturity"] / count
-        stats["average_speed"] = totals["speed"] / count
-        stats["average_cooldown"] = totals["reproduced_cooldown"] / count
-        stats["dna_count"] = {
-            dna_id: data["count"] for dna_id, data in dna_totals.items()
-        }
-        stats["dna_attribute_averages"] = {
-            dna_id: {attr: data[attr] / data["count"] for attr in dna_attributes}
-            for dna_id, data in dna_totals.items()
-            if data["count"]
-        }
-
-    return stats
 
 
 def draw_stats_panel(
@@ -707,9 +324,9 @@ def run() -> None:
         if state.world is not None:
             state.world.set_environment_modifiers(state.environment_modifiers)
         if key == "plant_regrowth":
-            _sync_food_abundance()
+            environment.sync_food_abundance(state)
         elif key == "moss_growth_speed":
-            _sync_moss_growth_speed()
+            environment.sync_moss_growth_speed(state)
 
     def _set_mutation_rate(value: float) -> None:
         settings.MUTATION_CHANCE = int(round(value))
@@ -731,6 +348,15 @@ def run() -> None:
     def _set_hunger_penalty(value: float) -> None:
         settings.HUNGER_HEALTH_PENALTY_PER_SECOND = float(value)
         settings.EXTREME_HUNGER_HEALTH_PENALTY_PER_SECOND = float(value) * 10
+
+    def _initialise_population() -> None:
+        global latest_stats
+        bootstrap.generate_dna_profiles(state, world)
+        bootstrap.spawn_lifeforms(state, world)
+        bootstrap.seed_vegetation(state, world)
+        environment.sync_food_abundance(state)
+        environment.sync_moss_growth_speed(state)
+        latest_stats = None
 
     def _build_slider_configs() -> List[SliderConfig]:
         return [
@@ -868,15 +494,15 @@ def run() -> None:
     event_manager = EventManager(notification_manager, environment_modifiers)
     player_controller = PlayerController(notification_manager, dna_profiles, lifeforms)
 
-    # State koppelen
-    state.world = world
-    state.world_type = world.world_type
-    state.camera = camera
-    state.events = event_manager
-    state.player = player_controller
-    state.notifications = notification_manager
-
-    reset_list_values(state.world_type)
+    bootstrap.reset_simulation(
+        state,
+        world,
+        camera,
+        event_manager,
+        player_controller,
+        notification_manager,
+        state.world_type,
+    )
     graph = Graph()
 
     running = True
@@ -932,6 +558,23 @@ def run() -> None:
             for idx, line in enumerate(instructions):
                 info_surface = info_font.render(line, True, settings.BLACK)
                 screen.blit(info_surface, (50, 110 + idx * 32))
+
+            button_width = 180
+            button_height = 32
+            for idx, label in enumerate(MAP_TYPE_OPTIONS):
+                rect = pygame.Rect(
+                    50,
+                    260 + idx * (button_height + 10),
+                    button_width,
+                    button_height,
+                )
+                map_button_rects.append((rect, label))
+                color = settings.SEA if label == state.world_type else settings.GREEN
+                pygame.draw.rect(screen, color, rect)
+                pygame.draw.rect(screen, settings.BLACK, rect, 2)
+                option_surface = button_font.render(label, True, settings.BLACK)
+                option_rect = option_surface.get_rect(center=rect.center)
+                screen.blit(option_surface, option_rect)
             gameplay_panel.draw(screen)
             notification_manager.update()
             notification_manager.draw(screen, info_font)
@@ -1048,7 +691,9 @@ def run() -> None:
                     if lifeform.reproduced_cooldown > 0:
                         lifeform.reproduced_cooldown -= 1
 
-                stats = collect_population_stats(formatted_time_passed)
+                stats = stats_system.collect_population_stats(
+                    state, formatted_time_passed
+                )
                 latest_stats = stats
                 event_manager.schedule_default_events()
                 event_manager.update(
@@ -1056,8 +701,8 @@ def run() -> None:
                     stats,
                     player_controller,
                 )
-                _sync_food_abundance()
-                _sync_moss_growth_speed()
+                environment.sync_food_abundance(state)
+                environment.sync_moss_growth_speed(state)
                 notification_manager.update()
 
                 screen.blit(world_surface, (0, 0), area=camera.viewport)
@@ -1167,10 +812,16 @@ def run() -> None:
             elif event.type == pygame.MOUSEBUTTONDOWN:
                 if starting_screen:
                     if start_button.collidepoint(event.pos):
-                        reset_list_values(state.world_type)
-                        reset_dna_profiles()
-                        init_lifeforms()
-                        init_vegetation()
+                        bootstrap.reset_simulation(
+                            state,
+                            world,
+                            camera,
+                            event_manager,
+                            player_controller,
+                            notification_manager,
+                            state.world_type,
+                        )
+                        _initialise_population()
                         start_time = datetime.datetime.now()
                         notification_manager.add("Simulatie gestart", settings.GREEN)
                         starting_screen = False
@@ -1195,7 +846,16 @@ def run() -> None:
                                 break
                 else:
                     if reset_button.collidepoint(event.pos):
-                        reset_list_values(state.world_type)
+                        bootstrap.reset_simulation(
+                            state,
+                            world,
+                            camera,
+                            event_manager,
+                            player_controller,
+                            notification_manager,
+                            state.world_type,
+                        )
+                        latest_stats = None
                         notification_manager.add(
                             "Simulatie gereset",
                             settings.BLUE,

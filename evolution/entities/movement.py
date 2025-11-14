@@ -6,7 +6,7 @@ Deze module:
 - lost collisions & boundaries op via state.world.resolve_entity_movement(...)
 - houdt bij of een lifeform 'vastzit' of langs de rand schuurt
 - triggert escape manoeuvres (via Lifeform._trigger_escape_manoeuvre)
-- laat Lifeform zelf close-combat / eten / paren doen (_handle_close_interactions)
+ - roept combat.resolve_close_interactions aan voor gevechten/eten/paren
 
 In latere fases kun je combat naar een aparte module verplaatsen.
 """
@@ -19,7 +19,7 @@ from typing import TYPE_CHECKING
 from pygame.math import Vector2
 
 from ..config import settings
-from . import ai  # ⬅️ nieuw: gebruik de AI-module
+from . import ai, combat  # Gebruik aparte modules voor gedrag en interacties
 
 logger = logging.getLogger("evolution.movement")
 
@@ -174,5 +174,5 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         if lifeform.closest_partner:
             context.debug(f"{lifeform.id} heeft partner {lifeform.closest_partner.id}")
 
-    # FASE 7: hier kun je later combat.update_combat(lifeform, state, dt) van maken
-    lifeform._handle_close_interactions()
+    # FASE 7: korte-afstand interacties
+    combat.resolve_close_interactions(lifeform)
