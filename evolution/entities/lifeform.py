@@ -25,7 +25,7 @@ from ..config import settings
 from ..simulation.state import SimulationState
 from ..world.world import BiomeRegion
 from . import reproduction
-from .pheromone_trail import PheromoneTrail, create_trail
+from .pheromones import Pheromone
 
 logger = logging.getLogger("evolution.simulation")
 
@@ -127,14 +127,6 @@ class Lifeform:
         self.diet = dna_profile.get("diet", "omnivore")
         self.social_tendency = float(dna_profile.get("social", 0.5))
         self.risk_tolerance = float(dna_profile.get("risk_tolerance", 0.5))
-
-        # Ant-style nest & pheromone state
-        home = state.dna_home_positions.setdefault(self.dna_id, (self.x, self.y))
-        self.home_position: Tuple[float, float] = (float(home[0]), float(home[1]))
-        self.behaviour_phase: str = "FORAGE"
-        self.carrying_food: bool = False
-        self.last_pheromone_drop: int = 0
-        self.follow_trail_target: Optional[PheromoneTrail] = None
 
         # Local memory buffers
         self.memory: Dict[str, Deque[dict]] = {
@@ -239,9 +231,6 @@ class Lifeform:
                 self.hunger = max(0, self.hunger - 40)
                 if context:
                     context.action(f"{self.id} valt {self.closest_prey.id} aan")
-                if not self.carrying_food and self.closest_prey.health_now <= 0:
-                    self.carrying_food = True
-                    self.behaviour_phase = "RETURN_HOME"
 
         # Partner: reproduction
         if (
@@ -266,9 +255,6 @@ class Lifeform:
                 self.closest_plant.apply_effect(self)
                 self.closest_plant.decrement_resource(12, eater=self)
                 self.hunger = max(0, self.hunger - 60)
-                if not self.carrying_food:
-                    self.carrying_food = True
-                    self.behaviour_phase = "RETURN_HOME"
 
     # ------------------------------------------------------------------
     # Memory helpers
@@ -989,23 +975,5 @@ class Lifeform:
     # Visual trail / pheromones
     # ------------------------------------------------------------------
     def add_tail(self) -> None:
-        """Drop pheromone markers while returning home with food."""
-
-        if not self.carrying_food or self.behaviour_phase != "RETURN_HOME":
-            return
-
-        now = pygame.time.get_ticks()
-        if now - self.last_pheromone_drop < settings.PHEROMONE_DROP_INTERVAL_MS:
-            return
-
-        self.last_pheromone_drop = now
-        direction_to_home = Vector2(self.home_position[0] - self.x, self.home_position[1] - self.y)
-        marker = create_trail(
-            (self.x, self.y),
-            direction_to_home,
-            float(self.state.gameplay_settings.get("pheromone_strength", settings.PHEROMONE_STRENGTH)),
-            float(self.state.gameplay_settings.get("pheromone_evaporation_rate", settings.PHEROMONE_EVAPORATION_RATE)),
-            settings.PHEROMONE_RADIUS,
-            self.color,
-        )
-        self.state.pheromones.append(marker)
+        pheromone = Pheromone(self.x, self.y, self.width, self.height, self.color, 100)
+        self.state.pheromones.append(pheromone)

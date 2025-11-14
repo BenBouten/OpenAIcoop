@@ -54,17 +54,8 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     if dx == 0 and dy == 0:
         dx, dy = 1.0, 0.0
 
-    speed = lifeform.speed
-    if getattr(lifeform, "behaviour_phase", "") == ai.PHASE_RETURN_HOME:
-        multiplier = float(
-            state.gameplay_settings.get(
-                "home_return_speed_multiplier", settings.HOME_RETURN_SPEED_MULTIPLIER
-            )
-        )
-        speed *= multiplier
-
-    attempted_x = lifeform.x + dx * speed
-    attempted_y = lifeform.y + dy * speed
+    attempted_x = lifeform.x + dx * lifeform.speed
+    attempted_y = lifeform.y + dy * lifeform.speed
 
     candidate_rect = lifeform.rect.copy()
     candidate_rect.update(
