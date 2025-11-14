@@ -269,6 +269,15 @@ def _register_new_profile(
     new_profile["dna_id"] = new_id
     state.dna_profiles.append(new_profile.copy())
     state.dna_home_biome[new_id] = state.dna_home_biome.get(parent.dna_id)
+    parent_key = str(parent.dna_id)
+    root_id = state.colony_roots.get(parent_key, parent_key.split("-")[0])
+    state.colony_roots[new_id] = root_id
+    if root_id in state.dna_home_positions:
+        state.dna_home_positions[new_id] = state.dna_home_positions[root_id]
+    if root_id in state.colony_colors:
+        state.colony_colors[new_id] = state.colony_colors[root_id]
+    if root_id in state.colony_labels:
+        state.colony_labels[new_id] = state.colony_labels[root_id]
     state.dna_lineage[new_id] = {
         "parents": (str(parent.dna_id), str(partner.dna_id)),
         "dna_change": dna_change,
