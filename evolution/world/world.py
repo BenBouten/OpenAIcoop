@@ -84,14 +84,23 @@ class BiomeRegion:
 
 
 class World:
-    def __init__(self, width: int, height: int):
+    def __init__(
+        self,
+        width: int,
+        height: int,
+        environment_modifiers: Optional[Dict[str, float]] = None,
+    ):
         self.width = width
         self.height = height
         self.background_color = (228, 222, 208)
         self.barriers: List[Barrier] = []
         self.water_bodies: List[WaterBody] = []
         self.biomes: List[BiomeRegion] = []
+        self.environment_modifiers = environment_modifiers
         self._generate()
+
+    def set_environment_modifiers(self, modifiers: Dict[str, float]) -> None:
+        self.environment_modifiers = modifiers
 
     def _generate(self) -> None:
         self.barriers.clear()
@@ -406,7 +415,10 @@ class World:
 
         y_offset = 46
         for biome in self.biomes:
-            effects = biome.get_effects()
+            _, effects = self.get_environment_context(
+                biome.rect.centerx,
+                biome.rect.centery,
+            )
             text = font.render(
                 f"{biome.name}: {effects['weather_name']} ({effects['temperature']}°C, {effects['precipitation']})",
                 True,
@@ -440,6 +452,20 @@ class World:
                 "precipitation": "helder",
                 "weather_name": "Stabiel",
             }
+        intensity = 1.0
+        if self.environment_modifiers is not None:
+            intensity = float(self.environment_modifiers.get("weather_intensity", 1.0))
+        if intensity != 1.0:
+            movement = float(effects.get("movement", 1.0))
+            hunger = float(effects.get("hunger", 1.0))
+            regrowth = float(effects.get("regrowth", 1.0))
+            energy = float(effects.get("energy", 1.0))
+            health = float(effects.get("health", 0.0))
+            effects["movement"] = 1.0 + (movement - 1.0) * intensity
+            effects["hunger"] = 1.0 + (hunger - 1.0) * intensity
+            effects["regrowth"] = 1.0 + (regrowth - 1.0) * intensity
+            effects["energy"] = 1.0 + (energy - 1.0) * intensity
+            effects["health"] = 0.0 + health * intensity
         return biome, effects
 
     def get_regrowth_modifier(self, x: float, y: float) -> float:

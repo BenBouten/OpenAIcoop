@@ -33,6 +33,7 @@ from ..entities.lifeform import Lifeform
 from ..entities.pheromones import Pheromone
 from ..rendering.camera import Camera
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
+from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
 from .state import SimulationState
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
@@ -308,8 +309,10 @@ def reset_list_values() -> None:
     event_manager.reset()
     event_manager.schedule_default_events()
     player_controller.reset()
-    environment_modifiers["plant_regrowth"] = 1.0
-    environment_modifiers["hunger_rate"] = 1.0
+    environment_modifiers.setdefault("plant_regrowth", 1.0)
+    environment_modifiers.setdefault("hunger_rate", 1.0)
+    environment_modifiers.setdefault("weather_intensity", 1.0)
+    state.gameplay_settings.setdefault("pheromone_decay", 10.0)
     camera.reset()
 
 
@@ -742,8 +745,159 @@ def run() -> None:
     font2 = _load_font(font1_path, 18)
     font3 = _load_font(font2_path, 22)
 
+    panel_width = 260
+    panel_margin = 16
+    panel_rect = pygame.Rect(
+        settings.WINDOW_WIDTH - panel_width - panel_margin,
+        20,
+        panel_width,
+        settings.WINDOW_HEIGHT - 40,
+    )
+
+    def _set_environment_modifier(key: str, value: float) -> None:
+        environment_modifiers[key] = float(value)
+
+    def _set_mutation_rate(value: float) -> None:
+        settings.MUTATION_CHANCE = int(round(value))
+
+    def _set_max_lifeforms(value: float) -> None:
+        settings.MAX_LIFEFORMS = int(round(value))
+
+    def _set_reproduction_cooldown(value: float) -> None:
+        cooldown = int(round(value))
+        settings.REPRODUCING_COOLDOWN_VALUE = cooldown
+        settings.POPULATION_CAP_RETRY_COOLDOWN = max(1, cooldown // 2)
+
+    def _set_energy_recovery(value: float) -> None:
+        settings.ENERGY_RECOVERY_PER_SECOND = float(value)
+
+    def _set_age_rate(value: float) -> None:
+        settings.AGE_RATE_PER_SECOND = float(value)
+
+    def _set_hunger_penalty(value: float) -> None:
+        settings.HUNGER_HEALTH_PENALTY_PER_SECOND = float(value)
+        settings.EXTREME_HUNGER_HEALTH_PENALTY_PER_SECOND = float(value) * 10
+
+    def _set_pheromone_decay(value: float) -> None:
+        state.gameplay_settings["pheromone_decay"] = float(value)
+
+    def _build_slider_configs() -> List[SliderConfig]:
+        return [
+            SliderConfig(
+                key="food_abundance",
+                label="Food abundance",
+                min_value=0.2,
+                max_value=3.0,
+                start_value=environment_modifiers.get("plant_regrowth", 1.0),
+                step=0.05,
+                value_format="{value:.2f}x",
+                callback=lambda value: _set_environment_modifier("plant_regrowth", value),
+            ),
+            SliderConfig(
+                key="hunger_rate",
+                label="Hunger rate",
+                min_value=0.2,
+                max_value=2.0,
+                start_value=environment_modifiers.get("hunger_rate", 1.0),
+                step=0.05,
+                value_format="{value:.2f}x",
+                callback=lambda value: _set_environment_modifier("hunger_rate", value),
+            ),
+            SliderConfig(
+                key="weather_intensity",
+                label="Weather intensity",
+                min_value=0.0,
+                max_value=2.0,
+                start_value=environment_modifiers.get("weather_intensity", 1.0),
+                step=0.05,
+                value_format="{value:.2f}x",
+                callback=lambda value: _set_environment_modifier("weather_intensity", value),
+            ),
+            SliderConfig(
+                key="mutation_rate",
+                label="Mutation rate",
+                min_value=0.0,
+                max_value=35.0,
+                start_value=float(settings.MUTATION_CHANCE),
+                step=1.0,
+                value_format="{value:.0f}%",
+                callback=_set_mutation_rate,
+            ),
+            SliderConfig(
+                key="max_lifeforms",
+                label="Max lifeforms",
+                min_value=50.0,
+                max_value=400.0,
+                start_value=float(settings.MAX_LIFEFORMS),
+                step=10.0,
+                value_format="{value:.0f}",
+                callback=_set_max_lifeforms,
+            ),
+            SliderConfig(
+                key="reproduction_cooldown",
+                label="Reproduction cooldown",
+                min_value=20.0,
+                max_value=200.0,
+                start_value=float(settings.REPRODUCING_COOLDOWN_VALUE),
+                step=5.0,
+                value_format="{value:.0f} fr",
+                callback=_set_reproduction_cooldown,
+            ),
+            SliderConfig(
+                key="energy_recovery",
+                label="Energy recovery",
+                min_value=5.0,
+                max_value=40.0,
+                start_value=float(settings.ENERGY_RECOVERY_PER_SECOND),
+                step=1.0,
+                value_format="{value:.0f}/s",
+                callback=_set_energy_recovery,
+            ),
+            SliderConfig(
+                key="age_rate",
+                label="Age rate",
+                min_value=1.0,
+                max_value=10.0,
+                start_value=float(settings.AGE_RATE_PER_SECOND),
+                step=0.5,
+                value_format="{value:.1f}/s",
+                callback=_set_age_rate,
+            ),
+            SliderConfig(
+                key="hunger_penalty",
+                label="Hunger damage",
+                min_value=0.0,
+                max_value=10.0,
+                start_value=float(settings.HUNGER_HEALTH_PENALTY_PER_SECOND),
+                step=0.5,
+                value_format="{value:.1f}/s",
+                callback=_set_hunger_penalty,
+            ),
+            SliderConfig(
+                key="pheromone_decay",
+                label="Pheromone decay",
+                min_value=2.0,
+                max_value=40.0,
+                start_value=float(state.gameplay_settings.get("pheromone_decay", 10.0)),
+                step=1.0,
+                value_format="{value:.0f}/tick",
+                callback=_set_pheromone_decay,
+            ),
+        ]
+
+    gameplay_panel = GameplaySettingsPanel(
+        panel_rect,
+        font2,
+        font3,
+        _build_slider_configs(),
+    )
+
     # Wereld & camera
-    world = World(settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
+    world = World(
+        settings.WORLD_WIDTH,
+        settings.WORLD_HEIGHT,
+        environment_modifiers,
+    )
     camera = Camera(
         settings.WINDOW_WIDTH,
         settings.WINDOW_HEIGHT,
@@ -779,11 +933,12 @@ def run() -> None:
     running = True
     starting_screen = True
     paused = True
+    fullscreen = False
 
     while running:
         delta_time = clock.tick(fps) / 1000.0
         start_button = pygame.Rect(
-            settings.WINDOW_WIDTH - 260,
+            panel_rect.left - 220,
             settings.WINDOW_HEIGHT // 2 - 30,
             200,
             60,
@@ -826,6 +981,7 @@ def run() -> None:
             for idx, line in enumerate(instructions):
                 info_surface = info_font.render(line, True, settings.BLACK)
                 screen.blit(info_surface, (50, 110 + idx * 32))
+            gameplay_panel.draw(screen)
             notification_manager.update()
             notification_manager.draw(screen, info_font)
 
@@ -860,8 +1016,9 @@ def run() -> None:
 
                 if pheromones:
                     active_pheromones: List[Pheromone] = []
+                    decay_rate = float(state.gameplay_settings.get("pheromone_decay", 10.0))
                     for pheromone in pheromones:
-                        pheromone.strength -= 10
+                        pheromone.strength -= decay_rate
                         if pheromone.strength > 0:
                             pheromone.draw(world_surface)
                             active_pheromones.append(pheromone)
@@ -995,15 +1152,37 @@ def run() -> None:
                 player_controller.draw_overlay(screen, font2)
                 event_manager.draw(screen, font2)
 
+            gameplay_panel.draw(screen)
+
         pygame.display.flip()
 
         # Event handling
         for event in pygame.event.get():
+            if gameplay_panel.handle_event(event):
+                continue
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_ESCAPE:
                     running = False
+                elif event.key == pygame.K_F11:
+                    fullscreen = not fullscreen
+                    if fullscreen:
+                        screen = pygame.display.set_mode(
+                            (settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT),
+                            pygame.FULLSCREEN,
+                        )
+                    else:
+                        screen = pygame.display.set_mode(
+                            (settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT),
+                        )
+                    panel_rect.x = screen.get_width() - panel_width - panel_margin
+                    gameplay_panel = GameplaySettingsPanel(
+                        panel_rect,
+                        font2,
+                        font3,
+                        _build_slider_configs(),
+                    )
                 elif event.key == pygame.K_p:
                     paused = not paused
                 elif event.key == pygame.K_n:
