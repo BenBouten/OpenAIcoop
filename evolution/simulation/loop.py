@@ -8,10 +8,23 @@ import math
 import os
 import random
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-import matplotlib.pyplot as plt
+try:  # pragma: no cover - optional dependency
+    import matplotlib
+
+    matplotlib.use("Agg")
+    from matplotlib import pyplot as plt
+    from matplotlib.backends.backend_agg import FigureCanvasAgg
+
+    MATPLOTLIB_AVAILABLE = True
+except ImportError:  # pragma: no cover - fallback when matplotlib is missing
+    plt = None
+    FigureCanvasAgg = None
+    MATPLOTLIB_AVAILABLE = False
+
 import pygame
 
 from ..config import settings
@@ -159,29 +172,82 @@ class Vegetation:
 
 
 class Graph:
+    """Render a statistics bar chart using matplotlib when available."""
+
     def __init__(self):
+        self.surface: Optional[pygame.Surface] = None
+        self._needs_redraw = False
+        self.available = MATPLOTLIB_AVAILABLE
+        if not self.available:
+            logger.warning("Matplotlib is not available; DNA graph will be disabled")
+            return
+
+        assert plt is not None and FigureCanvasAgg is not None
         self.figure, self.axes = plt.subplots()
+        self.canvas = FigureCanvasAgg(self.figure)
         self.axes.set_xlabel("DNA ID")
         self.axes.set_ylabel("Average Age at Death")
         self.axes.set_title("Average Age at Death by DNA ID")
+        self._needs_redraw = True
 
     def update(self, death_ages_by_dna: Dict[int, List[int]]) -> None:
+        if not self.available:
+            return
+
         self.axes.clear()
         dna_ids = []
         avg_ages = []
         for dna_id, ages in death_ages_by_dna.items():
+            if not ages:
+                continue
             dna_ids.append(dna_id)
             avg_ages.append(sum(ages) / len(ages))
         self.axes.bar(dna_ids, avg_ages)
         self.axes.set_xlabel("DNA ID")
         self.axes.set_ylabel("Average Age at Death")
         self.axes.set_title("Average Age at Death by DNA ID")
-        self.figure.canvas.draw()
+        self._needs_redraw = True
 
     def draw(self, screen: pygame.Surface) -> None:
-        plt.draw()
-        graph_surface = pygame.surfarray.make_surface(self.figure)
-        screen.blit(graph_surface, (0, 0))
+        if not self.available:
+            return
+
+        if self._needs_redraw or self.surface is None:
+            try:
+                self.canvas.draw()
+                raw = bytes(self.canvas.buffer_rgba())
+                width, height = self.canvas.get_width_height()
+                graph_surface = pygame.image.frombuffer(raw, (width, height), "RGBA")
+                self.surface = graph_surface.convert_alpha()
+                self._needs_redraw = False
+            except (ValueError, pygame.error) as exc:
+                logger.warning("Unable to render DNA graph: %s", exc)
+                self.available = False
+                self.surface = None
+                return
+
+        if self.surface:
+            screen.blit(self.surface, (0, 0))
+
+
+# ---------------------------------------------------------------------------
+# Font helpers
+# ---------------------------------------------------------------------------
+
+@lru_cache(maxsize=None)
+def _load_font(preferred_path: str, size: int) -> pygame.font.Font:
+    """Attempt to load a custom font, falling back to the default if missing."""
+
+    expanded_path = os.path.expanduser(preferred_path)
+    if expanded_path and os.path.isfile(expanded_path):
+        try:
+            return pygame.font.Font(expanded_path, size)
+        except OSError as exc:
+            logger.warning("Unable to load font '%s': %s", expanded_path, exc)
+    else:
+        logger.debug("Custom font '%s' not found; using default font", expanded_path)
+
+    return pygame.font.Font(None, size)
 
 
 # ---------------------------------------------------------------------------
@@ -667,6 +733,12 @@ def run() -> None:
         (settings.WORLD_WIDTH, settings.WORLD_HEIGHT),
     )
 
+    font1_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus8-Regular.ttf"
+    font2_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus-Bold.ttf"
+    font = _load_font(font1_path, 12)
+    font2 = _load_font(font1_path, 18)
+    font3 = _load_font(font2_path, 22)
+
     # Wereld & camera
     world = World(settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
     camera = Camera(
@@ -755,15 +827,6 @@ def run() -> None:
             notification_manager.draw(screen, info_font)
 
         else:
-            font1_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus8-Regular.ttf"
-            font2_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus-Bold.ttf"
-            expanded_path1 = os.path.expanduser(font1_path)
-            expanded_path2 = os.path.expanduser(font2_path)
-
-            font = pygame.font.Font(expanded_path1, 12)
-            font2 = pygame.font.Font(expanded_path1, 18)
-            font3 = pygame.font.Font(expanded_path2, 22)
-
             keys = pygame.key.get_pressed()
             horizontal = (keys[pygame.K_d] - keys[pygame.K_a])
             vertical = (keys[pygame.K_s] - keys[pygame.K_w])
