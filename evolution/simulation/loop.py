@@ -755,7 +755,11 @@ def run() -> None:
     )
 
     def _set_environment_modifier(key: str, value: float) -> None:
-        environment_modifiers[key] = float(value)
+        numeric_value = float(value)
+        environment_modifiers[key] = numeric_value
+        state.environment_modifiers[key] = numeric_value
+        if state.world is not None:
+            state.world.set_environment_modifiers(state.environment_modifiers)
 
     def _set_mutation_rate(value: float) -> None:
         settings.MUTATION_CHANCE = int(round(value))
@@ -880,7 +884,7 @@ def run() -> None:
                 max_value=40.0,
                 start_value=float(state.gameplay_settings.get("pheromone_decay", 10.0)),
                 step=1.0,
-                value_format="{value:.0f}/tick",
+                value_format="{value:.0f}/s",
                 callback=_set_pheromone_decay,
             ),
         ]
@@ -1017,8 +1021,9 @@ def run() -> None:
                 if pheromones:
                     active_pheromones: List[Pheromone] = []
                     decay_rate = float(state.gameplay_settings.get("pheromone_decay", 10.0))
+                    decay_amount = decay_rate * delta_time
                     for pheromone in pheromones:
-                        pheromone.strength -= decay_rate
+                        pheromone.strength -= decay_amount
                         if pheromone.strength > 0:
                             pheromone.draw(world_surface)
                             active_pheromones.append(pheromone)
