@@ -38,7 +38,7 @@ from .state import SimulationState
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
 from ..systems.player import PlayerController
-from ..world.organic import generate_blob_mask, jitter_color, mask_to_surface
+from ..world.vegetation import MossCluster, create_initial_clusters
 from ..world.world import BiomeRegion, World
 
 
@@ -108,189 +108,7 @@ MAP_TYPE_OPTIONS = [
 # Vegetation & grafiek (nog niet uitbesteed)
 # ---------------------------------------------------------------------------
 
-class Vegetation:
-    """Organic moss patch used as procedural vegetation."""
-
-    _AFFINITY_TRAITS = ("agile", "resilient", "perceptive")
-    _VARIANT_DATA = {
-        "normal": {
-            "color": settings.GREEN,
-            "capacity": 1.0,
-            "regrowth": 0.045,
-            "dormant": 960,
-            "harvest": 1.0,
-            "affinity": "resilient",
-            "effects": {"health": 30, "energy": 20},
-        },
-        "radiant": {
-            "color": (150, 230, 255),
-            "capacity": 1.25,
-            "regrowth": 0.032,
-            "dormant": 900,
-            "harvest": 0.85,
-            "affinity": "perceptive",
-            "effects": {"health": 60, "energy": 40},
-        },
-        "spore": {
-            "color": (180, 120, 255),
-            "capacity": 1.1,
-            "regrowth": 0.04,
-            "dormant": 1020,
-            "harvest": 1.05,
-            "affinity": "agile",
-            "effects": {"energy": 25, "vision": 1},
-        },
-        "fortified": {
-            "color": (90, 200, 160),
-            "capacity": 1.6,
-            "regrowth": 0.035,
-            "dormant": 1260,
-            "harvest": 0.78,
-            "affinity": "resilient",
-            "effects": {"health": 35, "defence": 1},
-        },
-    }
-
-    def __init__(self, x: int, y: int, width: int, height: int, variant: str = "normal"):
-        size = max(width, height)
-        self.rect = pygame.Rect(x, y, size, size)
-        self.x = float(x)
-        self.y = float(y)
-        self.width = size
-        self.height = size
-
-        self.variant = variant if variant in self._VARIANT_DATA else "normal"
-        config = self._VARIANT_DATA[self.variant]
-        complexity = random.randint(11, 18)
-        irregularity = random.uniform(0.25, 0.45)
-        variation = random.uniform(0.3, 0.5)
-        self.mask = generate_blob_mask(
-            self.rect.width,
-            self.rect.height,
-            complexity=complexity,
-            angular_variation=irregularity,
-            radial_variation=variation,
-        )
-        self.surface = pygame.Surface(self.rect.size, pygame.SRCALPHA)
-        self.base_color = config["color"]
-
-        self.base_capacity = max(1, self.mask.count())
-        self.capacity_multiplier = config["capacity"]
-        self.max_resource = self.base_capacity * self.capacity_multiplier
-        self.resource = self.max_resource
-        self.regrowth_rate = config["regrowth"]
-        self.dormant_frames = 0
-        self.dormant_duration = config["dormant"]
-        self.harvest_efficiency = config["harvest"]
-        self.affinity = config.get("affinity", "resilient")
-        self.effects = config.get("effects", {})
-
-        self._dirty = True
-
-    def _refresh_surface(self) -> None:
-        density = self.density
-        tint = jitter_color(self.base_color, variance=24)
-        alpha = int(70 + 150 * density)
-        self.surface = mask_to_surface(self.mask, tint, alpha)
-        self._dirty = False
-
-    def draw(self, surface: pygame.Surface) -> None:
-        if self._dirty:
-            self._refresh_surface()
-        surface.blit(self.surface, self.rect.topleft)
-
-    def set_size(self) -> None:
-        self.width = self.rect.width
-        self.height = self.rect.height
-        self.x = float(self.rect.x)
-        self.y = float(self.rect.y)
-
-    def contains_point(self, x: float, y: float) -> bool:
-        if not self.rect.collidepoint(int(x), int(y)):
-            return False
-        local_x = int(x) - self.rect.left
-        local_y = int(y) - self.rect.top
-        if 0 <= local_x < self.mask.get_size()[0] and 0 <= local_y < self.mask.get_size()[1]:
-            return bool(self.mask.get_at((local_x, local_y)))
-        return False
-
-    @property
-    def density(self) -> float:
-        if self.max_resource <= 0:
-            return 0.0
-        return max(0.0, min(1.0, self.resource / self.max_resource))
-
-    def set_capacity_multiplier(self, multiplier: float) -> None:
-        previous = self.capacity_multiplier
-        self.capacity_multiplier = max(0.05, multiplier)
-        self.max_resource = self.base_capacity * self.capacity_multiplier
-        scale = self.capacity_multiplier / previous if previous > 0 else 1.0
-        self.resource = max(0.0, min(self.max_resource, self.resource * scale))
-        self._dirty = True
-
-    def decrement_resource(self, amount: float, *, eater: Optional[Lifeform] = None) -> None:
-        affinity_factor = 1.0
-        if eater is not None:
-            affinity_factor = 1.35 if self._affinity_matches(eater) else 0.65
-        effective = amount * self.harvest_efficiency * affinity_factor
-        self.resource = max(0.0, self.resource - effective)
-        depletion = int(self.dormant_duration * (0.8 + 0.6 * self.density))
-        self.dormant_frames = max(self.dormant_frames, depletion)
-        self._dirty = True
-
-    def regrow(self) -> None:
-        if self.dormant_frames > 0:
-            self.dormant_frames -= 1
-            return
-        if self.resource >= self.max_resource:
-            self.resource = self.max_resource
-            return
-
-        center_x = self.rect.left + self.rect.width / 2
-        center_y = self.rect.top + self.rect.height / 2
-        biome_modifier = world.get_regrowth_modifier(center_x, center_y)
-        abundance = environment_modifiers.get("plant_regrowth", 1.0)
-        scarcity = max(0.25, 1.0 - self.density * 0.6)
-        growth = self.regrowth_rate * abundance * biome_modifier * scarcity
-        self.resource = min(self.max_resource, self.resource + growth)
-        if growth > 0:
-            self._dirty = True
-
-    def _affinity_matches(self, lifeform: Lifeform) -> bool:
-        trait_index = lifeform.dna_id % len(self._AFFINITY_TRAITS)
-        return self._AFFINITY_TRAITS[trait_index] == self.affinity
-
-    def movement_modifier_for(self, lifeform: Lifeform) -> float:
-        density = self.density
-        penalty = 1.0 - 0.65 * density
-        if self._affinity_matches(lifeform):
-            penalty += 0.18 * density
-        else:
-            penalty -= 0.12 * density
-        return max(0.25, penalty)
-
-    def apply_effect(self, lifeform: Lifeform) -> None:
-        multiplier = 1.0 if self._affinity_matches(lifeform) else 0.5
-        if "health" in self.effects:
-            lifeform.health_now = min(
-                lifeform.health,
-                lifeform.health_now + self.effects["health"] * multiplier,
-            )
-        if "energy" in self.effects:
-            lifeform.energy_now = min(
-                lifeform.energy,
-                lifeform.energy_now + self.effects["energy"] * multiplier,
-            )
-        if "vision" in self.effects:
-            lifeform.vision = min(
-                settings.VISION_MAX,
-                lifeform.vision + int(self.effects["vision"] * multiplier),
-            )
-        if "defence" in self.effects:
-            lifeform.defence_power = min(
-                100,
-                lifeform.defence_power + int(self.effects["defence"] * multiplier),
-            )
+Vegetation = MossCluster
 
 
 class Graph:
@@ -677,67 +495,12 @@ def init_lifeforms() -> None:
 
 
 def init_vegetation() -> None:
+    plants.clear()
     abundance = environment_modifiers.get("plant_regrowth", 1.0)
-    for _ in range(settings.N_VEGETATION):
-        biome = random.choice(world.biomes) if world.biomes else None
-        base_size = random.randint(80, 160)
-        target_rect: Optional[pygame.Rect] = None
-
-        for _attempt in range(120):
-            if world.vegetation_masks:
-                mask_rect = random.choice(world.vegetation_masks)
-                span_x = max(mask_rect.left, mask_rect.right - base_size)
-                span_y = max(mask_rect.top, mask_rect.bottom - base_size)
-                x = random.randint(mask_rect.left, span_x)
-                y = random.randint(mask_rect.top, span_y)
-            else:
-                spawn_x, spawn_y, _ = world.random_position(
-                    base_size,
-                    base_size,
-                    preferred_biome=biome,
-                    avoid_water=True,
-                    biome_padding=40,
-                )
-                x = int(spawn_x)
-                y = int(spawn_y)
-
-            candidate = pygame.Rect(x, y, base_size, base_size)
-            if candidate.right > world.width or candidate.bottom > world.height:
-                continue
-            if world.is_blocked(candidate):
-                continue
-            target_rect = candidate
-            break
-
-        if target_rect is None:
-            continue
-
-        weights = [0.6, 0.15, 0.15, 0.1]
-        if biome:
-            name = biome.name.lower()
-            if "woestijn" in name:
-                weights = [0.45, 0.05, 0.2, 0.3]
-            elif "bos" in name or "woud" in name:
-                weights = [0.4, 0.25, 0.2, 0.15]
-            elif "rivier" in name or "delta" in name or "moeras" in name:
-                weights = [0.35, 0.3, 0.2, 0.15]
-            elif "toendra" in name:
-                weights = [0.55, 0.25, 0.1, 0.1]
-
-        variant = random.choices(
-            ["normal", "radiant", "spore", "fortified"],
-            weights=weights,
-        )[0]
-
-        plant = Vegetation(
-            target_rect.x,
-            target_rect.y,
-            target_rect.width,
-            target_rect.height,
-            variant,
-        )
-        plant.set_capacity_multiplier(abundance)
-        plants.append(plant)
+    clusters = create_initial_clusters(world, count=4)
+    for cluster in clusters:
+        cluster.set_capacity_multiplier(abundance)
+        plants.append(cluster)
 
 
 def collect_population_stats(formatted_time_passed: str) -> Dict[str, object]:
@@ -1190,7 +953,7 @@ def run() -> None:
 
                 for plant in plants:
                     plant.set_size()
-                    plant.regrow()
+                    plant.regrow(world, plants)
                     plant.draw(world_surface)
 
                 if pheromones:

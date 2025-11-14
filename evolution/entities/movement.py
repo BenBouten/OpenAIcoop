@@ -80,6 +80,15 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         (attempted_x, attempted_y),
     )
 
+    if not collided:
+        plant_rect = lifeform.rect.copy()
+        plant_rect.update(int(resolved_x), int(resolved_y), lifeform.width, lifeform.height)
+        for plant in state.plants:
+            if plant.blocks_rect(plant_rect):
+                collided = True
+                resolved_x, resolved_y = previous_position
+                break
+
     # --------------------------------------------------
     # 3. Collisions / boundaries / escape-logica
     # --------------------------------------------------
