@@ -8,7 +8,7 @@ from typing import Callable, Dict, List, Tuple
 
 import pygame
 
-from .world import Barrier, BiomeRegion, WaterBody, WeatherPattern
+from .types import Barrier, BiomeRegion, WaterBody, WeatherPattern
 
 
 Color = Tuple[int, int, int]
