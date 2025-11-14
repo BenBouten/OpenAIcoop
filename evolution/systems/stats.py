@@ -1,12 +1,101 @@
-"""Statistics aggregation stubs."""
+"""Simulation statistics aggregation helpers."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from typing import Dict
+
+from ..simulation.state import SimulationState
 
 
-@dataclass(slots=True)
-class SimulationStats:
-    """Placeholder for simulation statistics."""
+def collect_population_stats(
+    state: SimulationState, formatted_time_passed: str
+) -> Dict[str, object]:
+    """Return aggregated statistics for the current lifeform population."""
 
-    tick_count: int = 0
+    lifeforms = state.lifeforms
+    death_ages = state.death_ages
+
+    stats: Dict[str, object] = {
+        "lifeform_count": len(lifeforms),
+        "formatted_time": formatted_time_passed,
+        "average_health": 0.0,
+        "average_vision": 0.0,
+        "average_gen": 0.0,
+        "average_hunger": 0.0,
+        "average_size": 0.0,
+        "average_age": 0.0,
+        "average_maturity": 0.0,
+        "average_speed": 0.0,
+        "average_cooldown": 0.0,
+        "death_age_avg": sum(death_ages) / len(death_ages) if death_ages else 0.0,
+        "dna_count": {},
+        "dna_attribute_averages": {},
+    }
+
+    if lifeforms:
+        count = len(lifeforms)
+        totals = {
+            "health_now": 0.0,
+            "vision": 0.0,
+            "generation": 0.0,
+            "hunger": 0.0,
+            "size": 0.0,
+            "age": 0.0,
+            "maturity": 0.0,
+            "speed": 0.0,
+            "reproduced_cooldown": 0.0,
+        }
+        dna_attributes = [
+            "health",
+            "vision",
+            "attack_power_now",
+            "defence_power_now",
+            "speed",
+            "maturity",
+            "size",
+            "longevity",
+            "energy",
+        ]
+        dna_totals: Dict[int, Dict[str, float]] = {}
+
+        for lifeform in lifeforms:
+            totals["health_now"] += lifeform.health_now
+            totals["vision"] += lifeform.vision
+            totals["generation"] += lifeform.generation
+            totals["hunger"] += lifeform.hunger
+            totals["size"] += lifeform.size
+            totals["age"] += lifeform.age
+            totals["maturity"] += lifeform.maturity
+            totals["speed"] += lifeform.speed
+            totals["reproduced_cooldown"] += lifeform.reproduced_cooldown
+
+            dna_entry = dna_totals.setdefault(
+                lifeform.dna_id,
+                {"count": 0.0, **{attr: 0.0 for attr in dna_attributes}},
+            )
+            dna_entry["count"] += 1.0
+            for attribute in dna_attributes:
+                dna_entry[attribute] += getattr(lifeform, attribute)
+
+        stats["average_health"] = totals["health_now"] / count
+        stats["average_vision"] = totals["vision"] / count
+        stats["average_gen"] = totals["generation"] / count
+        stats["average_hunger"] = totals["hunger"] / count
+        stats["average_size"] = totals["size"] / count
+        stats["average_age"] = totals["age"] / count
+        stats["average_maturity"] = totals["maturity"] / count
+        stats["average_speed"] = totals["speed"] / count
+        stats["average_cooldown"] = totals["reproduced_cooldown"] / count
+        stats["dna_count"] = {
+            int(dna_id): int(data["count"]) for dna_id, data in dna_totals.items()
+        }
+        stats["dna_attribute_averages"] = {
+            int(dna_id): {
+                attribute: data[attribute] / data["count"]
+                for attribute in dna_attributes
+            }
+            for dna_id, data in dna_totals.items()
+            if data["count"]
+        }
+
+    return stats
