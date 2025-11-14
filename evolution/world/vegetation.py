@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 import random
-from dataclasses import dataclass, field
-from typing import List, Optional, Sequence, Set, Tuple
+from dataclasses import dataclass
+from typing import ClassVar, List, Optional, Sequence, Set, Tuple
 
 import pygame
 
@@ -23,9 +23,9 @@ class MossCluster:
 
     cells: Set[GridCell]
     color: Tuple[int, int, int] = (68, 132, 88)
-    CELL_SIZE: int = field(default=2, init=False, repr=False)
-    CELL_NUTRITION: float = field(default=12.0, init=False, repr=False)
-    BASE_GROWTH_DELAY: int = field(default=240, init=False, repr=False)
+    CELL_SIZE: ClassVar[int] = 2
+    CELL_NUTRITION: ClassVar[float] = 12.0
+    BASE_GROWTH_DELAY: ClassVar[int] = 240
 
     def __post_init__(self) -> None:
         self.cells = set(self.cells)
