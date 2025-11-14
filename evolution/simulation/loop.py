@@ -30,7 +30,6 @@ import pygame
 from ..config import settings
 from ..entities import movement
 from ..entities.lifeform import Lifeform
-from ..entities.pheromones import Pheromone
 from ..rendering.camera import Camera
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
@@ -201,7 +200,6 @@ event_manager: EventManager
 player_controller: PlayerController
 
 lifeforms: List[Lifeform] = state.lifeforms
-pheromones: List[Pheromone] = state.pheromones
 dna_profiles: List[dict] = state.dna_profiles
 plants: List[Vegetation] = state.plants
 
@@ -261,7 +259,6 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     state.dna_id_counts.clear()
     state.dna_lineage.clear()
     state.lifeform_genetics.clear()
-    state.pheromones.clear()
     state.plants.clear()
     state.death_ages.clear()
     state.lifeform_id_counter = 0
@@ -282,7 +279,6 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     environment_modifiers.setdefault("moss_growth_speed", 1.0)
     _last_food_multiplier = environment_modifiers.get("plant_regrowth", 1.0)
     _last_moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
-    state.gameplay_settings.setdefault("pheromone_decay", 10.0)
     camera.reset()
 
 
@@ -736,9 +732,6 @@ def run() -> None:
         settings.HUNGER_HEALTH_PENALTY_PER_SECOND = float(value)
         settings.EXTREME_HUNGER_HEALTH_PENALTY_PER_SECOND = float(value) * 10
 
-    def _set_pheromone_decay(value: float) -> None:
-        state.gameplay_settings["pheromone_decay"] = float(value)
-
     def _build_slider_configs() -> List[SliderConfig]:
         return [
             SliderConfig(
@@ -840,16 +833,6 @@ def run() -> None:
                 step=0.5,
                 value_format="{value:.1f}/s",
                 callback=_set_hunger_penalty,
-            ),
-            SliderConfig(
-                key="pheromone_decay",
-                label="Pheromone decay",
-                min_value=2.0,
-                max_value=40.0,
-                start_value=float(state.gameplay_settings.get("pheromone_decay", 10.0)),
-                step=1.0,
-                value_format="{value:.0f}/s",
-                callback=_set_pheromone_decay,
             ),
         ]
 
@@ -982,17 +965,6 @@ def run() -> None:
                     plant.regrow(world, plants)
                     plant.draw(world_surface)
 
-                if pheromones:
-                    active_pheromones: List[Pheromone] = []
-                    decay_rate = float(state.gameplay_settings.get("pheromone_decay", 10.0))
-                    decay_amount = decay_rate * delta_time
-                    for pheromone in pheromones:
-                        pheromone.strength -= decay_amount
-                        if pheromone.strength > 0:
-                            pheromone.draw(world_surface)
-                            active_pheromones.append(pheromone)
-                    pheromones[:] = active_pheromones
-
                 lifeform_snapshot = list(lifeforms)
                 average_maturity = (
                     sum(l.maturity for l in lifeform_snapshot) / len(lifeform_snapshot)
@@ -1017,7 +989,6 @@ def run() -> None:
                     lifeform.update_angle()
                     lifeform.grow()
                     lifeform.set_size()
-                    lifeform.add_tail()
 
                     # 5) Death-afhandeling
                     if lifeform.handle_death():

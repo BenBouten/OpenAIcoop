@@ -17,7 +17,6 @@ import pygame
 from .config import settings
 from .entities import movement
 from .entities.lifeform import Lifeform
-from .entities.pheromones import Pheromone
 from .rendering.camera import Camera
 from .rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from .simulation.state import SimulationState
@@ -125,7 +124,6 @@ event_manager: EventManager
 player_controller: PlayerController
 
 lifeforms: List[Lifeform] = state.lifeforms
-pheromones: List[Pheromone] = state.pheromones
 dna_profiles: List[dict] = state.dna_profiles
 plants: List[Vegetation] = state.plants
 
@@ -183,7 +181,6 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     state.dna_id_counts.clear()
     state.dna_lineage.clear()
     state.lifeform_genetics.clear()
-    state.pheromones.clear()
     state.plants.clear()
     state.death_ages.clear()
     state.lifeform_id_counter = 0
@@ -709,15 +706,6 @@ def run() -> None:
                     plant.regrow(world, plants)
                     plant.draw(world_surface)
 
-                if pheromones:
-                    active_pheromones: List[Pheromone] = []
-                    for pheromone in pheromones:
-                        pheromone.strength -= 10
-                        if pheromone.strength > 0:
-                            pheromone.draw(world_surface)
-                            active_pheromones.append(pheromone)
-                    pheromones[:] = active_pheromones
-
                 lifeform_snapshot = list(lifeforms)
                 average_maturity = (
                     sum(l.maturity for l in lifeform_snapshot) / len(lifeform_snapshot)
@@ -743,7 +731,6 @@ def run() -> None:
                     lifeform.update_angle()
                     lifeform.grow()
                     lifeform.set_size()  # nieuwe size na groei
-                    lifeform.add_tail()  # pheromone-trail
 
                     # 5) Death-afhandeling (verwijdert zichzelf uit state.lifeforms)
                     if lifeform.handle_death():

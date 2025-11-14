@@ -25,7 +25,6 @@ from ..config import settings
 from ..simulation.state import SimulationState
 from ..world.world import BiomeRegion
 from . import reproduction
-from .pheromones import Pheromone
 
 logger = logging.getLogger("evolution.simulation")
 
@@ -971,9 +970,3 @@ class Lifeform:
         if self.health_now > self.health:
             self.health_now = self.health
 
-    # ------------------------------------------------------------------
-    # Visual trail / pheromones
-    # ------------------------------------------------------------------
-    def add_tail(self) -> None:
-        pheromone = Pheromone(self.x, self.y, self.width, self.height, self.color, 100)
-        self.state.pheromones.append(pheromone)
