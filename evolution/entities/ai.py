@@ -79,6 +79,9 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
         if pursuit_vector.length_squared() == 0:
             desired += _memory_target_vector(lifeform, now)
 
+    # 3b) Jongeren blijven dicht bij familie
+    desired += _juvenile_family_vector(lifeform)
+
     # 4) Groepsgedrag en "laatste posities vermijden" en boundary repulsion
     desired += _group_behavior_vector(lifeform)
     desired += _avoid_recent_positions(lifeform, now)
@@ -265,6 +268,114 @@ def _compute_pursuit_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
             if remembered_partner:
                 direction, _ = lifeform._direction_to_point(remembered_partner)
                 desired += direction
+
+    return desired
+
+
+def _juvenile_family_vector(lifeform: "Lifeform") -> Vector2:
+    if lifeform.is_adult():
+        return Vector2()
+
+    desired = Vector2()
+    parent_force = Vector2()
+    has_active_parent = False
+
+    comfort_parent = settings.JUVENILE_PARENT_COMFORT_RADIUS
+    parent_radius = max(
+        comfort_parent + 1,
+        settings.JUVENILE_PARENT_ATTRACTION_RADIUS,
+    )
+
+    separation_radius = max(1.0, settings.JUVENILE_SEPARATION_RADIUS)
+
+    for parent_id in getattr(lifeform, "parent_ids", tuple()):
+        parent = next(
+            (
+                candidate
+                for candidate in lifeform.state.lifeforms
+                if candidate.id == parent_id and candidate.health_now > 0
+            ),
+            None,
+        )
+        if not parent:
+            continue
+
+        has_active_parent = True
+        offset = Vector2(parent.x - lifeform.x, parent.y - lifeform.y)
+        distance = offset.length()
+        if distance == 0:
+            continue
+
+        direction = offset.normalize()
+        if distance > comfort_parent:
+            distance_factor = min(1.0, (distance - comfort_parent) / (parent_radius - comfort_parent))
+            parent_force += (
+                direction
+                * distance_factor
+                * settings.JUVENILE_PARENT_ATTRACTION_WEIGHT
+            )
+        elif distance < separation_radius:
+            separation_factor = (separation_radius - distance) / separation_radius
+            parent_force -= (
+                direction
+                * separation_factor
+                * settings.JUVENILE_SEPARATION_WEIGHT
+            )
+
+    sibling_force = Vector2()
+    family_signature = getattr(lifeform, "family_signature", tuple())
+    comfort_sibling = settings.JUVENILE_SIBLING_COMFORT_RADIUS
+    sibling_radius = max(
+        comfort_sibling + 1,
+        settings.JUVENILE_SIBLING_ATTRACTION_RADIUS,
+    )
+
+    if family_signature:
+        for other in lifeform.state.lifeforms:
+            if other is lifeform or other.health_now <= 0:
+                continue
+            if getattr(other, "family_signature", tuple()) != family_signature:
+                continue
+            if other.is_adult():
+                continue
+
+            offset = Vector2(other.x - lifeform.x, other.y - lifeform.y)
+            distance = offset.length()
+            if distance == 0:
+                continue
+
+            direction = offset.normalize()
+            if distance > comfort_sibling:
+                distance_factor = min(
+                    1.0,
+                    (distance - comfort_sibling) / (sibling_radius - comfort_sibling),
+                )
+                sibling_force += (
+                    direction
+                    * distance_factor
+                    * settings.JUVENILE_SIBLING_ATTRACTION_WEIGHT
+                )
+            elif distance < separation_radius:
+                separation_factor = (separation_radius - distance) / separation_radius
+                sibling_force -= (
+                    direction
+                    * separation_factor
+                    * settings.JUVENILE_SEPARATION_WEIGHT
+                    * 0.5
+                )
+
+    desired += parent_force
+    if has_active_parent:
+        desired += sibling_force * 0.5
+    else:
+        desired += sibling_force
+
+    if desired.length_squared() == 0:
+        return desired
+
+    max_force = max(0.1, settings.JUVENILE_BEHAVIOUR_MAX_FORCE)
+    if desired.length() > max_force:
+        desired = desired.normalize() * max_force
 
     return desired
 
