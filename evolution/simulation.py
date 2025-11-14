@@ -161,93 +161,6 @@ def _sync_moss_growth_speed() -> None:
     for plant in plants:
         plant.set_growth_speed_modifier(current)
 
-
-def _prepare_colony_world() -> None:
-    if state.world is None:
-        return
-    state.world.barriers.clear()
-    state.world.water_bodies.clear()
-    state.world.biomes.clear()
-    state.world.vegetation_masks = []
-    state.world.background_color = (236, 230, 214)
-
-
-def _determine_nest_positions(colony_count: int) -> List[Tuple[float, float]]:
-    if state.world is None or colony_count <= 0:
-        return []
-
-    width = state.world.width
-    height = state.world.height
-    horizontal_margin = 280.0
-    usable_width = max(width - 2 * horizontal_margin, width * 0.5)
-    step = usable_width / max(1, colony_count - 1)
-    base_x = max(horizontal_margin, (width - usable_width) / 2)
-    y = height * 0.65
-
-    positions: List[Tuple[float, float]] = []
-    for idx in range(colony_count):
-        if colony_count == 1:
-            x = width / 2
-        else:
-            x = base_x + step * idx
-        x = max(horizontal_margin, min(width - horizontal_margin, x))
-        positions.append((x, y))
-    return positions
-
-
-def draw_nests(surface: pygame.Surface, font: pygame.font.Font) -> None:
-    if not state.colony_ids:
-        return
-
-    radius = settings.NEST_RADIUS
-    for colony_id in state.colony_ids:
-        center = state.dna_home_positions.get(colony_id)
-        if not center:
-            continue
-        base_color = state.colony_colors.get(colony_id, settings.GREEN)
-        fill_color = tuple(min(255, int(component * 0.55 + 115)) for component in base_color)
-        position = (int(center[0]), int(center[1]))
-        pygame.draw.circle(surface, fill_color, position, radius)
-        pygame.draw.circle(surface, base_color, position, radius, 4)
-        label = state.colony_labels.get(colony_id, colony_id)
-        text = font.render(f"Nest {label}", True, settings.BLACK)
-        surface.blit(text, text.get_rect(center=position))
-
-
-def draw_colony_scores(surface: pygame.Surface, font: pygame.font.Font) -> None:
-    if not state.colony_ids:
-        return
-
-    panel_x = surface.get_width() - 220
-    panel_y = 160
-    padding = 12
-    line_height = font.get_height() + 4
-    panel_height = padding * 2 + font.get_height() + len(state.colony_ids) * line_height
-    panel_width = 200
-
-    panel = pygame.Surface((panel_width, panel_height), pygame.SRCALPHA)
-    panel.fill((255, 255, 255, 185))
-    surface.blit(panel, (panel_x - padding, panel_y - padding))
-    pygame.draw.rect(
-        surface,
-        settings.BLACK,
-        pygame.Rect(panel_x - padding, panel_y - padding, panel_width, panel_height),
-        2,
-        border_radius=6,
-    )
-
-    header = font.render("Nest score", True, settings.BLACK)
-    surface.blit(header, (panel_x, panel_y))
-
-    y_offset = panel_y + font.get_height() + 6
-    for colony_id in state.colony_ids:
-        label = state.colony_labels.get(colony_id, colony_id)
-        score = state.nest_scores.get(colony_id, 0)
-        color = state.colony_colors.get(colony_id, settings.BLACK)
-        text = font.render(f"Nest {label}: {score}", True, color)
-        surface.blit(text, (panel_x, y_offset))
-        y_offset += line_height
-
 show_debug = False
 show_leader = False
 show_action = False
@@ -264,7 +177,6 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     global latest_stats, _last_food_multiplier, _last_moss_growth
     target_world_type = world_type if world_type is not None else world.world_type
     world.set_world_type(target_world_type)
-    _prepare_colony_world()
     state.world_type = world.world_type
     state.lifeforms.clear()
     state.dna_profiles.clear()
@@ -275,12 +187,6 @@ def reset_list_values(world_type: Optional[str] = None) -> None:
     state.plants.clear()
     state.death_ages.clear()
     state.lifeform_id_counter = 0
-    state.dna_home_positions.clear()
-    state.nest_scores.clear()
-    state.colony_roots.clear()
-    state.colony_ids.clear()
-    state.colony_colors.clear()
-    state.colony_labels.clear()
     latest_stats = None
     notification_manager.clear()
     event_manager.reset()
@@ -385,167 +291,141 @@ def reset_dna_profiles():
     dna_profiles.clear()
     dna_home_biome.clear()
     state.dna_home_positions.clear()
-    state.nest_scores.clear()
-    state.colony_roots.clear()
-    state.colony_ids.clear()
-    state.colony_colors.clear()
-    state.colony_labels.clear()
+    for dna_id in range(settings.N_DNA_PROFILES):
+        diet = random.choices(
+            ['herbivore', 'omnivore', 'carnivore'],
+            weights=[0.4, 0.35, 0.25],
+        )[0]
 
-    colony_count = max(1, settings.INITIAL_COLONY_COUNT)
-    nest_positions = _determine_nest_positions(colony_count)
-    colors = list(settings.COLONY_COLORS)
-    if not colors:
-        colors = [(192, 96, 96)]
-    while len(colors) < colony_count:
-        base = colors[len(colors) % len(settings.COLONY_COLORS)]
-        jitter = tuple(max(0, min(255, component + random.randint(-18, 18))) for component in base)
-        colors.append(jitter)
-
-    for idx in range(colony_count):
-        colony_id = f"colony_{idx}"
-        label = chr(ord("A") + idx)
-        color = colors[idx]
-        width = random.randint(settings.MIN_WIDTH, min(settings.MIN_WIDTH + 4, settings.MAX_WIDTH))
-        height = random.randint(settings.MIN_HEIGHT, min(settings.MIN_HEIGHT + 4, settings.MAX_HEIGHT))
-        vision_value = random.randint(max(settings.VISION_MIN, 30), min(settings.VISION_MAX, 60))
-        defence_power = random.randint(24, 46)
-        attack_power = random.randint(18, 32)
-        energy_value = random.randint(86, 108)
-        longevity_value = random.randint(2600, 4200)
-        social_tendency = random.uniform(0.78, 0.96)
-        risk_tolerance = random.uniform(0.28, 0.46)
+        if diet == 'herbivore':
+            attack_power = random.randint(5, 45)
+            defence_power = random.randint(35, 85)
+            vision_value = random.randint(settings.VISION_MIN, max(settings.VISION_MIN + 1, settings.VISION_MAX - 10))
+            energy_value = random.randint(88, 110)
+            longevity_value = random.randint(1600, 5200)
+            social_tendency = random.uniform(0.6, 1.0)
+            risk_tolerance = random.uniform(0.1, 0.5)
+        elif diet == 'carnivore':
+            attack_power = random.randint(45, 95)
+            defence_power = random.randint(20, 65)
+            vision_value = random.randint(max(settings.VISION_MIN, 28), settings.VISION_MAX)
+            energy_value = random.randint(78, 96)
+            longevity_value = random.randint(900, 3600)
+            social_tendency = random.uniform(0.2, 0.6)
+            risk_tolerance = random.uniform(0.6, 1.0)
+        else:
+            attack_power = random.randint(30, 85)
+            defence_power = random.randint(25, 75)
+            vision_value = random.randint(max(settings.VISION_MIN, 24), settings.VISION_MAX)
+            energy_value = random.randint(82, 104)
+            longevity_value = random.randint(1200, 4200)
+            social_tendency = random.uniform(0.4, 0.85)
+            risk_tolerance = random.uniform(0.4, 0.8)
 
         dna_profile = {
-            "dna_id": colony_id,
-            "width": width,
-            "height": height,
-            "color": color,
-            "health": random.randint(110, 180),
-            "maturity": random.randint(
-                settings.MIN_MATURITY,
-                min(settings.MAX_MATURITY, settings.MIN_MATURITY + 120),
-            ),
-            "vision": vision_value,
-            "defence_power": defence_power,
-            "attack_power": attack_power,
-            "energy": energy_value,
-            "longevity": longevity_value,
-            "diet": "herbivore",
-            "social": social_tendency,
-            "risk_tolerance": risk_tolerance,
+            'dna_id': dna_id,
+            'width': random.randint(settings.MIN_WIDTH, settings.MAX_WIDTH),
+            'height': random.randint(settings.MIN_HEIGHT, settings.MAX_HEIGHT),
+            'color': (random.randint(0, 255), random.randint(0, 255), random.randint(0, 255)),
+            'health': random.randint(1, 200),
+            'maturity': random.randint(settings.MIN_MATURITY, settings.MAX_MATURITY),
+            'vision': vision_value,
+            'defence_power': defence_power,
+            'attack_power': attack_power,
+            'energy': energy_value,
+            'longevity': longevity_value,
+            'diet': diet,
+            'social': social_tendency,
+            'risk_tolerance': risk_tolerance,
         }
         dna_profiles.append(dna_profile)
-        dna_home_biome[colony_id] = None
-
-        if idx < len(nest_positions):
-            home_position = nest_positions[idx]
+        if world.biomes:
+            dna_home_biome[dna_profile['dna_id']] = determine_home_biome(dna_profile, world.biomes)
         else:
-            home_position = (state.world.width / 2, state.world.height * 0.65) if state.world else (0.0, 0.0)
-
-        state.dna_home_positions[colony_id] = home_position
-        state.nest_scores[colony_id] = 0
-        state.colony_roots[colony_id] = colony_id
-        state.colony_ids.append(colony_id)
-        state.colony_colors[colony_id] = color
-        state.colony_labels[colony_id] = label
-
-        logger.info(
-            "Colony %s assigned nest at (%.1f, %.1f)",
-            label,
-            home_position[0],
-            home_position[1],
-        )
+            dna_home_biome[dna_profile['dna_id']] = None
 
 
 def init_lifeforms():
-    lifeforms.clear()
-    if not state.colony_ids:
-        logger.warning("Cannot spawn lifeforms: no colonies initialised")
-        return
+    cluster_centers = {}  # dna_id -> (x, y)
 
-    profiles_by_id = {profile["dna_id"]: profile for profile in dna_profiles}
-    colony_count = len(state.colony_ids)
-    total_to_spawn = max(1, settings.N_LIFEFORMS)
-    base_count = total_to_spawn // colony_count
-    remainder = total_to_spawn % colony_count
+    for _ in range(settings.N_LIFEFORMS):
 
-    for idx, colony_id in enumerate(state.colony_ids):
-        profile = profiles_by_id.get(colony_id)
-        if profile is None:
-            continue
+        dna_profile = random.choice(dna_profiles)
+        dna_id = dna_profile["dna_id"]
+        generation = 1
 
-        spawn_count = base_count + (1 if idx < remainder else 0)
-        spawn_count = max(1, spawn_count)
-        home = state.dna_home_positions.get(colony_id, (state.world.width / 2, state.world.height / 2))
+        preferred_biome = dna_home_biome.get(dna_id)
 
-        leader_interval = max(1, spawn_count // 6)
-        for number in range(spawn_count):
-            angle = random.uniform(0, 2 * math.pi)
-            radius = random.uniform(0, settings.NEST_RADIUS * 0.75)
-            x = home[0] + math.cos(angle) * radius - profile["width"] / 2
-            y = home[1] + math.sin(angle) * radius - profile["height"] / 2
-            x = max(0, min(int(x), world.width - profile["width"]))
-            y = max(0, min(int(y), world.height - profile["height"]))
+        # ---- CLUSTER CENTER PER DNA ----
+        if dna_id not in cluster_centers:
+            # kies eerste spawnpunt als cluster center
+            cx, cy, _ = world.random_position(
+                dna_profile["width"],
+                dna_profile["height"],
+                preferred_biome=preferred_biome
+            )
+            cluster_centers[dna_id] = (cx, cy)
 
-            lifeform = Lifeform(state, x, y, profile, generation=1)
-            lifeform.current_biome = None
-            if number % leader_interval == 0:
-                lifeform.is_leader = True
-            lifeforms.append(lifeform)
-            state.colony_roots[str(lifeform.dna_id)] = state.colony_roots.get(colony_id, colony_id)
+        cx, cy = cluster_centers[dna_id]
+
+        # ---- SPAWN MET CLUSTER RADIUS ----
+        # (vereist kleine update in world.random_position())
+        x = cx + random.randint(-160, 160)
+        y = cy + random.randint(-160, 160)
+
+        # clamp binnen world-bounds
+        x = max(0, min(int(x), world.width - dna_profile["width"]))
+        y = max(0, min(int(y), world.height - dna_profile["height"]))
+
+        lifeform = Lifeform(state, x, y, dna_profile, generation)
+        lifeforms.append(lifeform)
 
         logger.info(
-            "Spawned %s lifeforms for colony %s near nest (%.1f, %.1f)",
-            spawn_count,
-            colony_id,
-            home[0],
-            home[1],
+            "Spawned lifeform %s (dna %s) cluster at (%.1f, %.1f)",
+            lifeform.id, dna_id, x, y
+        )
+
+        spawn_attempts = 0
+        while True:
+            x, y, biome = world.random_position(
+                dna_profile['width'],
+                dna_profile['height'],
+                preferred_biome=preferred_biome,
+                avoid_positions=other_positions,
+                min_distance=320,
+                biome_padding=40,
+            )
+            center = (x + dna_profile['width'] / 2, y + dna_profile['height'] / 2)
+            same_species_positions = spawn_positions_by_dna.setdefault(dna_profile['dna_id'], [])
+            too_close_same = any(
+                math.hypot(center[0] - px, center[1] - py) < 160 for px, py in same_species_positions
+            )
+            if not too_close_same or spawn_attempts > 120:
+                same_species_positions.append(center)
+                break
+            spawn_attempts += 1
+
+        lifeform = Lifeform(state, x, y, dna_profile, generation)
+        lifeform.current_biome = biome
+        lifeforms.append(lifeform)
+        logger.info(
+            "Spawned lifeform %s (dna %s) at (%.1f, %.1f) in biome %s",
+            lifeform.id,
+            dna_profile['dna_id'],
+            x,
+            y,
+            biome.name if biome else "onbekend",
         )
 
 
 def init_vegetation():
     plants.clear()
     abundance = environment_modifiers.get("plant_regrowth", 1.0)
-    desired = random.randint(settings.INITIAL_MOSS_CLUSTERS_MIN, settings.INITIAL_MOSS_CLUSTERS_MAX)
-    candidates = create_initial_clusters(
-        world,
-        count=max(desired * 3, desired + 2),
-        min_cells=20,
-        max_cells=48,
-    )
-
-    moss_growth = environment_modifiers.get("moss_growth_speed", 1.0)
-
-    def _too_close_to_nest(cluster: Vegetation) -> bool:
-        center = (cluster.rect.centerx, cluster.rect.centery)
-        for nest in state.dna_home_positions.values():
-            if math.hypot(center[0] - nest[0], center[1] - nest[1]) < settings.NEST_RADIUS * 1.6:
-                return True
-        return False
-
-    selected: List[Vegetation] = []
-    for cluster in candidates:
-        if len(selected) >= desired:
-            break
-        if _too_close_to_nest(cluster):
-            continue
-        selected.append(cluster)
-
-    if len(selected) < desired:
-        for cluster in candidates:
-            if len(selected) >= desired:
-                break
-            if cluster in selected:
-                continue
-            selected.append(cluster)
-
-    for cluster in selected:
+    clusters = create_initial_clusters(world, count=32)
+    for cluster in clusters:
         cluster.set_capacity_multiplier(abundance)
-        cluster.set_growth_speed_modifier(moss_growth)
+        cluster.set_growth_speed_modifier(environment_modifiers.get("moss_growth_speed", 1.0))
         plants.append(cluster)
-
-    if not plants:
-        logger.warning("No moss clusters spawned; consider adjusting world parameters")
 
 
 def collect_population_stats(formatted_time_passed: str):
@@ -695,7 +575,6 @@ def run() -> None:
         world_type=state.world_type,
         environment_modifiers=environment_modifiers,
     )
-    _prepare_colony_world()
     camera = Camera(settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT, settings.WORLD_WIDTH, settings.WORLD_HEIGHT)
     camera.center_on(settings.WORLD_WIDTH / 2, settings.WORLD_HEIGHT / 2)
     logger.info(
@@ -817,7 +696,6 @@ def run() -> None:
             if not paused:
                 world.update(pygame.time.get_ticks())
                 world.draw(world_surface)
-                draw_nests(world_surface, font2)
 
                 current_time = datetime.datetime.now()
                 time_passed = current_time - start_time
@@ -945,7 +823,6 @@ def run() -> None:
                     draw_stats_panel(screen, font2, font3, latest_stats)
                 notification_manager.draw(screen, font)
                 player_controller.draw_overlay(screen, font2)
-                draw_colony_scores(screen, font2)
                 event_manager.draw(screen, font2)
 
         pygame.display.flip()
@@ -973,11 +850,6 @@ def run() -> None:
                     if random.randint(0, 100) < 10:
                         lifeform.is_leader = True
                     lifeforms.append(lifeform)
-                    root_id = state.colony_roots.get(
-                        str(dna_profile["dna_id"]),
-                        str(dna_profile["dna_id"]).split("-")[0],
-                    )
-                    state.colony_roots[str(lifeform.dna_id)] = root_id
 
                 elif event.key == pygame.K_b:
                     show_debug = not show_debug
@@ -1026,7 +898,6 @@ def run() -> None:
                         for rect, label in map_button_rects:
                             if rect.collidepoint(event.pos):
                                 world.set_world_type(label)
-                                _prepare_colony_world()
                                 state.world_type = world.world_type
                                 if previous_type != state.world_type:
                                     notification_manager.add(
