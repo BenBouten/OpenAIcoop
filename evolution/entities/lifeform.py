@@ -159,10 +159,6 @@ class Lifeform:
     def notification_context(self):
         return getattr(self.state, "notification_context", None)
 
-    @property
-    def effects_manager(self):
-        return getattr(self.state, "effects", None)
-
     def _trigger_escape_manoeuvre(self, reason: str) -> None:
         escape = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
         if escape.length_squared() == 0:
