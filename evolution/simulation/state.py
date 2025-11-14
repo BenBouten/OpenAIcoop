@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 
 @dataclass
@@ -23,11 +23,16 @@ class SimulationState:
     gameplay_settings: Dict[str, float] = field(
         default_factory=lambda: {
             "pheromone_decay": 10.0,
+            "pheromone_strength": 90.0,
+            "pheromone_evaporation_rate": 12.0,
+            "follow_trail_chance": 0.65,
+            "home_return_speed_multiplier": 1.35,
         }
     )
     death_ages: List[int] = field(default_factory=list)
     dna_profiles: List[dict] = field(default_factory=list)
     dna_home_biome: dict = field(default_factory=dict)
+    dna_home_positions: Dict[str, Tuple[float, float]] = field(default_factory=dict)
     dna_id_counts: Dict[str, int] = field(default_factory=dict)
     dna_lineage: Dict[str, dict] = field(default_factory=dict)
     lifeform_genetics: Dict[str, dict] = field(default_factory=dict)

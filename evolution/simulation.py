@@ -17,7 +17,7 @@ import pygame
 from .config import settings
 from .entities import movement
 from .entities.lifeform import Lifeform
-from .entities.pheromones import Pheromone
+from .entities.pheromone_trail import PheromoneTrail, update_trails
 from .rendering.camera import Camera
 from .rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from .simulation.state import SimulationState
@@ -125,7 +125,7 @@ event_manager: EventManager
 player_controller: PlayerController
 
 lifeforms: List[Lifeform] = state.lifeforms
-pheromones: List[Pheromone] = state.pheromones
+pheromones: List[PheromoneTrail] = state.pheromones
 dna_profiles: List[dict] = state.dna_profiles
 plants: List[Vegetation] = state.plants
 
@@ -290,6 +290,7 @@ def determine_home_biome(dna_profile, biomes: List[BiomeRegion]) -> Optional[Bio
 def reset_dna_profiles():
     dna_profiles.clear()
     dna_home_biome.clear()
+    state.dna_home_positions.clear()
     for dna_id in range(settings.N_DNA_PROFILES):
         diet = random.choices(
             ['herbivore', 'omnivore', 'carnivore'],
@@ -710,13 +711,15 @@ def run() -> None:
                     plant.draw(world_surface)
 
                 if pheromones:
-                    active_pheromones: List[Pheromone] = []
+                    evaporation = float(
+                        state.gameplay_settings.get(
+                            "pheromone_evaporation_rate",
+                            state.gameplay_settings.get("pheromone_decay", settings.PHEROMONE_EVAPORATION_RATE),
+                        )
+                    )
+                    update_trails(pheromones, delta_time, evaporation_rate=evaporation)
                     for pheromone in pheromones:
-                        pheromone.strength -= 10
-                        if pheromone.strength > 0:
-                            pheromone.draw(world_surface)
-                            active_pheromones.append(pheromone)
-                    pheromones[:] = active_pheromones
+                        pheromone.draw(world_surface)
 
                 lifeform_snapshot = list(lifeforms)
                 average_maturity = (
