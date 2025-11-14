@@ -53,7 +53,7 @@ class MossDNA:
 
         growth_rate = maybe_mutate(self.growth_rate, 0.5, 1.8, scale=0.6)
         toxicity = maybe_mutate(self.toxicity, 0.0, 0.8, scale=0.4)
-        nutrition = maybe_mutate(self.nutrition, 6.0, 26.0, scale=6.0)
+        nutrition = maybe_mutate(self.nutrition, 4.0, 18.0, scale=4.0)
         hydration = maybe_mutate(self.hydration, 0.0, 1.0, scale=0.5)
         vitality = maybe_mutate(self.vitality, 0.0, 1.0, scale=0.5)
         fiber_density = maybe_mutate(self.fiber_density, 0.4, 1.8, scale=0.5)
@@ -89,7 +89,7 @@ def random_moss_dna(rng: random.Random) -> MossDNA:
     return MossDNA(
         growth_rate=rng.uniform(0.8, 1.6),
         toxicity=rng.uniform(0.0, 0.45),
-        nutrition=rng.uniform(10.0, 22.0),
+        nutrition=rng.uniform(6.0, 16.0),
         hydration=rng.uniform(0.1, 0.9),
         vitality=rng.uniform(0.0, 0.8),
         fiber_density=rng.uniform(0.7, 1.4),
