@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import random
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
@@ -21,6 +22,14 @@ CLOSE_FOOD_RADIUS = 6.0
 MAX_FEEDING_FRAMES = 180  # ~3 seconden bij 60 FPS
 COMFORT_HUNGER_LEVEL = settings.HUNGER_SEEK_THRESHOLD * 0.4
 
+_WANDER_CIRCLE_DISTANCE = 1.6
+_WANDER_CIRCLE_RADIUS = 1.2
+_WANDER_DRIFT_SPEED = 0.45  # rad/s
+_WANDER_DRIFT_STRENGTH = 0.35
+_SEARCH_PROXIMITY_RADIUS = 8.0
+_SPEED_DRIFT_INTERVAL = 2.4
+_SPEED_DRIFT_LERP_RATE = 0.45
+
 # ---------------------------------------------------------
 # Public entry point
 # ---------------------------------------------------------
@@ -36,9 +45,11 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     """
 
     now = pygame.time.get_ticks()
+    _ensure_speed_tracking(lifeform)
 
     # ⬇️ NIEUW: als we in escape-modus zitten, NIETS anders doen
     if lifeform._escape_timer > 0 and lifeform._escape_vector.length_squared() > 0:
+        _reset_speed_to_base(lifeform)
         escape_dir = lifeform._escape_vector.normalize()
         lifeform.x_direction = escape_dir.x
         lifeform.y_direction = escape_dir.y
@@ -87,10 +98,15 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
 
     # 7) Fallback naar wander / huidige richting
     if desired.length_squared() == 0:
-        desired = _wander_vector(lifeform, now)
+        desired = _wander_vector(lifeform, now, dt)
         lifeform.search = True
     else:
         lifeform.search = False
+
+    if lifeform.search and _search_mode_active(lifeform):
+        _apply_speed_drift(lifeform, dt)
+    else:
+        _reset_speed_to_base(lifeform)
 
     if desired.length_squared() == 0:
         desired = Vector2(lifeform.x_direction, lifeform.y_direction)
@@ -341,24 +357,113 @@ def _avoid_recent_positions(lifeform: "Lifeform", timestamp: int) -> Vector2:
     return repulsion.normalize() * 0.4
 
 
-def _wander_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
+def _wander_vector(lifeform: "Lifeform", timestamp: int, dt: float) -> Vector2:
+    if not hasattr(lifeform, "_wander_theta"):
+        lifeform._wander_theta = random.uniform(0.0, math.tau)
+    if not hasattr(lifeform, "_wander_drift_time"):
+        lifeform._wander_drift_time = random.uniform(0.0, math.tau)
+
     if timestamp - lifeform.last_wander_update > settings.WANDER_INTERVAL_MS:
-        jitter = random.uniform(
-            -settings.WANDER_JITTER_DEGREES, settings.WANDER_JITTER_DEGREES
+        jitter = math.radians(
+            random.uniform(
+                -settings.WANDER_JITTER_DEGREES, settings.WANDER_JITTER_DEGREES
+            )
         )
-        lifeform.wander_direction = lifeform.wander_direction.rotate(jitter)
-        if lifeform.wander_direction.length_squared() == 0:
-            lifeform.wander_direction = Vector2(1, 0)
-        else:
-            lifeform.wander_direction = lifeform.wander_direction.normalize()
+        lifeform._wander_theta = (lifeform._wander_theta + jitter) % math.tau
         lifeform.last_wander_update = timestamp
 
-    noise = Vector2(random.uniform(-0.2, 0.2), random.uniform(-0.2, 0.2))
-    wander = lifeform.wander_direction + noise
+    forward = Vector2(lifeform.x_direction, lifeform.y_direction)
+    if forward.length_squared() == 0:
+        forward = Vector2(lifeform.wander_direction)
+    if forward.length_squared() == 0:
+        forward = Vector2(1, 0)
+    forward = forward.normalize()
+
+    circle_center = forward * _WANDER_CIRCLE_DISTANCE
+    wander_offset = Vector2(
+        math.cos(lifeform._wander_theta), math.sin(lifeform._wander_theta)
+    ) * _WANDER_CIRCLE_RADIUS
+
+    lifeform._wander_drift_time += dt * _WANDER_DRIFT_SPEED
+    drift = Vector2(
+        math.cos(lifeform._wander_drift_time),
+        math.sin(lifeform._wander_drift_time),
+    ) * _WANDER_DRIFT_STRENGTH
+
+    wander = circle_center + wander_offset + drift
     if wander.length_squared() == 0:
-        wander = Vector2(1, 0)
+        wander = forward
 
     return wander.normalize()
+
+
+# ---------------------------------------------------------
+# Search-mode helpers
+# ---------------------------------------------------------
+def _ensure_speed_tracking(lifeform: "Lifeform") -> None:
+    base_speed = float(lifeform.speed)
+    lifeform._dna_speed_reference = base_speed
+    if not hasattr(lifeform, "_speed_drift_value"):
+        lifeform._speed_drift_value = base_speed
+        lifeform._speed_drift_target = base_speed
+        lifeform._speed_drift_timer = 0.0
+
+
+def _search_mode_active(lifeform: "Lifeform") -> bool:
+    if not lifeform.search:
+        return False
+
+    if lifeform.closest_enemy and lifeform.closest_enemy.health_now > 0:
+        if lifeform.distance_to(lifeform.closest_enemy) <= _SEARCH_PROXIMITY_RADIUS:
+            return False
+
+    if lifeform.closest_prey and lifeform.closest_prey.health_now > 0:
+        if lifeform.distance_to(lifeform.closest_prey) <= _SEARCH_PROXIMITY_RADIUS:
+            return False
+
+    if lifeform.closest_partner and lifeform.closest_partner.health_now > 0:
+        if lifeform.distance_to(lifeform.closest_partner) <= _SEARCH_PROXIMITY_RADIUS:
+            return False
+
+    if lifeform.closest_plant and getattr(lifeform.closest_plant, "resource", 0) > 0:
+        center = _plant_center(lifeform)
+        offset = Vector2(center[0] - lifeform.x, center[1] - lifeform.y)
+        if offset.length() <= _SEARCH_PROXIMITY_RADIUS:
+            return False
+
+    return True
+
+
+def _apply_speed_drift(lifeform: "Lifeform", dt: float) -> None:
+    base = getattr(lifeform, "_dna_speed_reference", lifeform.speed)
+    min_speed = base * 0.85
+    max_speed = base * 1.15
+
+    lifeform._speed_drift_timer += dt
+    if lifeform._speed_drift_timer >= _SPEED_DRIFT_INTERVAL:
+        lifeform._speed_drift_timer = 0.0
+        lifeform._speed_drift_target = random.uniform(min_speed, max_speed)
+
+    lifeform._speed_drift_target = max(
+        min_speed, min(max_speed, lifeform._speed_drift_target)
+    )
+
+    lerp_factor = min(1.0, dt * _SPEED_DRIFT_LERP_RATE)
+    lifeform._speed_drift_value += (
+        lifeform._speed_drift_target - lifeform._speed_drift_value
+    ) * lerp_factor
+
+    drifted = max(min_speed, min(max_speed, lifeform._speed_drift_value))
+    lifeform.speed = drifted
+
+
+def _reset_speed_to_base(lifeform: "Lifeform") -> None:
+    base = getattr(lifeform, "_dna_speed_reference", lifeform.speed)
+    lifeform.speed = base
+    if hasattr(lifeform, "_speed_drift_value"):
+        lifeform._speed_drift_value = base
+        lifeform._speed_drift_target = base
+        lifeform._speed_drift_timer = 0.0
 
 
 # ---------------------------------------------------------
