@@ -8,6 +8,7 @@ from typing import Callable, Dict, List, Tuple
 
 import pygame
 
+from .organic import generate_blob_mask
 from .types import Barrier, BiomeRegion, WaterBody, WeatherPattern
 
 
@@ -54,6 +55,44 @@ def _rect_from_bounds(
     right = max(left + 10, min(right, max_width))
     bottom = max(top + 10, min(bottom, max_height))
     return pygame.Rect(left, top, right - left, bottom - top)
+
+
+def _create_biome_region(
+    name: str,
+    rect: pygame.Rect,
+    color: Color,
+    patterns: List[WeatherPattern],
+    *,
+    movement_modifier: float = 1.0,
+    hunger_modifier: float = 1.0,
+    regrowth_modifier: float = 1.0,
+    energy_modifier: float = 1.0,
+    health_modifier: float = 0.0,
+    mask_complexity: int = 12,
+    mask_irregularity: float = 0.35,
+    mask_variation: float = 0.35,
+) -> BiomeRegion:
+    mask = generate_blob_mask(
+        max(12, rect.width),
+        max(12, rect.height),
+        complexity=mask_complexity,
+        angular_variation=mask_irregularity,
+        radial_variation=mask_variation,
+    )
+    region = BiomeRegion(
+        name,
+        rect,
+        color,
+        patterns,
+        movement_modifier=movement_modifier,
+        hunger_modifier=hunger_modifier,
+        regrowth_modifier=regrowth_modifier,
+        energy_modifier=energy_modifier,
+        health_modifier=health_modifier,
+    )
+    region.mask = mask
+    region.mask_offset = (rect.left, rect.top)
+    return region
 
 
 def _build_weather_patterns() -> Dict[str, List[WeatherPattern]]:
@@ -348,7 +387,7 @@ def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
     delta = WaterBody("delta", delta_segments, color=(70, 170, 220))
 
     biomes = [
-        BiomeRegion(
+        _create_biome_region(
             "Rivierdelta",
             pygame.Rect(
                 width // 3 - 80,
@@ -363,8 +402,11 @@ def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=1.4,
             energy_modifier=0.95,
             health_modifier=0.05,
+            mask_complexity=14,
+            mask_irregularity=0.4,
+            mask_variation=0.45,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Bosrand",
             pygame.Rect(60, 60, width // 3 - 20, height // 2),
             (80, 170, 120),
@@ -374,8 +416,10 @@ def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=1.5,
             energy_modifier=1.0,
             health_modifier=0.02,
+            mask_complexity=16,
+            mask_irregularity=0.32,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Steppe",
             pygame.Rect(
                 width // 3 + 20,
@@ -389,8 +433,10 @@ def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
             hunger_modifier=0.95,
             regrowth_modifier=1.0,
             energy_modifier=1.1,
+            mask_complexity=12,
+            mask_irregularity=0.28,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Woestijnrand",
             pygame.Rect(
                 width // 2 + 120,
@@ -405,8 +451,10 @@ def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=0.6,
             energy_modifier=0.8,
             health_modifier=-0.1,
+            mask_complexity=11,
+            mask_irregularity=0.42,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Toendra",
             pygame.Rect(width - 420, 40, 360, 260),
             (180, 210, 220),
@@ -416,6 +464,8 @@ def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=0.65,
             energy_modifier=0.85,
             health_modifier=-0.05,
+            mask_complexity=13,
+            mask_irregularity=0.38,
         ),
     ]
 
@@ -519,7 +569,7 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
     )
 
     biomes = [
-        BiomeRegion(
+        _create_biome_region(
             "Bosrijk Eiland",
             top_left,
             (90, 180, 140),
@@ -529,8 +579,10 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=1.5,
             energy_modifier=1.0,
             health_modifier=0.03,
+            mask_complexity=15,
+            mask_irregularity=0.3,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Steppe Eiland",
             top_right,
             (200, 205, 150),
@@ -539,8 +591,10 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
             hunger_modifier=0.95,
             regrowth_modifier=1.05,
             energy_modifier=1.1,
+            mask_complexity=12,
+            mask_irregularity=0.34,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Woestijn Eiland",
             bottom_left,
             (222, 198, 140),
@@ -550,8 +604,10 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=0.55,
             energy_modifier=0.82,
             health_modifier=-0.08,
+            mask_complexity=11,
+            mask_irregularity=0.4,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Moeras Eiland",
             bottom_right,
             (140, 200, 170),
@@ -561,8 +617,10 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=1.55,
             energy_modifier=0.95,
             health_modifier=0.06,
+            mask_complexity=14,
+            mask_irregularity=0.36,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Koraal Rif",
             central,
             (110, 210, 210),
@@ -571,6 +629,8 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
             hunger_modifier=0.85,
             regrowth_modifier=1.4,
             energy_modifier=1.0,
+            mask_complexity=18,
+            mask_irregularity=0.28,
         ),
     ]
 
@@ -643,7 +703,7 @@ def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
     delta_rect = _rect_from_bounds(width // 2 + 60, height - 260, width - 80, height - 80, width, height)
 
     biomes = [
-        BiomeRegion(
+        _create_biome_region(
             "Woestijn",
             desert_rect,
             (214, 193, 134),
@@ -653,8 +713,11 @@ def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=0.6,
             energy_modifier=0.8,
             health_modifier=-0.12,
+            mask_complexity=10,
+            mask_irregularity=0.45,
+            mask_variation=0.4,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Duinveld",
             dunes_rect,
             (222, 178, 110),
@@ -664,8 +727,10 @@ def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=0.55,
             energy_modifier=0.78,
             health_modifier=-0.1,
+            mask_complexity=9,
+            mask_irregularity=0.42,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Savanne",
             savanna_rect,
             (200, 205, 150),
@@ -675,8 +740,10 @@ def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=1.1,
             energy_modifier=1.05,
             health_modifier=0.02,
+            mask_complexity=12,
+            mask_irregularity=0.33,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Jungle",
             jungle_rect,
             (90, 170, 110),
@@ -686,8 +753,11 @@ def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=1.6,
             energy_modifier=0.95,
             health_modifier=0.08,
+            mask_complexity=16,
+            mask_irregularity=0.37,
+            mask_variation=0.4,
         ),
-        BiomeRegion(
+        _create_biome_region(
             "Rivier",
             delta_rect,
             (120, 200, 150),
@@ -697,6 +767,8 @@ def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
             regrowth_modifier=1.35,
             energy_modifier=0.95,
             health_modifier=0.05,
+            mask_complexity=14,
+            mask_irregularity=0.4,
         ),
     ]
 

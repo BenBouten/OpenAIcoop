@@ -57,9 +57,18 @@ class World:
     def draw(self, surface: pygame.Surface) -> None:
         surface.fill(self.background_color)
         for biome in self.biomes:
-            overlay = pygame.Surface((biome.rect.width, biome.rect.height), pygame.SRCALPHA)
-            overlay.fill((*biome.color, 80))
-            surface.blit(overlay, biome.rect.topleft)
+            if biome.mask is not None:
+                overlay = pygame.Surface(biome.mask.get_size(), pygame.SRCALPHA)
+                biome.mask.to_surface(
+                    overlay,
+                    setcolor=(*biome.color, 90),
+                    unsetcolor=(0, 0, 0, 0),
+                )
+                surface.blit(overlay, biome.mask_offset)
+            else:
+                overlay = pygame.Surface((biome.rect.width, biome.rect.height), pygame.SRCALPHA)
+                overlay.fill((*biome.color, 80))
+                surface.blit(overlay, biome.rect.topleft)
 
         for water in self.water_bodies:
             for segment in water.segments:
@@ -95,7 +104,7 @@ class World:
     def get_biome_at(self, x: float, y: float) -> Optional[BiomeRegion]:
         point = (int(x), int(y))
         for biome in self.biomes:
-            if biome.rect.collidepoint(point):
+            if biome.contains(point[0], point[1]):
                 return biome
         if self.biomes:
             return self.biomes[0]
@@ -215,6 +224,9 @@ class World:
             candidate = pygame.Rect(x, y, width, height)
 
             if candidate.right > self.width or candidate.bottom > self.height:
+                attempts += 1
+                continue
+            if biome and not biome.contains(candidate.centerx, candidate.centery):
                 attempts += 1
                 continue
             if self.is_blocked(candidate, include_water=avoid_water):
