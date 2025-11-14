@@ -253,7 +253,7 @@ class Lifeform:
                 if context:
                     context.action(f"{self.id} eet van een plant")
                 self.closest_plant.apply_effect(self)
-                self.closest_plant.decrement_resource(12)
+                self.closest_plant.decrement_resource(12, eater=self)
                 self.hunger = max(0, self.hunger - 60)
 
     # ------------------------------------------------------------------
@@ -778,6 +778,13 @@ class Lifeform:
         self.current_biome = biome
         self.environment_effects = effects
         self.speed *= float(effects["movement"])
+
+        for plant in self.state.plants:
+            if plant.resource <= 0:
+                continue
+            if plant.contains_point(self.rect.centerx, self.rect.centery):
+                self.speed *= plant.movement_modifier_for(self)
+                break
 
         if self.age < self.maturity:
             if average_maturity is None and self.state.lifeforms:
