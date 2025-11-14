@@ -17,7 +17,13 @@ class SimulationState:
     environment_modifiers: dict = field(default_factory=lambda: {
         "plant_regrowth": 1.0,
         "hunger_rate": 1.0,
+        "weather_intensity": 1.0,
     })
+    gameplay_settings: Dict[str, float] = field(
+        default_factory=lambda: {
+            "pheromone_decay": 10.0,
+        }
+    )
     death_ages: List[int] = field(default_factory=list)
     dna_profiles: List[dict] = field(default_factory=list)
     dna_home_biome: dict = field(default_factory=dict)
