@@ -858,7 +858,7 @@ def _immediate_food_vector(lifeform: "Lifeform") -> Vector2:
         and lifeform.closest_plant.resource > 0
         and lifeform.closest_enemy is None
     ):
-        direction, distance = lifeform._direction_to_point(_plant_center(lifeform))
+        direction, distance = lifeform.direction_to_plant(lifeform.closest_plant)
         if distance > 0:
             weight = lifeform.closest_plant.resource + max(0, lifeform.hunger - 80)
             score = weight / (distance + 1)
@@ -898,7 +898,7 @@ def _opportunistic_food_vector(lifeform: "Lifeform") -> Vector2:
         and lifeform.prefers_plants()
         and lifeform.closest_enemy is None
     ):
-        direction, distance = lifeform._direction_to_point(_plant_center(lifeform))
+        direction, distance = lifeform.direction_to_plant(lifeform.closest_plant)
         if distance > 0 and distance < max(10, lifeform.vision * 0.5):
             return direction
 
@@ -937,9 +937,7 @@ def _close_to_food_target(lifeform: "Lifeform") -> bool:
         lifeform._feeding_frames = 0
         return False
 
-    center_x = plant.x + plant.width / 2
-    center_y = plant.y + plant.height / 2
-    _, distance = lifeform._direction_to_point((center_x, center_y))
+    distance = lifeform.distance_to_plant(plant)
 
     # Buiten de “eet cirkel”? Dan gewoon normale navigatie.
     if distance > CLOSE_FOOD_RADIUS:
@@ -967,5 +965,5 @@ def _close_to_food_target(lifeform: "Lifeform") -> bool:
 def _plant_center(lifeform: "Lifeform") -> Tuple[float, float]:
     plant = lifeform.closest_plant
     if plant is None:
-        return (lifeform.x, lifeform.y)
-    return (plant.x + plant.width / 2, plant.y + plant.height / 2)
+        return (float(lifeform.rect.centerx), float(lifeform.rect.centery))
+    return lifeform.plant_contact_point(plant)
