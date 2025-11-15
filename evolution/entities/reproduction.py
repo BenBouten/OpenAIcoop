@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, Mapping, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
+from ..dna.development import mix_development_plans, mutate_profile_development
 from ..morphology.genotype import MorphologyGenotype, mutate_profile_morphology
 
 if TYPE_CHECKING:
@@ -94,6 +95,7 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
     )
 
     morphology = MorphologyGenotype.mix(parent.morphology, partner.morphology)
+    development = mix_development_plans(diet, parent.development, partner.development)
 
     return {
         "dna_id": parent.dna_id,
@@ -116,6 +118,7 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
         "risk_tolerance": risk,
         "restlessness": restlessness,
         "morphology": morphology.to_dict(),
+        "development": development,
     }
 
 
@@ -156,6 +159,7 @@ def _apply_mutations(profile: Dict[str, object]) -> None:
         )
 
     mutate_profile_morphology(profile)
+    mutate_profile_development(profile)
 
 
 def _clamp_profile(profile: Dict[str, object]) -> None:

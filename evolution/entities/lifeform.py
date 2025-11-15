@@ -22,6 +22,7 @@ import pygame
 from pygame.math import Vector2
 
 from ..config import settings
+from ..dna.development import describe_skin_stage, ensure_development_plan
 from ..morphology import MorphologyGenotype, MorphStats, compute_morph_stats
 from ..simulation.state import SimulationState
 from ..world.world import BiomeRegion
@@ -65,7 +66,13 @@ class Lifeform:
         self.morph_stats: MorphStats = compute_morph_stats(
             self.morphology, (self.base_width, self.base_height)
         )
-        self.body_color = self._apply_pigment(base_color, self.morph_stats.pigment_tint)
+        self.development = ensure_development_plan(dna_profile.get("development"))
+        self.skin_stage = int(self.development.get("skin_stage", 0))
+        self.development_features: Tuple[str, ...] = tuple(
+            self.development.get("features", [])
+        )
+        tinted = self._apply_pigment(base_color, self.morph_stats.pigment_tint)
+        self.body_color = self._apply_skin_development(tinted)
         self.color = self.body_color
 
         scaled_width = int(round(self.base_width * self.morph_stats.collision_scale))
@@ -219,6 +226,21 @@ class Lifeform:
         green = int(max(0, min(255, base_color[1] * tint[1])))
         blue = int(max(0, min(255, base_color[2] * tint[2])))
         return red, green, blue
+
+    def _apply_skin_development(
+        self, base_color: Tuple[int, int, int]
+    ) -> Tuple[int, int, int]:
+        stage = max(0, min(self.skin_stage, 3))
+        richness = 0.82 + stage * 0.08
+        detail_bonus = 1.0 + len(self.development_features) * 0.02
+        multiplier = richness * detail_bonus
+        tinted = tuple(
+            int(max(30, min(255, channel * multiplier))) for channel in base_color
+        )
+        if stage == 0:
+            # Extra flets in de eerste generaties.
+            tinted = tuple(int(channel * 0.9) for channel in tinted)
+        return tinted
 
     def _trigger_escape_manoeuvre(self, reason: str) -> None:
         escape = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
@@ -836,6 +858,18 @@ class Lifeform:
         }
         return summary
 
+    def _summarise_plant(self, plant) -> Optional[Dict[str, Any]]:
+        if plant is None:
+            return None
+        center = (plant.x + plant.width / 2, plant.y + plant.height / 2)
+        distance = math.hypot(self.x - center[0], self.y - center[1])
+        return {
+            "position": center,
+            "resource": getattr(plant, "resource", None),
+            "size": (plant.width, plant.height),
+            "distance": distance,
+        }
+
     def debug_snapshot(self) -> Dict[str, Any]:
         """Return a JSON-serialisable snapshot of the current lifeform state."""
 
@@ -853,6 +887,7 @@ class Lifeform:
             "id": self.id,
             "dna_id": self.dna_id,
             "generation": self.generation,
+            "diet": self.diet,
             "position": (self.x, self.y),
             "rect": (
                 self.rect.x,
@@ -896,6 +931,7 @@ class Lifeform:
                 "prey": self._summarise_related(self.closest_prey),
                 "partner": self._summarise_related(self.closest_partner),
                 "follower": self._summarise_related(self.closest_follower),
+                "plant": self._summarise_plant(self.closest_plant),
             },
             "environment": {
                 "biome": getattr(self.current_biome, "name", None),
@@ -908,7 +944,23 @@ class Lifeform:
                 "group_strength": self.group_strength,
             },
             "behaviour": {
+                "diet": self.diet,
                 "foraging_focus": self._foraging_focus,
+                "foraging": {
+                    "is_foraging": self._foraging_focus,
+                    "feeding_frames": self._feeding_frames,
+                    "hunger": self.hunger,
+                    "seek_threshold": settings.HUNGER_SEEK_THRESHOLD,
+                    "relax_threshold": settings.HUNGER_RELAX_THRESHOLD,
+                    "energy_ratio": self.energy_now / max(1, self.energy),
+                    "meets_seek_threshold": self.hunger >= settings.HUNGER_SEEK_THRESHOLD,
+                    "below_energy_trigger": self.energy_now < self.energy * 0.45,
+                    "enemy_blocking": bool(
+                        self.closest_enemy and self.closest_enemy.health_now > 0
+                    ),
+                    "closest_plant": self._summarise_plant(self.closest_plant),
+                    "closest_prey": self._summarise_related(self.closest_prey),
+                },
             },
             "reproduction": {
                 "cooldown": self.reproduced_cooldown,
@@ -916,6 +968,11 @@ class Lifeform:
                 "parents": list(self.parent_ids),
             },
             "memory": memory_dump,
+            "development": {
+                "skin_stage": self.skin_stage,
+                "skin_label": describe_skin_stage(self.skin_stage).get("label"),
+                "features": list(self.development_features),
+            },
         }
 
         return snapshot
