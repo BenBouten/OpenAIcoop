@@ -281,6 +281,10 @@ class Lifeform:
             self._foraging_focus = False
             return False
 
+        if self.hunger <= settings.HUNGER_SATIATED_THRESHOLD:
+            self._foraging_focus = False
+            return False
+
         if self._foraging_focus and self.hunger <= settings.HUNGER_RELAX_THRESHOLD:
             self._foraging_focus = False
 
