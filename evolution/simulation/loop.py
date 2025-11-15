@@ -33,6 +33,7 @@ from ..rendering.camera import Camera
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.effects import EffectManager
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
+from ..rendering.lifeform_inspector import LifeformInspector
 from ..systems import stats as stats_system
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
@@ -480,6 +481,27 @@ def run() -> None:
         _build_slider_configs(),
     )
 
+    def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
+        if not lifeforms:
+            return None
+        screen_x, screen_y = position
+        world_x = camera.viewport.x + screen_x
+        world_y = camera.viewport.y + screen_y
+        best: Optional[Lifeform] = None
+        best_distance = float("inf")
+        for lifeform in lifeforms:
+            if lifeform.health_now <= 0:
+                continue
+            rect = lifeform.rect.inflate(6, 6)
+            if not rect.collidepoint(world_x, world_y):
+                continue
+            centerx, centery = lifeform.rect.center
+            distance = float((centerx - world_x) ** 2 + (centery - world_y) ** 2)
+            if distance < best_distance:
+                best_distance = distance
+                best = lifeform
+        return best
+
     # Wereld & camera
     world = World(
         settings.WORLD_WIDTH,
@@ -518,6 +540,7 @@ def run() -> None:
         state.world_type,
     )
     graph = Graph()
+    inspector = LifeformInspector(state, font2, font3)
 
     running = True
     starting_screen = True
@@ -756,12 +779,18 @@ def run() -> None:
                 player_controller.draw_overlay(screen, font2)
                 event_manager.draw(screen, font2)
 
+            if paused:
+                screen.blit(world_surface, (0, 0), area=camera.viewport)
+            inspector.draw_highlight(screen, camera)
             gameplay_panel.draw(screen)
+            inspector.draw(screen)
 
         pygame.display.flip()
 
         # Event handling
         for event in pygame.event.get():
+            if inspector.handle_event(event):
+                continue
             if gameplay_panel.handle_event(event):
                 continue
             if event.type == pygame.QUIT:
@@ -839,6 +868,7 @@ def run() -> None:
                             effects_manager,
                             state.world_type,
                         )
+                        inspector.clear()
                         _initialise_population()
                         start_time = datetime.datetime.now()
                         notification_manager.add("Simulatie gestart", settings.GREEN)
@@ -874,6 +904,7 @@ def run() -> None:
                             effects_manager,
                             state.world_type,
                         )
+                        inspector.clear()
                         latest_stats = None
                         notification_manager.add(
                             "Simulatie gereset",
@@ -886,5 +917,11 @@ def run() -> None:
                         show_dna_id = not show_dna_id
                     elif show_dna_info_button.collidepoint(event.pos):
                         show_dna_info = not show_dna_info
+                    else:
+                        selected_lifeform = _lifeform_at_screen_pos(event.pos)
+                        if selected_lifeform is not None:
+                            inspector.select(selected_lifeform)
+                        else:
+                            inspector.clear()
 
     pygame.quit()

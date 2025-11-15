@@ -48,6 +48,8 @@ def reset_simulation(
     state.death_ages.clear()
     state.dna_home_biome.clear()
     state.lifeform_id_counter = 0
+    state.selected_lifeform = None
+    state.last_debug_log_path = None
 
     if world_type is not None:
         world.set_world_type(world_type)

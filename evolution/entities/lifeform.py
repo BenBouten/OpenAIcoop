@@ -16,7 +16,7 @@ import logging
 import math
 import random
 from collections import deque
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple
 
 import pygame
 from pygame.math import Vector2
@@ -751,4 +751,103 @@ class Lifeform:
 
         if self.health_now > self.health:
             self.health_now = self.health
+
+    # ------------------------------------------------------------------
+    # Debug helpers
+    # ------------------------------------------------------------------
+
+    def _summarise_related(self, entity: Optional["Lifeform"]) -> Optional[Dict[str, Any]]:
+        if entity is None:
+            return None
+        summary: Dict[str, Any] = {
+            "id": getattr(entity, "id", None),
+            "dna_id": getattr(entity, "dna_id", None),
+            "health": getattr(entity, "health_now", None),
+            "position": (
+                getattr(entity, "x", None),
+                getattr(entity, "y", None),
+            ),
+        }
+        return summary
+
+    def debug_snapshot(self) -> Dict[str, Any]:
+        """Return a JSON-serialisable snapshot of the current lifeform state."""
+
+        memory_dump: Dict[str, List[Any]] = {}
+        for key, entries in self.memory.items():
+            formatted_entries: List[Any] = []
+            for entry in entries:
+                if isinstance(entry, dict):
+                    formatted_entries.append(dict(entry))
+                else:
+                    formatted_entries.append(str(entry))
+            memory_dump[key] = formatted_entries
+
+        snapshot: Dict[str, Any] = {
+            "id": self.id,
+            "dna_id": self.dna_id,
+            "generation": self.generation,
+            "position": (self.x, self.y),
+            "rect": (
+                self.rect.x,
+                self.rect.y,
+                self.rect.width,
+                self.rect.height,
+            ),
+            "velocity": (self.x_direction, self.y_direction),
+            "speed": self.speed,
+            "angle": self.angle,
+            "health": {
+                "current": self.health_now,
+                "max": self.health,
+                "wounded": self.wounded,
+            },
+            "energy": {
+                "current": self.energy_now,
+                "max": self.energy,
+            },
+            "hunger": self.hunger,
+            "age": self.age,
+            "longevity": self.longevity,
+            "maturity": self.maturity,
+            "combat": {
+                "attack_now": self.attack_power_now,
+                "attack_base": self.attack_power,
+                "defence_now": self.defence_power_now,
+                "defence_base": self.defence_power,
+            },
+            "morphology": {
+                "size": (self.width, self.height),
+                "base_size": (self.base_width, self.base_height),
+                "mass": self.mass,
+                "reach": self.reach,
+                "perception_rays": self.perception_rays,
+                "hearing_range": self.hearing_range,
+                "maintenance_cost": self.maintenance_cost,
+            },
+            "targets": {
+                "enemy": self._summarise_related(self.closest_enemy),
+                "prey": self._summarise_related(self.closest_prey),
+                "partner": self._summarise_related(self.closest_partner),
+                "follower": self._summarise_related(self.closest_follower),
+            },
+            "environment": {
+                "biome": getattr(self.current_biome, "name", None),
+                "effects": dict(self.environment_effects),
+            },
+            "social": {
+                "in_group": self.in_group,
+                "is_leader": self.is_leader,
+                "group_size": len(self.group_neighbors),
+                "group_strength": self.group_strength,
+            },
+            "reproduction": {
+                "cooldown": self.reproduced_cooldown,
+                "count": self.reproduced,
+                "parents": list(self.parent_ids),
+            },
+            "memory": memory_dump,
+        }
+
+        return snapshot
 
