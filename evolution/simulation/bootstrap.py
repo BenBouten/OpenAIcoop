@@ -109,6 +109,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             longevity_value = random.randint(1600, 5200)
             social_tendency = random.uniform(0.6, 1.0)
             risk_tolerance = random.uniform(0.1, 0.5)
+            restlessness_range = (0.18, 0.55)
         elif diet == "carnivore":
             attack_power = random.randint(45, 95)
             defence_power = random.randint(20, 65)
@@ -120,6 +121,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             longevity_value = random.randint(900, 3600)
             social_tendency = random.uniform(0.2, 0.6)
             risk_tolerance = random.uniform(0.6, 1.0)
+            restlessness_range = (0.55, 0.95)
         else:
             attack_power = random.randint(30, 85)
             defence_power = random.randint(25, 75)
@@ -131,8 +133,10 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             longevity_value = random.randint(1200, 4200)
             social_tendency = random.uniform(0.4, 0.85)
             risk_tolerance = random.uniform(0.4, 0.8)
+            restlessness_range = (0.32, 0.78)
 
         morphology = MorphologyGenotype.random()
+        restlessness = random.uniform(*restlessness_range)
 
         dna_profile = {
             "dna_id": dna_id,
@@ -156,6 +160,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "diet": diet,
             "social": social_tendency,
             "risk_tolerance": risk_tolerance,
+            "restlessness": restlessness,
             "morphology": morphology.to_dict(),
         }
         state.dna_profiles.append(dna_profile)

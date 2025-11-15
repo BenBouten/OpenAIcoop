@@ -26,6 +26,13 @@ _WANDER_CIRCLE_DISTANCE = 1.6
 _WANDER_CIRCLE_RADIUS = 1.2
 _WANDER_DRIFT_SPEED = 0.45  # rad/s
 _WANDER_DRIFT_STRENGTH = 0.35
+_WANDER_MOVE_MIN_DURATION = 0.8
+_WANDER_MOVE_MAX_DURATION = 2.6
+_WANDER_PAUSE_MIN_DURATION = 0.35
+_WANDER_PAUSE_MAX_DURATION = 1.8
+_PAUSE_TURN_SPEED_BASE = 1.15  # rad/s
+_PAUSE_SWAY_AMPLITUDE = 0.32  # rad
+_PAUSE_SWAY_FREQUENCY = 1.4
 _SEARCH_PROXIMITY_RADIUS = 8.0
 _SPEED_DRIFT_INTERVAL = 2.4
 _SPEED_DRIFT_LERP_RATE = 0.45
@@ -479,20 +486,124 @@ def _avoid_recent_positions(lifeform: "Lifeform", timestamp: int) -> Vector2:
     return repulsion.normalize() * 0.4
 
 
+def _ensure_wander_state(lifeform: "Lifeform") -> None:
+    if not hasattr(lifeform, "_wander_phase"):
+        lifeform._wander_phase = "move"
+        lifeform._wander_phase_timer = 0.0
+        lifeform._wander_phase_duration = _choose_wander_duration(lifeform, "move")
+        lifeform._wander_pause_speed_factor = 1.0
+        lifeform._voluntary_pause = False
+    elif lifeform._wander_phase_duration <= 0:
+        lifeform._wander_phase_duration = _choose_wander_duration(
+            lifeform, lifeform._wander_phase
+        )
+
+
+def _update_wander_phase(lifeform: "Lifeform", dt: float) -> None:
+    lifeform._wander_phase_timer += dt
+    if lifeform._wander_phase_timer < lifeform._wander_phase_duration:
+        return
+
+    next_phase = "pause" if lifeform._wander_phase == "move" else "move"
+    _set_wander_phase(lifeform, next_phase)
+
+
+def _set_wander_phase(lifeform: "Lifeform", phase: str) -> None:
+    lifeform._wander_phase = phase
+    lifeform._wander_phase_timer = 0.0
+    lifeform._wander_phase_duration = _choose_wander_duration(lifeform, phase)
+
+    if phase == "pause":
+        lifeform._wander_pause_speed_factor = _compute_pause_speed_factor(
+            lifeform, initial=True
+        )
+        lifeform._voluntary_pause = True
+    else:
+        lifeform._wander_pause_speed_factor = 1.0
+        lifeform._voluntary_pause = False
+        _apply_move_reorientation(lifeform)
+
+
+def _choose_wander_duration(lifeform: "Lifeform", phase: str) -> float:
+    restlessness = float(getattr(lifeform, "restlessness", 0.5))
+    restlessness = max(0.0, min(1.0, restlessness))
+    calmness = 1.0 - restlessness
+
+    if phase == "pause":
+        base = random.uniform(_WANDER_PAUSE_MIN_DURATION, _WANDER_PAUSE_MAX_DURATION)
+        modifier = 0.45 + calmness * 1.35
+        return max(_WANDER_PAUSE_MIN_DURATION * 0.5, base * modifier)
+
+    base = random.uniform(_WANDER_MOVE_MIN_DURATION, _WANDER_MOVE_MAX_DURATION)
+    modifier = 0.65 + calmness * 0.95
+    return max(_WANDER_MOVE_MIN_DURATION * 0.6, base * modifier)
+
+
+def _compute_pause_speed_factor(lifeform: "Lifeform", *, initial: bool = False) -> float:
+    restlessness = float(getattr(lifeform, "restlessness", 0.5))
+    restlessness = max(0.0, min(1.0, restlessness))
+    min_factor = max(0.05, 0.08 + restlessness * 0.24)
+    max_factor = min(0.65, 0.32 + restlessness * 0.4)
+    if initial:
+        return max(0.05, max_factor)
+
+    duration = max(0.001, getattr(lifeform, "_wander_phase_duration", 0.001))
+    progress = min(1.0, getattr(lifeform, "_wander_phase_timer", 0.0) / duration)
+    factor = max_factor * (1.0 - progress) + min_factor * progress
+    return max(0.05, factor)
+
+
+def _apply_move_reorientation(lifeform: "Lifeform") -> None:
+    restlessness = float(getattr(lifeform, "restlessness", 0.5))
+    restlessness = max(0.0, min(1.0, restlessness))
+    spread = 35.0 + 70.0 * restlessness
+    delta = math.radians(random.uniform(-spread, spread))
+
+    base_vector = Vector2(lifeform.wander_direction)
+    if base_vector.length_squared() == 0:
+        base_vector = Vector2(math.cos(lifeform._wander_theta), math.sin(lifeform._wander_theta))
+    if base_vector.length_squared() == 0:
+        base_vector = Vector2(1, 0)
+
+    heading = math.atan2(base_vector.y, base_vector.x)
+    lifeform._wander_theta = (heading + delta) % math.tau
+
+
 def _wander_vector(lifeform: "Lifeform", timestamp: int, dt: float) -> Vector2:
     if not hasattr(lifeform, "_wander_theta"):
         lifeform._wander_theta = random.uniform(0.0, math.tau)
     if not hasattr(lifeform, "_wander_drift_time"):
         lifeform._wander_drift_time = random.uniform(0.0, math.tau)
 
-    if timestamp - lifeform.last_wander_update > settings.WANDER_INTERVAL_MS:
-        jitter = math.radians(
-            random.uniform(
-                -settings.WANDER_JITTER_DEGREES, settings.WANDER_JITTER_DEGREES
-            )
-        )
+    _ensure_wander_state(lifeform)
+    _update_wander_phase(lifeform, dt)
+
+    restlessness = float(getattr(lifeform, "restlessness", 0.5))
+    restlessness = max(0.0, min(1.0, restlessness))
+    interval_scale = 1.2 - restlessness * 0.6
+
+    if timestamp - lifeform.last_wander_update > settings.WANDER_INTERVAL_MS * interval_scale:
+        jitter_range = settings.WANDER_JITTER_DEGREES * (0.55 + restlessness * 1.05)
+        jitter = math.radians(random.uniform(-jitter_range, jitter_range))
         lifeform._wander_theta = (lifeform._wander_theta + jitter) % math.tau
         lifeform.last_wander_update = timestamp
+
+    if lifeform._wander_phase == "pause":
+        lifeform._wander_pause_speed_factor = _compute_pause_speed_factor(lifeform)
+        lifeform._voluntary_pause = True
+        turn_rate = _PAUSE_TURN_SPEED_BASE * (0.65 + restlessness * 1.1)
+        lifeform._wander_theta = (lifeform._wander_theta + dt * turn_rate) % math.tau
+        sway = math.sin(
+            lifeform._wander_phase_timer * (_PAUSE_SWAY_FREQUENCY + restlessness * 0.6)
+        ) * _PAUSE_SWAY_AMPLITUDE
+        heading = lifeform._wander_theta + sway
+        look = Vector2(math.cos(heading), math.sin(heading))
+        if look.length_squared() == 0:
+            look = Vector2(1, 0)
+        return look.normalize()
+
+    lifeform._wander_pause_speed_factor = 1.0
+    lifeform._voluntary_pause = False
 
     forward = Vector2(lifeform.x_direction, lifeform.y_direction)
     if forward.length_squared() == 0:
@@ -506,11 +617,14 @@ def _wander_vector(lifeform: "Lifeform", timestamp: int, dt: float) -> Vector2:
         math.cos(lifeform._wander_theta), math.sin(lifeform._wander_theta)
     ) * _WANDER_CIRCLE_RADIUS
 
-    lifeform._wander_drift_time += dt * _WANDER_DRIFT_SPEED
+    drift_speed = _WANDER_DRIFT_SPEED * (0.65 + restlessness * 1.05)
+    drift_strength = _WANDER_DRIFT_STRENGTH * (0.6 + restlessness * 0.85)
+
+    lifeform._wander_drift_time += dt * drift_speed
     drift = Vector2(
         math.cos(lifeform._wander_drift_time),
         math.sin(lifeform._wander_drift_time),
-    ) * _WANDER_DRIFT_STRENGTH
+    ) * drift_strength
 
     wander = circle_center + wander_offset + drift
     if wander.length_squared() == 0:
@@ -523,7 +637,10 @@ def _wander_vector(lifeform: "Lifeform", timestamp: int, dt: float) -> Vector2:
 # Search-mode helpers
 # ---------------------------------------------------------
 def _ensure_speed_tracking(lifeform: "Lifeform") -> None:
+    pause_factor = getattr(lifeform, "_wander_pause_speed_factor", 1.0) or 1.0
     base_speed = float(lifeform.speed)
+    if pause_factor > 0:
+        base_speed /= pause_factor
     lifeform._dna_speed_reference = base_speed
     if not hasattr(lifeform, "_speed_drift_value"):
         lifeform._speed_drift_value = base_speed
@@ -576,12 +693,15 @@ def _apply_speed_drift(lifeform: "Lifeform", dt: float) -> None:
     ) * lerp_factor
 
     drifted = max(min_speed, min(max_speed, lifeform._speed_drift_value))
-    lifeform.speed = drifted
+    pause_factor = getattr(lifeform, "_wander_pause_speed_factor", 1.0) or 1.0
+    adjusted = max(0.05, min(14.0, drifted * pause_factor))
+    lifeform.speed = adjusted
 
 
 def _reset_speed_to_base(lifeform: "Lifeform") -> None:
     base = getattr(lifeform, "_dna_speed_reference", lifeform.speed)
-    lifeform.speed = base
+    pause_factor = getattr(lifeform, "_wander_pause_speed_factor", 1.0) or 1.0
+    lifeform.speed = max(0.05, min(14.0, base * pause_factor))
     if hasattr(lifeform, "_speed_drift_value"):
         lifeform._speed_drift_value = base
         lifeform._speed_drift_target = base

@@ -148,7 +148,9 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         lifeform.y - previous_position[1],
     )
 
-    if displacement.length() < 0.25:
+    if getattr(lifeform, "_voluntary_pause", False):
+        lifeform._stuck_frames = 0
+    elif displacement.length() < 0.25:
         lifeform._stuck_frames += 1
         if lifeform._stuck_frames == settings.STUCK_FRAMES_THRESHOLD:
             logger.warning(

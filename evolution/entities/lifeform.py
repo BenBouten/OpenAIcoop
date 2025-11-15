@@ -162,6 +162,10 @@ class Lifeform:
         self.diet = dna_profile.get("diet", "omnivore")
         self.social_tendency = float(dna_profile.get("social", 0.5))
         self.risk_tolerance = float(dna_profile.get("risk_tolerance", 0.5))
+        self.restlessness = float(dna_profile.get("restlessness", 0.5))
+        if not math.isfinite(self.restlessness):
+            self.restlessness = 0.5
+        self.restlessness = max(0.0, min(1.0, self.restlessness))
 
         # Local memory buffers
         self.memory: Dict[str, Deque[dict]] = {
@@ -177,10 +181,15 @@ class Lifeform:
             initial_wander = Vector2(1, 0)
         self.wander_direction = initial_wander.normalize()
         self.last_wander_update = 0
+        self._wander_phase = "move"
+        self._wander_phase_timer = 0.0
+        self._wander_phase_duration = 0.0
+        self._wander_pause_speed_factor = 1.0
         self._stuck_frames = 0
         self._boundary_contact_frames = 0
         self._escape_timer = 0
         self._escape_vector = Vector2()
+        self._voluntary_pause = False
 
     # ------------------------------------------------------------------
     # Convenience: access to global notification context via state
@@ -558,6 +567,10 @@ class Lifeform:
         base_speed /= max(0.75, self.mass)
 
         base_speed = max(0.45, min(14.0, base_speed))
+        pause_factor = getattr(self, "_wander_pause_speed_factor", 1.0)
+        base_speed *= pause_factor
+        base_speed = min(14.0, base_speed)
+        base_speed = max(0.05, base_speed)
         self.speed = base_speed
 
     def handle_death(self) -> bool:
