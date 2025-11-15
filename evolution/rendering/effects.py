@@ -169,6 +169,24 @@ class EffectManager:
     ) -> None:
         self.spawn_text(position, text, color=color)
 
+    def spawn_bite_label(
+        self,
+        position: Tuple[float, float],
+        text: str,
+        *,
+        color: Color = ENERGY_COLOR,
+    ) -> None:
+        """Spawn a snappy floating label for bite-related interactions."""
+
+        self.spawn_text(
+            position,
+            text,
+            color=color,
+            duration=1.4,
+            jitter=1.5,
+            upward_velocity=(-4.0, -14.0),
+        )
+
     def spawn_woohoo(self, position: Tuple[float, float]) -> None:
         self.spawn_status_label(position, "Woohoo!", color=BIRTH_COLOR)
         self.spawn_confetti(
