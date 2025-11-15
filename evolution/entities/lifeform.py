@@ -312,8 +312,40 @@ class Lifeform:
         energy_ratio = self.energy_now / max(1, self.energy)
         return energy_ratio >= settings.ENERGY_REPRODUCTION_THRESHOLD
 
-    def _plant_center(self, plant: "Vegetation") -> Tuple[float, float]:
-        return (plant.x + plant.width / 2, plant.y + plant.height / 2)
+    def plant_contact_point(self, plant: "Vegetation") -> Tuple[float, float]:
+        """Return the closest point on the plant's surface from our centre."""
+
+        if plant is None:
+            return (float(self.rect.centerx), float(self.rect.centery))
+
+        plant_rect = getattr(plant, "rect", None)
+        if plant_rect is None:
+            plant_rect = pygame.Rect(
+                int(plant.x),
+                int(plant.y),
+                int(getattr(plant, "width", 0)),
+                int(getattr(plant, "height", 0)),
+            )
+
+        center_x = float(self.rect.centerx)
+        center_y = float(self.rect.centery)
+
+        closest_x = max(plant_rect.left, min(center_x, plant_rect.right - 1))
+        closest_y = max(plant_rect.top, min(center_y, plant_rect.bottom - 1))
+        return (float(closest_x), float(closest_y))
+
+    def direction_to_plant(self, plant: "Vegetation") -> Tuple[Vector2, float]:
+        """Direction vector (from centre) and distance to the closest plant cell."""
+
+        if plant is None:
+            return Vector2(), 0.0
+
+        target_x, target_y = self.plant_contact_point(plant)
+        offset = Vector2(target_x - self.rect.centerx, target_y - self.rect.centery)
+        distance = offset.length()
+        if distance <= 0:
+            return Vector2(), 0.0
+        return offset.normalize(), distance
 
     # ------------------------------------------------------------------
     # Geometry helpers
@@ -334,13 +366,10 @@ class Lifeform:
         return math.sqrt(dx * dx + dy * dy)
 
     def distance_to_plant(self, plant) -> float:
-        """Return the center-to-center distance between the lifeform and a plant."""
+        """Return the minimal distance between our centre and the plant mass."""
 
-        center_x = plant.x + plant.width / 2
-        center_y = plant.y + plant.height / 2
-        dx = self.rect.centerx - center_x
-        dy = self.rect.centery - center_y
-        return math.sqrt(dx * dx + dy * dy)
+        _, distance = self.direction_to_plant(plant)
+        return distance
 
     def is_adult(self) -> bool:
         return self.age >= self.maturity
@@ -493,10 +522,9 @@ class Lifeform:
             if plant.resource <= 0:
                 continue
 
-            center_x = plant.x + plant.width / 2
-            center_y = plant.y + plant.height / 2
-            dx = center_x - self.rect.centerx
-            dy = center_y - self.rect.centery
+            contact_x, contact_y = self.plant_contact_point(plant)
+            dx = contact_x - self.rect.centerx
+            dy = contact_y - self.rect.centery
             distance_sq = float(dx * dx + dy * dy)
             if distance_sq > vision_sq:
                 continue
