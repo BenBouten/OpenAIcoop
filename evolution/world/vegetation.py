@@ -79,6 +79,16 @@ class ConsumptionSample:
     alive: bool
 
 
+@dataclass(slots=True)
+class ConsumptionOutcome:
+    """Aggregated effects applied after moss consumption."""
+
+    satiety_bonus: float = 0.0
+    health_delta: float = 0.0
+    energy_delta: float = 0.0
+    toxin_damage: float = 0.0
+
+
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return max(minimum, min(maximum, value))
 
@@ -265,7 +275,32 @@ class MossCluster:
 
         if eater is not None:
             center = eater.rect.center
-            removal_order.sort(key=lambda cell: _distance_sq_to_point(cell, center, self.CELL_SIZE))
+            removal_order.sort(
+                key=lambda cell: _distance_sq_to_point(cell, center, self.CELL_SIZE)
+            )
+
+            prioritized: List[GridCell] = []
+            bite_points = [
+                (eater.rect.centerx, eater.rect.centery),
+                (eater.rect.centerx, eater.rect.bottom - 1),
+                (eater.rect.centerx, eater.rect.top),
+                (eater.rect.left, eater.rect.centery),
+                (eater.rect.right - 1, eater.rect.centery),
+            ]
+            for px, py in bite_points:
+                gx = int(px) // self.CELL_SIZE
+                gy = int(py) // self.CELL_SIZE
+                candidate = (gx, gy)
+                if candidate in self.cells and candidate not in prioritized:
+                    prioritized.append(candidate)
+
+            if prioritized:
+                seen = set(prioritized)
+                for cell in removal_order:
+                    if cell not in seen:
+                        prioritized.append(cell)
+                        seen.add(cell)
+                removal_order = prioritized
         else:
             self._rng.shuffle(removal_order)
 
@@ -428,9 +463,9 @@ class MossCluster:
 
     def apply_effect(
         self, lifeform: "Lifeform", consumption: Sequence[ConsumptionSample]
-    ) -> float:
+    ) -> ConsumptionOutcome:
         if not consumption:
-            return 0.0
+            return ConsumptionOutcome()
 
         energy_gain = 0.0
         toxin_energy = 0.0
@@ -488,7 +523,12 @@ class MossCluster:
             elif soothing >= 1.0:
                 effects.spawn_status_label(anchor, "Soothing", color=(160, 220, 255))
 
-        return satiety_bonus
+        return ConsumptionOutcome(
+            satiety_bonus=satiety_bonus,
+            health_delta=health_delta,
+            energy_delta=net_energy,
+            toxin_damage=toxin_damage,
+        )
 
 def _distance_sq_to_point(cell: GridCell, point: Tuple[int, int], cell_size: int) -> float:
     cell_center = (
