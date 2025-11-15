@@ -290,6 +290,28 @@ class Lifeform:
     # ------------------------------------------------------------------
     # Target selection / groups
     # ------------------------------------------------------------------
+    def _is_close_family(self, other: "Lifeform") -> bool:
+        """Return True when the other lifeform is considered close family."""
+
+        if other is self:
+            return True
+
+        my_parents = getattr(self, "parent_ids", tuple())
+        other_parents = getattr(other, "parent_ids", tuple())
+
+        if other.id in my_parents or self.id in other_parents:
+            return True
+
+        if my_parents and other_parents and set(my_parents) & set(other_parents):
+            return True
+
+        my_signature = getattr(self, "family_signature", tuple())
+        other_signature = getattr(other, "family_signature", tuple())
+        if my_signature and my_signature == other_signature:
+            return True
+
+        return False
+
     def _can_partner_with(self, other: "Lifeform") -> bool:
         if other is self:
             return False
@@ -298,6 +320,8 @@ class Lifeform:
         if other.dna_id != self.dna_id:
             return False
         if not self.is_adult() or not other.is_adult():
+            return False
+        if self._is_close_family(other):
             return False
         return True
 
@@ -341,6 +365,9 @@ class Lifeform:
             if lifeform is self:
                 continue
             if lifeform.health_now <= 0:
+                continue
+
+            if self._is_close_family(lifeform):
                 continue
 
             dx = lifeform.rect.centerx - self.rect.centerx
