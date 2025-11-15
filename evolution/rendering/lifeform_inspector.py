@@ -465,7 +465,17 @@ class LifeformInspector:
             return relation, details
 
         last_recorded = getattr(lifeform, "last_activity", {})
-        if lifeform._feeding_frames > 0 or last_recorded.get("name") == "Eet plant":
+        now = pygame.time.get_ticks()
+        feeding_recently = lifeform._feeding_frames > 0
+        if not feeding_recently and last_recorded.get("name") == "Eet plant":
+            last_bite = int(last_recorded.get("timestamp", 0))
+            if (
+                lifeform.hunger > settings.HUNGER_SATIATED_THRESHOLD
+                and now - last_bite <= settings.FEEDING_ACTIVITY_MEMORY_MS
+            ):
+                feeding_recently = True
+
+        if feeding_recently:
             plant = getattr(lifeform, "closest_plant", None)
             if plant:
                 plant_center = (
@@ -478,7 +488,7 @@ class LifeformInspector:
                 )
                 details.append(f"Eet van plant op {distance:.1f}m")
             else:
-                details.append("Verwerkt voedsel uit voorraad")
+                details.append("Laatste hap verwerken")
             return "Eten", details
 
         prey = getattr(lifeform, "closest_prey", None)
