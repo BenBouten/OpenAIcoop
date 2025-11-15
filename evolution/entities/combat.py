@@ -150,7 +150,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         and lifeform.closest_enemy is None
         and lifeform.prefers_plants()
         and plant.resource > 0
-        and lifeform.distance_to(plant) < plant_range
+        and lifeform.distance_to_plant(plant) < plant_range
     ):
         if context:
             context.action(f"{lifeform.id} eet van een plant")
