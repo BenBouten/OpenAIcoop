@@ -87,6 +87,7 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
     )
 
     social = (parent.social_tendency + partner.social_tendency) / 2
+    boid = (getattr(parent, "boid_tendency", social) + getattr(partner, "boid_tendency", social)) / 2
     risk = (parent.risk_tolerance + partner.risk_tolerance) / 2
     restlessness = (parent.restlessness + partner.restlessness) / 2
 
@@ -115,6 +116,7 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
         "longevity": int((parent.longevity + partner.longevity) // 2),
         "diet": diet,
         "social": social,
+        "boid_tendency": boid,
         "risk_tolerance": risk,
         "restlessness": restlessness,
         "morphology": morphology.to_dict(),
@@ -151,6 +153,10 @@ def _apply_mutations(profile: Dict[str, object]) -> None:
         profile["longevity"] += random.randint(-120, 120)
     if random.randint(0, 100) < chance:
         profile["social"] += random.uniform(-0.08, 0.08)
+    if random.randint(0, 100) < chance:
+        profile["boid_tendency"] = profile.get("boid_tendency", profile.get("social", 0.5)) + random.uniform(
+            -0.08, 0.08
+        )
     if random.randint(0, 100) < chance:
         profile["risk_tolerance"] += random.uniform(-0.08, 0.08)
     if random.randint(0, 100) < chance:
@@ -189,6 +195,9 @@ def _clamp_profile(profile: Dict[str, object]) -> None:
     profile["energy"] = max(1, min(150, int(profile["energy"])) )
     profile["longevity"] = max(1, int(profile["longevity"]))
     profile["social"] = float(max(0.0, min(1.0, profile["social"])))
+    profile["boid_tendency"] = float(
+        max(0.0, min(1.0, profile.get("boid_tendency", profile["social"])) )
+    )
     profile["risk_tolerance"] = float(
         max(0.0, min(1.0, profile["risk_tolerance"]))
     )
