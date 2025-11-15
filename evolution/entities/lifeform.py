@@ -333,6 +333,15 @@ class Lifeform:
         dy = self.y - other.y
         return math.sqrt(dx * dx + dy * dy)
 
+    def distance_to_plant(self, plant) -> float:
+        """Return the center-to-center distance between the lifeform and a plant."""
+
+        center_x = plant.x + plant.width / 2
+        center_y = plant.y + plant.height / 2
+        dx = self.rect.centerx - center_x
+        dy = self.rect.centery - center_y
+        return math.sqrt(dx * dx + dy * dy)
+
     def is_adult(self) -> bool:
         return self.age >= self.maturity
 
