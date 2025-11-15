@@ -80,6 +80,10 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         (attempted_x, attempted_y),
     )
 
+    collision_type = None
+    if collided:
+        collision_type = "world"
+
     if not collided:
         plant_rect = lifeform.rect.copy()
         plant_rect.update(int(resolved_x), int(resolved_y), lifeform.width, lifeform.height)
@@ -87,25 +91,33 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
             if plant.blocks_rect(plant_rect):
                 collided = True
                 resolved_x, resolved_y = previous_position
+                collision_type = "plant"
                 break
 
     # --------------------------------------------------
     # 3. Collisions / boundaries / escape-logica
     # --------------------------------------------------
-    if collided:
-        lifeform.x_direction = -lifeform.x_direction
-        lifeform.y_direction = -lifeform.y_direction
+    blocked_by_plant = collision_type == "plant"
 
-        # ⬇️ NIEUW: alleen een nieuwe escape starten als we NIET al in escape-modus zitten
-        if lifeform._escape_timer == 0:
-            logger.warning(
-                "Lifeform %s collided with obstacle at (%.1f, %.1f)",
-                lifeform.id,
-                resolved_x,
-                resolved_y,
-            )
-            lifeform._trigger_escape_manoeuvre("collision")
-            lifeform._boundary_contact_frames = 0
+    if collided:
+        if blocked_by_plant:
+            # Zacht tegen een plant botsen: blijf staan zodat eten mogelijk is,
+            # maar zie de plant wél als obstakel zodat we er niet doorheen lopen.
+            lifeform._stuck_frames = 0
+        else:
+            lifeform.x_direction = -lifeform.x_direction
+            lifeform.y_direction = -lifeform.y_direction
+
+            # ⬇️ NIEUW: alleen een nieuwe escape starten als we NIET al in escape-modus zitten
+            if lifeform._escape_timer == 0:
+                logger.warning(
+                    "Lifeform %s collided with obstacle at (%.1f, %.1f)",
+                    lifeform.id,
+                    resolved_x,
+                    resolved_y,
+                )
+                lifeform._trigger_escape_manoeuvre("collision")
+                lifeform._boundary_contact_frames = 0
 
 
     else:
@@ -148,7 +160,7 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         lifeform.y - previous_position[1],
     )
 
-    if getattr(lifeform, "_voluntary_pause", False):
+    if getattr(lifeform, "_voluntary_pause", False) or blocked_by_plant:
         lifeform._stuck_frames = 0
     elif displacement.length() < 0.25:
         lifeform._stuck_frames += 1
