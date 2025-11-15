@@ -470,6 +470,24 @@ class MossCluster:
         if toxin_damage > 0:
             lifeform.wounded += toxin_damage * 0.1
 
+        effects = lifeform.effects_manager
+        if effects:
+            anchor = (lifeform.x + lifeform.width / 2, lifeform.y - 16)
+            if health_delta >= 1.0:
+                effects.spawn_heal_label(anchor, health_delta)
+            elif health_delta <= -1.0:
+                effects.spawn_damage_label(anchor, -health_delta, color=(255, 140, 180))
+
+            if net_energy >= 3.0:
+                effects.spawn_energy_label(anchor, net_energy)
+            elif net_energy <= -3.0:
+                effects.spawn_status_label(anchor, "Sluggish", color=(180, 160, 255))
+
+            if toxin_damage >= 1.0:
+                effects.spawn_status_label(anchor, "Toxic!", color=(200, 120, 220))
+            elif soothing >= 1.0:
+                effects.spawn_status_label(anchor, "Soothing", color=(160, 220, 255))
+
         return satiety_bonus
 
 def _distance_sq_to_point(cell: GridCell, point: Tuple[int, int], cell_size: int) -> float:

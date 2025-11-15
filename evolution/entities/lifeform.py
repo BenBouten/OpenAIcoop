@@ -159,6 +159,10 @@ class Lifeform:
     def notification_context(self):
         return getattr(self.state, "notification_context", None)
 
+    @property
+    def effects_manager(self):
+        return getattr(self.state, "effects", None)
+
     def _trigger_escape_manoeuvre(self, reason: str) -> None:
         escape = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
         if escape.length_squared() == 0:
@@ -455,6 +459,11 @@ class Lifeform:
             self.energy_now,
         )
 
+        effects = self.effects_manager
+        if effects:
+            center_x = self.x + self.width / 2
+            effects.spawn_death((center_x, self.y - 12))
+
         if self in self.state.lifeforms:
             self.state.lifeforms.remove(self)
         self.state.death_ages.append(self.age)
@@ -548,6 +557,11 @@ class Lifeform:
         context = self.notification_context
         if context:
             context.action(f"Nieuwe levensvorm geboren uit {self.id}")
+
+        effects = self.effects_manager
+        if effects:
+            center_x = self.x + self.width / 2
+            effects.spawn_birth((center_x, self.y - 16))
 
         logger.info(
             "Lifeform %s reproduced with %s producing %s at (%.1f, %.1f) [dna %s]",
