@@ -12,6 +12,7 @@ from typing import List, Optional, Tuple, TYPE_CHECKING
 import pygame
 
 from ..config import settings
+from ..dna.development import describe_feature, describe_skin_stage
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from ..entities.lifeform import Lifeform
@@ -257,6 +258,13 @@ class LifeformInspector:
             "Honger",
             f"{lifeform.hunger:.0f}",
             "hunger",
+        )
+        stats_y_left = _render_stat(
+            stats_left_x,
+            stats_y_left,
+            "Dieet",
+            self._format_diet_value(lifeform),
+            "diet",
         )
         stats_y_left = _render_stat(
             stats_left_x,
@@ -571,8 +579,43 @@ class LifeformInspector:
                 f"Perceptiestralen: {lifeform.perception_rays}",
                 f"Hoorbereik: {lifeform.hearing_range:.1f}",
             ],
+            "diet": self._diet_breakdown(lifeform),
         }
         return tips
+
+    def _format_diet_value(self, lifeform: "Lifeform") -> str:
+        labels = {
+            "herbivore": "Herbivoor",
+            "omnivore": "Omnivoor",
+            "carnivore": "Carnivoor",
+        }
+        label = labels.get(lifeform.diet, lifeform.diet.title())
+        features = len(lifeform.development_features)
+        if features:
+            return f"{label} (+{features} mutaties)"
+        return label
+
+    def _diet_breakdown(self, lifeform: "Lifeform") -> List[str]:
+        lines = [f"Voorkeur: {self._format_diet_value(lifeform)}"]
+        lines.append(f"Huidige honger: {lifeform.hunger:.1f}")
+        lines.append(f"Zoekdrempel: {settings.HUNGER_SEEK_THRESHOLD}")
+        lines.append(f"Ontspan-drempel: {settings.HUNGER_RELAX_THRESHOLD}")
+        if lifeform.is_foraging:
+            lines.append("Status: actief op zoek naar voedsel")
+        else:
+            lines.append("Status: geen actief zoekgedrag")
+        stage_info = describe_skin_stage(lifeform.skin_stage)
+        lines.append(
+            f"Huidfase: {stage_info['label']} – {stage_info['description']}"
+        )
+        if lifeform.development_features:
+            lines.append("Ontwikkelde kenmerken:")
+            for feature_id in lifeform.development_features:
+                info = describe_feature(feature_id)
+                lines.append(f"• {info['label']}: {info['description']}")
+        else:
+            lines.append("Nog geen speciale kenmerken ontgrendeld.")
+        return lines
 
     def _attack_breakdown(self, lifeform: "Lifeform") -> List[str]:
         lines: List[str] = [f"Basis DNA: {lifeform.attack_power:.2f}"]

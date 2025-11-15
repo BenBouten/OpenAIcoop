@@ -7,6 +7,7 @@ import random
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
+from ..dna.development import generate_development_plan
 from ..entities.lifeform import Lifeform
 from ..morphology.genotype import MorphologyGenotype
 from ..world.vegetation import MossCluster, create_initial_clusters
@@ -136,6 +137,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             restlessness_range = (0.32, 0.78)
 
         morphology = MorphologyGenotype.random()
+        development = generate_development_plan(diet)
         restlessness = random.uniform(*restlessness_range)
 
         dna_profile = {
@@ -162,6 +164,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "risk_tolerance": risk_tolerance,
             "restlessness": restlessness,
             "morphology": morphology.to_dict(),
+            "development": development,
         }
         state.dna_profiles.append(dna_profile)
 
