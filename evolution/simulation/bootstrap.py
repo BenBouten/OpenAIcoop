@@ -8,6 +8,7 @@ from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
 from ..entities.lifeform import Lifeform
+from ..morphology.genotype import MorphologyGenotype
 from ..world.vegetation import MossCluster, create_initial_clusters
 from ..world.world import BiomeRegion, World
 from .state import SimulationState
@@ -129,6 +130,8 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             social_tendency = random.uniform(0.4, 0.85)
             risk_tolerance = random.uniform(0.4, 0.8)
 
+        morphology = MorphologyGenotype.random()
+
         dna_profile = {
             "dna_id": dna_id,
             "width": random.randint(settings.MIN_WIDTH, settings.MAX_WIDTH),
@@ -151,6 +154,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "diet": diet,
             "social": social_tendency,
             "risk_tolerance": risk_tolerance,
+            "morphology": morphology.to_dict(),
         }
         state.dna_profiles.append(dna_profile)
 

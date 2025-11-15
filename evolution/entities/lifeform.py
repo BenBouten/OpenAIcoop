@@ -22,6 +22,7 @@ import pygame
 from pygame.math import Vector2
 
 from ..config import settings
+from ..morphology import MorphologyGenotype, MorphStats, compute_morph_stats
 from ..simulation.state import SimulationState
 from ..world.world import BiomeRegion
 from . import reproduction
@@ -49,15 +50,44 @@ class Lifeform:
 
         # Core DNA / stats
         self.dna_id = dna_profile["dna_id"]
-        self.width = dna_profile["width"]
-        self.height = dna_profile["height"]
-        self.color = dna_profile["color"]
-        self.health = dna_profile["health"]
-        self.maturity = dna_profile["maturity"]
-        self.vision = dna_profile["vision"]
-        self.energy = dna_profile["energy"]
-        self.longevity = dna_profile["longevity"]
+        self.base_width = int(dna_profile["width"])
+        self.base_height = int(dna_profile["height"])
+        base_color = tuple(int(c) for c in dna_profile["color"])
+        self.health = int(dna_profile["health"])
+        self.maturity = int(dna_profile["maturity"])
+        self.vision = float(dna_profile["vision"])
+        self.energy = int(dna_profile["energy"])
+        self.longevity = int(dna_profile["longevity"])
         self.generation = generation
+        self.morphology: MorphologyGenotype = MorphologyGenotype.from_mapping(
+            dna_profile.get("morphology", {})
+        )
+        self.morph_stats: MorphStats = compute_morph_stats(
+            self.morphology, (self.base_width, self.base_height)
+        )
+        self.body_color = self._apply_pigment(base_color, self.morph_stats.pigment_tint)
+        self.color = self.body_color
+
+        scaled_width = int(round(self.base_width * self.morph_stats.collision_scale))
+        scaled_height = int(round(self.base_height * self.morph_stats.collision_scale))
+        self.width = max(1, scaled_width)
+        self.height = max(1, scaled_height)
+
+        adjusted_vision = self.vision + self.morph_stats.vision_range_bonus
+        self.vision = max(
+            float(settings.VISION_MIN),
+            min(float(settings.VISION_MAX), adjusted_vision),
+        )
+        self.sensory_range = self.vision
+        self.perception_rays = self.morph_stats.perception_rays
+        self.hearing_range = self.morph_stats.hearing_range
+        self.mass = self.morph_stats.mass
+        self.reach = self.morph_stats.reach
+        self.maintenance_cost = self.morph_stats.maintenance_cost
+        self.speed_multiplier = self.morph_stats.ground_speed_multiplier
+        self.traction_multiplier = self.morph_stats.traction
+        self.turn_rate = max(0.05, self.morph_stats.turn_rate)
+        self.fov_threshold = self.morph_stats.fov_cosine_threshold
 
         self.parent_ids: Tuple[str, ...] = tuple(parents or ())
         self.family_signature: Tuple[str, ...] = (
@@ -76,7 +106,7 @@ class Lifeform:
         self.size = 0.0
         self.speed = 0.0
         self.angle = 0.0
-        self.angular_velocity = 0.1
+        self.angular_velocity = max(0.05, self.turn_rate * 0.85)
 
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
@@ -162,6 +192,16 @@ class Lifeform:
     @property
     def effects_manager(self):
         return getattr(self.state, "effects", None)
+
+    def _apply_pigment(
+        self, base_color: Tuple[int, int, int], tint: Tuple[float, float, float]
+    ) -> Tuple[int, int, int]:
+        """Apply a pigment tint multiplier to ``base_color``."""
+
+        red = int(max(0, min(255, base_color[0] * tint[0])))
+        green = int(max(0, min(255, base_color[1] * tint[1])))
+        blue = int(max(0, min(255, base_color[2] * tint[2])))
+        return red, green, blue
 
     def _trigger_escape_manoeuvre(self, reason: str) -> None:
         escape = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
@@ -262,7 +302,8 @@ class Lifeform:
         return True
 
     def update_targets(self) -> None:
-        vision_range = max(0, self.vision)
+        self.sensory_range = max(0.0, float(self.vision))
+        vision_range = self.sensory_range
         if vision_range <= 0:
             self.closest_enemy = None
             self.closest_prey = None
@@ -272,6 +313,17 @@ class Lifeform:
             return
 
         vision_sq = vision_range * vision_range
+        hearing_range = vision_range + max(0.0, self.hearing_range)
+        hearing_sq = max(vision_sq, hearing_range * hearing_range)
+        close_range = self.reach + max(self.width, self.height) * 0.5
+        close_range_sq = max(9.0, close_range * close_range)
+        forward = Vector2(self.x_direction, self.y_direction)
+        if forward.length_squared() == 0:
+            forward = Vector2(1, 0)
+        else:
+            forward = forward.normalize()
+        threshold = max(0.05, min(0.95, self.fov_threshold))
+        threshold_sq = threshold * threshold
 
         enemy_candidate = None
         prey_candidate = None
@@ -291,16 +343,38 @@ class Lifeform:
             if lifeform.health_now <= 0:
                 continue
 
-            distance_sq = self._distance_squared_to_lifeform(lifeform)
-            if distance_sq > vision_sq:
+            dx = lifeform.rect.centerx - self.rect.centerx
+            dy = lifeform.rect.centery - self.rect.centery
+            distance_sq = float(dx * dx + dy * dy)
+            if distance_sq > hearing_sq:
+                continue
+
+            in_close = distance_sq <= close_range_sq
+            in_vision = distance_sq <= vision_sq
+            fov_ok = in_close
+            if not fov_ok and in_vision:
+                if distance_sq <= 1e-6:
+                    fov_ok = True
+                else:
+                    dot = forward.x * dx + forward.y * dy
+                    if dot > 0 and dot * dot >= threshold_sq * distance_sq:
+                        fov_ok = True
+
+            enemy_heard = False
+            if not fov_ok and lifeform.attack_power_now > self.defence_power_now:
+                enemy_heard = True
+
+            if not in_vision and not enemy_heard:
                 continue
 
             if not self.is_leader and lifeform.is_leader and distance_sq < follower_distance:
+                if not fov_ok and not in_close:
+                    continue
                 follower_candidate = lifeform
                 follower_distance = distance_sq
 
             if self._can_partner_with(lifeform):
-                if distance_sq < partner_distance:
+                if fov_ok and distance_sq < partner_distance:
                     partner_candidate = lifeform
                     partner_distance = distance_sq
                 continue
@@ -310,13 +384,13 @@ class Lifeform:
                 continue
 
             if lifeform.attack_power_now > self.defence_power_now:
-                if distance_sq < enemy_distance:
+                if (fov_ok or enemy_heard) and distance_sq < enemy_distance:
                     enemy_candidate = lifeform
                     enemy_distance = distance_sq
                 continue
 
             if lifeform.attack_power_now < self.defence_power_now:
-                if distance_sq < prey_distance:
+                if fov_ok and distance_sq < prey_distance:
                     prey_candidate = lifeform
                     prey_distance = distance_sq
 
@@ -326,9 +400,19 @@ class Lifeform:
 
             center_x = plant.x + plant.width / 2
             center_y = plant.y + plant.height / 2
-            distance_sq = self._distance_squared_to_point(center_x, center_y)
+            dx = center_x - self.rect.centerx
+            dy = center_y - self.rect.centery
+            distance_sq = float(dx * dx + dy * dy)
             if distance_sq > vision_sq:
                 continue
+            in_close = distance_sq <= close_range_sq
+            if not in_close:
+                if distance_sq <= 1e-6:
+                    pass
+                else:
+                    dot = forward.x * dx + forward.y * dy
+                    if not (dot > 0 and dot * dot >= threshold_sq * distance_sq):
+                        continue
             if distance_sq < plant_distance:
                 plant_candidate = plant
                 plant_distance = distance_sq
@@ -340,7 +424,7 @@ class Lifeform:
         self.closest_plant = plant_candidate
 
     def set_size(self) -> None:
-        self.size = self.width * self.height
+        self.size = self.width * self.height * max(0.5, self.mass)
         if self.width < 1:
             self.width = 1
         if self.height < 1:
@@ -408,11 +492,15 @@ class Lifeform:
     # Stats / combat / lifecycle
     # ------------------------------------------------------------------
     def set_speed(self, average_maturity: Optional[float] = None) -> None:
-        self.speed = 6 - (self.hunger / 500) - (self.age / 1000) - (self.size / 250) - (
-            self.wounded / 20
+        base_speed = (
+            6
+            - (self.hunger / 500)
+            - (self.age / 1000)
+            - (self.size / 250)
+            - (self.wounded / 20)
         )
-        self.speed += self.health_now / 200
-        self.speed += self.energy / 100
+        base_speed += self.health_now / 200
+        base_speed += self.energy / 100
 
         biome, effects = self.state.world.get_environment_context(
             self.x + self.width / 2,
@@ -420,13 +508,13 @@ class Lifeform:
         )
         self.current_biome = biome
         self.environment_effects = effects
-        self.speed *= float(effects["movement"])
+        base_speed *= float(effects["movement"])
 
         for plant in self.state.plants:
             if plant.resource <= 0:
                 continue
             if plant.contains_point(self.rect.centerx, self.rect.centery):
-                self.speed *= plant.movement_modifier_for(self)
+                base_speed *= plant.movement_modifier_for(self)
                 break
 
         if self.age < self.maturity:
@@ -436,12 +524,14 @@ class Lifeform:
                 )
             if average_maturity:
                 factor = self.maturity / average_maturity
-                self.speed *= factor / 10
+                base_speed *= factor / 10
 
-        if self.speed < 1:
-            self.speed = 1
-        if self.speed > 12:
-            self.speed = 12
+        base_speed *= self.speed_multiplier
+        base_speed *= self.traction_multiplier
+        base_speed /= max(0.75, self.mass)
+
+        base_speed = max(0.45, min(14.0, base_speed))
+        self.speed = base_speed
 
     def handle_death(self) -> bool:
         if self.health_now > 0:
@@ -484,6 +574,9 @@ class Lifeform:
         self.attack_power_now += (self.size - 50) * 0.8
         self.attack_power_now -= self.hunger * 0.1
         self.attack_power_now *= self.calculate_age_factor()
+        mass_bonus = 1.0 + (self.mass - 1.0) * 0.12
+        reach_bonus = 1.0 + (self.reach - 4.0) * 0.03
+        self.attack_power_now *= max(0.4, mass_bonus * reach_bonus)
 
         if self.attack_power_now < 1:
             self.attack_power_now = 1
@@ -496,6 +589,9 @@ class Lifeform:
         self.defence_power_now += (self.size - 50) * 0.8
         self.defence_power_now -= self.hunger * 0.1
         self.defence_power_now *= self.calculate_age_factor()
+        defence_bonus = 1.0 + (self.traction_multiplier - 1.0) * 0.25
+        defence_bonus *= 1.0 + (self.mass - 1.0) * 0.08
+        self.defence_power_now *= max(0.4, defence_bonus)
 
         if self.defence_power_now < 1:
             self.defence_power_now = 1
@@ -588,6 +684,7 @@ class Lifeform:
         hunger_rate = self.state.environment_modifiers.get(
             "hunger_rate", 1.0
         ) * float(effects["hunger"])
+        hunger_rate *= 1.0 + (self.mass - 1.0) * 0.04
         self.hunger += hunger_rate * settings.HUNGER_RATE_PER_SECOND * delta_time
         self.age += settings.AGE_RATE_PER_SECOND * delta_time
         self.energy_now += (
@@ -595,6 +692,8 @@ class Lifeform:
             * delta_time
             * float(effects["energy"])
         )
+        maintenance = self.maintenance_cost * (0.85 + 0.15 * self.mass)
+        self.energy_now -= maintenance * delta_time
         self.wounded -= settings.WOUND_HEAL_PER_SECOND * delta_time
         self.health_now += float(effects["health"]) * delta_time
 

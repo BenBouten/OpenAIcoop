@@ -20,7 +20,8 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         return (entity.x + entity.width / 2, entity.y - 10)
 
     enemy = lifeform.closest_enemy
-    if enemy and enemy.health_now > 0 and lifeform.distance_to(enemy) < 5:
+    enemy_reach = max(2.5, lifeform.reach)
+    if enemy and enemy.health_now > 0 and lifeform.distance_to(enemy) < enemy_reach:
         damage = max(1, lifeform.attack_power_now - enemy.defence_power_now / 2)
         enemy.health_now -= damage
         enemy.wounded += 2
@@ -39,29 +40,31 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                 count=10,
                 strength=18,
             )
-            if enemy.health_now <= 0:
-                effects.spawn_status_label(
-                    enemy_anchor,
-            effects.spawn_damage_label(_lifeform_anchor(enemy), damage)
             effects.spawn_bite_label(
-                _lifeform_anchor(lifeform),
+                lifeform_anchor,
                 "Chomp!",
                 color=(255, 180, 120),
             )
             if enemy.health_now <= 0:
+                effects.spawn_status_label(
+                    enemy_anchor,
+                    "KO!",
+                    color=(255, 220, 120),
+                )
                 effects.spawn_bite_label(
-                    _lifeform_anchor(enemy),
+                    enemy_anchor,
                     "KO!",
                     color=(255, 220, 120),
                 )
 
     prey = lifeform.closest_prey
+    prey_reach = max(3.0, lifeform.reach)
     if (
         prey
         and prey.health_now > 0
         and lifeform.closest_enemy is None
         and lifeform.prefers_meat()
-        and lifeform.distance_to(prey) < 5
+        and lifeform.distance_to(prey) < prey_reach
     ):
         damage = max(1, lifeform.attack_power_now - prey.defence_power_now / 2)
         prey.health_now -= damage
@@ -84,29 +87,31 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                 count=12,
                 strength=20,
             )
-            if prey.health_now <= 0:
-                effects.spawn_status_label(
-                    prey_anchor,
-            effects.spawn_damage_label(_lifeform_anchor(prey), damage)
             effects.spawn_bite_label(
-                _lifeform_anchor(lifeform),
+                lifeform_anchor,
                 "Chomp!",
                 color=(255, 200, 160),
             )
             if prey.health_now <= 0:
+                effects.spawn_status_label(
+                    prey_anchor,
+                    "KO!",
+                    color=(255, 240, 150),
+                )
                 effects.spawn_bite_label(
-                    _lifeform_anchor(prey),
+                    prey_anchor,
                     "KO!",
                     color=(255, 240, 150),
                 )
 
     partner = lifeform.closest_partner
+    partner_range = max(3.0, lifeform.reach * 0.6)
     if (
         partner
         and partner.health_now > 0
         and partner.hunger < settings.HUNGER_CRITICAL_THRESHOLD
         and lifeform.can_reproduce()
-        and lifeform.distance_to(partner) < 3
+        and lifeform.distance_to(partner) < partner_range
     ):
         reproduced = lifeform.reproduce(partner)
         if reproduced and effects:
@@ -117,12 +122,13 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
             effects.spawn_woohoo((midpoint_x, midpoint_y))
 
     plant = lifeform.closest_plant
+    plant_range = max(3.0, lifeform.reach * 0.5)
     if (
         plant
         and lifeform.closest_enemy is None
         and lifeform.prefers_plants()
         and plant.resource > 10
-        and lifeform.distance_to(plant) < 3
+        and lifeform.distance_to(plant) < plant_range
     ):
         if context:
             context.action(f"{lifeform.id} eet van een plant")

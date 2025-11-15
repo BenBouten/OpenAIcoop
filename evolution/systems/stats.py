@@ -27,6 +27,11 @@ def collect_population_stats(
         "average_maturity": 0.0,
         "average_speed": 0.0,
         "average_cooldown": 0.0,
+        "average_mass": 0.0,
+        "average_reach": 0.0,
+        "average_maintenance_cost": 0.0,
+        "average_perception_rays": 0.0,
+        "average_hearing_range": 0.0,
         "death_age_avg": sum(death_ages) / len(death_ages) if death_ages else 0.0,
         "dna_count": {},
         "dna_attribute_averages": {},
@@ -44,6 +49,11 @@ def collect_population_stats(
             "maturity": 0.0,
             "speed": 0.0,
             "reproduced_cooldown": 0.0,
+            "mass": 0.0,
+            "reach": 0.0,
+            "maintenance": 0.0,
+            "perception_rays": 0.0,
+            "hearing_range": 0.0,
         }
         dna_attributes = [
             "health",
@@ -55,6 +65,11 @@ def collect_population_stats(
             "size",
             "longevity",
             "energy",
+            "mass",
+            "reach",
+            "perception_rays",
+            "maintenance_cost",
+            "hearing_range",
         ]
         dna_totals: Dict[int, Dict[str, float]] = {}
 
@@ -68,6 +83,11 @@ def collect_population_stats(
             totals["maturity"] += lifeform.maturity
             totals["speed"] += lifeform.speed
             totals["reproduced_cooldown"] += lifeform.reproduced_cooldown
+            totals["mass"] += getattr(lifeform, "mass", 1.0)
+            totals["reach"] += getattr(lifeform, "reach", 4.0)
+            totals["maintenance"] += getattr(lifeform, "maintenance_cost", 0.0)
+            totals["perception_rays"] += getattr(lifeform, "perception_rays", 0.0)
+            totals["hearing_range"] += getattr(lifeform, "hearing_range", 0.0)
 
             dna_entry = dna_totals.setdefault(
                 lifeform.dna_id,
@@ -86,6 +106,11 @@ def collect_population_stats(
         stats["average_maturity"] = totals["maturity"] / count
         stats["average_speed"] = totals["speed"] / count
         stats["average_cooldown"] = totals["reproduced_cooldown"] / count
+        stats["average_mass"] = totals["mass"] / count
+        stats["average_reach"] = totals["reach"] / count
+        stats["average_maintenance_cost"] = totals["maintenance"] / count
+        stats["average_perception_rays"] = totals["perception_rays"] / count
+        stats["average_hearing_range"] = totals["hearing_range"] / count
         stats["dna_count"] = {
             int(dna_id): int(data["count"]) for dna_id, data in dna_totals.items()
         }

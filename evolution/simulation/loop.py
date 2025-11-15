@@ -233,6 +233,11 @@ def draw_stats_panel(
         f"Average age of dying: {int(stats['death_age_avg'])}",
         f"Average maturity age: {int(stats['average_maturity'])}",
         f"Average speed: {round(stats['average_speed'], 2)}",
+        f"Average mass: {round(stats['average_mass'], 2)}",
+        f"Average reach: {round(stats['average_reach'], 2)}",
+        f"Average maintenance cost: {round(stats['average_maintenance_cost'], 3)}",
+        f"Average sensory rays: {round(stats['average_perception_rays'], 1)}",
+        f"Average hearing range: {round(stats['average_hearing_range'], 1)}",
         f"Average reproduction cooldown: {round(stats['average_cooldown'])}",
         f"Total of DNA id's: {len(dna_profiles)}",
         "Alive lifeforms: ",
@@ -271,6 +276,11 @@ def draw_stats_panel(
                     "size",
                     "longevity",
                     "energy",
+                    "mass",
+                    "reach",
+                    "perception_rays",
+                    "maintenance_cost",
+                    "hearing_range",
                 ]:
                     attribute_value = averages.get(attribute)
                     if attribute_value is not None:
