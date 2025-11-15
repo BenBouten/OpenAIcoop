@@ -495,6 +495,7 @@ def run() -> None:
     event_manager = EventManager(notification_manager, environment_modifiers)
     player_controller = PlayerController(notification_manager, dna_profiles, lifeforms)
     effects_manager = EffectManager()
+    effects_manager.set_font(font2)
 
     bootstrap.reset_simulation(
         state,

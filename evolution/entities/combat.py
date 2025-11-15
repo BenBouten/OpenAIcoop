@@ -25,6 +25,23 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         enemy.health_now -= damage
         enemy.wounded += 2
         if effects:
+            enemy_anchor = _lifeform_anchor(enemy)
+            lifeform_anchor = _lifeform_anchor(lifeform)
+            effects.spawn_damage_label(enemy_anchor, damage)
+            effects.spawn_status_label(
+                lifeform_anchor,
+                "Chomp!",
+                color=(255, 180, 120),
+            )
+            effects.spawn_confetti(
+                lifeform_anchor,
+                palette=[(255, 180, 120), (255, 210, 150), (255, 150, 150)],
+                count=10,
+                strength=18,
+            )
+            if enemy.health_now <= 0:
+                effects.spawn_status_label(
+                    enemy_anchor,
             effects.spawn_damage_label(_lifeform_anchor(enemy), damage)
             effects.spawn_bite_label(
                 _lifeform_anchor(lifeform),
@@ -53,6 +70,23 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         if context:
             context.action(f"{lifeform.id} valt {prey.id} aan")
         if effects:
+            prey_anchor = _lifeform_anchor(prey)
+            lifeform_anchor = _lifeform_anchor(lifeform)
+            effects.spawn_damage_label(prey_anchor, damage)
+            effects.spawn_status_label(
+                lifeform_anchor,
+                "Chomp!",
+                color=(255, 200, 160),
+            )
+            effects.spawn_confetti(
+                lifeform_anchor,
+                palette=[(255, 200, 160), (255, 220, 190), (255, 160, 120)],
+                count=12,
+                strength=20,
+            )
+            if prey.health_now <= 0:
+                effects.spawn_status_label(
+                    prey_anchor,
             effects.spawn_damage_label(_lifeform_anchor(prey), damage)
             effects.spawn_bite_label(
                 _lifeform_anchor(lifeform),
@@ -105,6 +139,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
             if effects:
                 anchor = _lifeform_anchor(lifeform)
                 bite_text = f"+{int(round(hunger_reduction))}"
+                effects.spawn_status_label(anchor, bite_text, color=(120, 220, 160))
                 effects.spawn_bite_label(anchor, bite_text)
                 plant_center = (
                     plant.x + plant.width / 2,

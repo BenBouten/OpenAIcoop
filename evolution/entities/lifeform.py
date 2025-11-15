@@ -459,6 +459,11 @@ class Lifeform:
             self.energy_now,
         )
 
+        effects = self.effects_manager
+        if effects:
+            center_x = self.x + self.width / 2
+            effects.spawn_death((center_x, self.y - 12))
+
         if self in self.state.lifeforms:
             self.state.lifeforms.remove(self)
         self.state.death_ages.append(self.age)
@@ -552,6 +557,11 @@ class Lifeform:
         context = self.notification_context
         if context:
             context.action(f"Nieuwe levensvorm geboren uit {self.id}")
+
+        effects = self.effects_manager
+        if effects:
+            center_x = self.x + self.width / 2
+            effects.spawn_birth((center_x, self.y - 16))
 
         logger.info(
             "Lifeform %s reproduced with %s producing %s at (%.1f, %.1f) [dna %s]",
