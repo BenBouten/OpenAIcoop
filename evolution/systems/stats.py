@@ -112,10 +112,11 @@ def collect_population_stats(
         stats["average_perception_rays"] = totals["perception_rays"] / count
         stats["average_hearing_range"] = totals["hearing_range"] / count
         stats["dna_count"] = {
-            int(dna_id): int(data["count"]) for dna_id, data in dna_totals.items()
+            _normalize_dna_id(dna_id): int(data["count"])
+            for dna_id, data in dna_totals.items()
         }
         stats["dna_attribute_averages"] = {
-            int(dna_id): {
+            _normalize_dna_id(dna_id): {
                 attribute: data[attribute] / data["count"]
                 for attribute in dna_attributes
             }
@@ -124,3 +125,15 @@ def collect_population_stats(
         }
 
     return stats
+
+
+def _normalize_dna_id(dna_id: object) -> object:
+    """Return a consistent, JSON-serialisable representation of a DNA identifier."""
+
+    if isinstance(dna_id, int):
+        return dna_id
+
+    try:
+        return int(dna_id)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return str(dna_id)
