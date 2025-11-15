@@ -595,6 +595,55 @@ def _generate_seed_cells(
     return None
 
 
+def create_cluster_from_brush(
+    world: "World",
+    center: Tuple[float, float],
+    radius_px: int,
+    *,
+    density: float = 0.9,
+    rng: Optional[random.Random] = None,
+) -> Optional[MossCluster]:
+    """Build a moss cluster constrained to a circular brush on the grid."""
+
+    rng = rng or random.Random()
+    radius_px = max(MossCluster.CELL_SIZE, int(radius_px))
+    cx = max(0, min(int(center[0]), world.width - 1))
+    cy = max(0, min(int(center[1]), world.height - 1))
+    cell_size = MossCluster.CELL_SIZE
+
+    min_gx = max(0, (cx - radius_px) // cell_size)
+    max_gx = min((world.width - 1) // cell_size, (cx + radius_px) // cell_size)
+    min_gy = max(0, (cy - radius_px) // cell_size)
+    max_gy = min((world.height - 1) // cell_size, (cy + radius_px) // cell_size)
+
+    cells: Set[GridCell] = set()
+    brush_sq = radius_px * radius_px
+    for gx in range(int(min_gx), int(max_gx) + 1):
+        for gy in range(int(min_gy), int(max_gy) + 1):
+            px = gx * cell_size
+            py = gy * cell_size
+            rect = pygame.Rect(px, py, cell_size, cell_size)
+            if rect.right > world.width or rect.bottom > world.height:
+                continue
+            if world.is_blocked(rect):
+                continue
+            center_x = px + cell_size / 2
+            center_y = py + cell_size / 2
+            dx = center_x - cx
+            dy = center_y - cy
+            if dx * dx + dy * dy > brush_sq:
+                continue
+            if density < 1.0 and rng.random() > density:
+                continue
+            cells.add((gx, gy))
+
+    if not cells:
+        return None
+
+    dna_map = ensure_dna_for_cells(tuple(cells), rng)
+    return MossCluster(dna_map)
+
+
 def create_initial_clusters(
     world: "World",
     *,
@@ -624,4 +673,9 @@ def create_initial_clusters(
     return clusters
 
 
-__all__ = ["MossCellState", "MossCluster", "create_initial_clusters"]
+__all__ = [
+    "MossCellState",
+    "MossCluster",
+    "create_initial_clusters",
+    "create_cluster_from_brush",
+]
