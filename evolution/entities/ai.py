@@ -117,9 +117,20 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
             desired = Vector2(1, 0)
 
     desired = desired.normalize()
-    lifeform.wander_direction = desired
-    lifeform.x_direction = desired.x
-    lifeform.y_direction = desired.y
+
+    current = Vector2(lifeform.x_direction, lifeform.y_direction)
+    if current.length_squared() == 0:
+        current = desired
+    turn_rate = max(0.05, min(1.0, getattr(lifeform, "turn_rate", 0.5)))
+    blended = current.lerp(desired, turn_rate)
+    if blended.length_squared() == 0:
+        blended = desired
+    else:
+        blended = blended.normalize()
+
+    lifeform.wander_direction = blended
+    lifeform.x_direction = blended.x
+    lifeform.y_direction = blended.y
 
 
 # ---------------------------------------------------------

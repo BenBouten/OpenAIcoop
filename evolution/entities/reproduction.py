@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Iterable, Mapping, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
+from ..morphology.genotype import MorphologyGenotype, mutate_profile_morphology
 
 if TYPE_CHECKING:
     from ..simulation.state import SimulationState
@@ -91,6 +92,8 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
         [parent.diet, partner.diet]
     )
 
+    morphology = MorphologyGenotype.mix(parent.morphology, partner.morphology)
+
     return {
         "dna_id": parent.dna_id,
         "width": int((parent.width + partner.width) // 2),
@@ -110,6 +113,7 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
         "diet": diet,
         "social": social,
         "risk_tolerance": risk,
+        "morphology": morphology.to_dict(),
     }
 
 
@@ -144,6 +148,8 @@ def _apply_mutations(profile: Dict[str, object]) -> None:
         profile["social"] += random.uniform(-0.08, 0.08)
     if random.randint(0, 100) < chance:
         profile["risk_tolerance"] += random.uniform(-0.08, 0.08)
+
+    mutate_profile_morphology(profile)
 
 
 def _clamp_profile(profile: Dict[str, object]) -> None:
@@ -218,6 +224,12 @@ def _calculate_change(
                 mutated.add(attribute)
             dna_change += delta
             compared += 1
+        elif isinstance(value, Mapping) and isinstance(original_value, Mapping):
+            delta = _mapping_difference(value, original_value)
+            if delta > 0:
+                mutated.add(attribute)
+            dna_change += delta
+            compared += 1
 
     if compared:
         dna_change /= compared
@@ -276,3 +288,29 @@ def _register_new_profile(
         "mutations": list(mutated_attributes),
     }
     return new_profile
+
+
+def _mapping_difference(candidate: Mapping[str, object], reference: Mapping[str, object]) -> float:
+    """Return a relative difference metric between two numeric mappings."""
+
+    total = 0.0
+    compared = 0
+    for key, value in candidate.items():
+        if key not in reference:
+            continue
+        original_value = reference[key]
+        if isinstance(value, (int, float)) and isinstance(original_value, (int, float)):
+            compared += 1
+            if original_value != 0:
+                total += abs(float(original_value) - float(value)) / abs(float(original_value))
+            elif value != 0:
+                total += 1.0
+        elif isinstance(value, Mapping) and isinstance(original_value, Mapping):
+            nested_delta = _mapping_difference(value, original_value)
+            if nested_delta:
+                compared += 1
+                total += nested_delta
+
+    if compared == 0:
+        return 0.0
+    return total / compared

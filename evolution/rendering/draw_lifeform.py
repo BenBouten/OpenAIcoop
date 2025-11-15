@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import pygame
 
+from .sprite_cache import lifeform_sprite_cache
+
+
+def _centered_position(lifeform, sprite: pygame.Surface) -> tuple[int, int]:
+    width_diff = sprite.get_width() - lifeform.width
+    height_diff = sprite.get_height() - lifeform.height
+    x = int(lifeform.x - width_diff / 2)
+    y = int(lifeform.y - height_diff / 2)
+    return x, y
+
 
 def draw_lifeform(surface, lifeform, settings):
     """Draw a lifeform body and status outline onto ``surface``."""
     if lifeform.health_now <= 0:
         return
 
-    body = pygame.Surface((lifeform.width, lifeform.height))
-    body.set_colorkey(settings.BLACK)
-    body.fill(lifeform.color)
-    body = pygame.transform.rotate(body, lifeform.angle)
-    surface.blit(body, (lifeform.x, lifeform.y))
+    body = lifeform_sprite_cache.get_body(lifeform)
+    surface.blit(body, _centered_position(lifeform, body))
 
     outline = pygame.Surface((lifeform.width + 4, lifeform.height + 4))
     outline.set_colorkey(settings.BLACK)
@@ -23,7 +30,7 @@ def draw_lifeform(surface, lifeform, settings):
     color = pygame.Color(red_value, 0, blue_value)
     pygame.draw.rect(outline, color, (0, 0, lifeform.width + 2, lifeform.height + 2), 1)
     outline = pygame.transform.rotate(outline, lifeform.angle)
-    surface.blit(outline, (lifeform.x, lifeform.y))
+    surface.blit(outline, _centered_position(lifeform, outline))
 
 
 def draw_lifeform_vision(surface, lifeform, settings):
@@ -31,4 +38,10 @@ def draw_lifeform_vision(surface, lifeform, settings):
     if lifeform.health_now <= 0:
         return
 
-    pygame.draw.circle(surface, settings.GREEN, (int(lifeform.x), int(lifeform.y)), int(lifeform.vision), 1)
+    pygame.draw.circle(
+        surface,
+        settings.GREEN,
+        (int(lifeform.rect.centerx), int(lifeform.rect.centery)),
+        int(getattr(lifeform, "sensory_range", lifeform.vision)),
+        1,
+    )
