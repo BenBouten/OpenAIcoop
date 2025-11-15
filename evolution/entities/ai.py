@@ -36,6 +36,11 @@ _PAUSE_SWAY_FREQUENCY = 1.4
 _SEARCH_PROXIMITY_RADIUS = 8.0
 _SPEED_DRIFT_INTERVAL = 2.4
 _SPEED_DRIFT_LERP_RATE = 0.45
+_HARD_TURN_INTERVAL_MS = 2000
+_HARD_TURN_VARIANCE = 900
+_HARD_TURN_MIN_INTERVAL = 900
+_MEMORY_TARGET_CLOSE_RADIUS = 12.0
+_MEMORY_VALIDATION_RADIUS = 28.0
 
 # ---------------------------------------------------------
 # Public entry point
@@ -90,6 +95,7 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     desired += _juvenile_family_vector(lifeform)
 
     # 4) Groepsgedrag en "laatste posities vermijden" en boundary repulsion
+    desired += _group_goal_vector(lifeform, now)
     desired += _group_behavior_vector(lifeform)
     desired += _avoid_recent_positions(lifeform, now)
     desired += _boundary_repulsion_vector(lifeform)
@@ -181,13 +187,14 @@ def _recall(
     timestamp: int,
     *,
     preferred_tag: Optional[str] = None,
-) -> Optional[Tuple[float, float]]:
+    with_metadata: bool = False,
+) -> Optional[object]:
     buffer = lifeform.memory.get(kind)
     if not buffer:
         return None
 
-    primary: List[Tuple[float, Tuple[float, float]]] = []
-    secondary: List[Tuple[float, Tuple[float, float]]] = []
+    primary: List[Tuple[float, dict]] = []
+    secondary: List[Tuple[float, dict]] = []
     for entry in buffer:
         age = timestamp - entry["time"]
         if age > settings.MEMORY_DECAY_MS:
@@ -198,7 +205,7 @@ def _recall(
             urgency = max(0.0, lifeform.hunger - settings.HUNGER_SEEK_THRESHOLD)
             weight *= 1.0 + urgency / 120.0
 
-        candidate = (weight, entry["pos"])
+        candidate = (weight, entry)
         tag = entry.get("tag")
         if preferred_tag is not None and tag != preferred_tag:
             secondary.append(candidate)
@@ -211,7 +218,50 @@ def _recall(
         return None
 
     candidates.sort(key=lambda item: item[0], reverse=True)
-    return candidates[0][1]
+    selected = candidates[0][1]
+    if with_metadata:
+        return selected
+    return tuple(selected["pos"])
+
+
+def _forget_memory_entry(lifeform: "Lifeform", kind: str, entry: dict) -> None:
+    buffer = lifeform.memory.get(kind)
+    if not buffer:
+        return
+    try:
+        buffer.remove(entry)
+    except ValueError:
+        return
+
+
+def _food_available_near(
+    lifeform: "Lifeform", point: Tuple[float, float], tag: Optional[str]
+) -> bool:
+    px, py = point
+    radius_sq = _MEMORY_VALIDATION_RADIUS * _MEMORY_VALIDATION_RADIUS
+
+    if tag != "meat" and lifeform.prefers_plants():
+        for plant in lifeform.state.plants:
+            if getattr(plant, "resource", 0) <= 0:
+                continue
+            center = (plant.x + plant.width / 2, plant.y + plant.height / 2)
+            dx = center[0] - px
+            dy = center[1] - py
+            if dx * dx + dy * dy <= radius_sq:
+                return True
+
+    if tag != "plant" and lifeform.prefers_meat():
+        for other in lifeform.state.lifeforms:
+            if other is lifeform or other.health_now <= 0:
+                continue
+            if other.dna_id == lifeform.dna_id:
+                continue
+            dx = other.rect.centerx - px
+            dy = other.rect.centery - py
+            if dx * dx + dy * dy <= radius_sq:
+                return True
+
+    return False
 
 
 def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
@@ -435,33 +485,66 @@ def _juvenile_family_vector(lifeform: "Lifeform") -> Vector2:
 
 
 def _memory_target_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
-    target = None
+    entry = None
+    entry_kind = None
 
     if lifeform.can_reproduce():
-        target = _recall(lifeform, "partner", timestamp)
+        entry = _recall(lifeform, "partner", timestamp, with_metadata=True)
+        if entry:
+            entry_kind = "partner"
 
-    if target is None and lifeform.should_seek_food():
+    if entry is None and lifeform.should_seek_food():
         preferred_tag = None
         if lifeform.prefers_plants():
             preferred_tag = "plant"
         elif lifeform.prefers_meat():
             preferred_tag = "meat"
-        target = _recall(lifeform, "food", timestamp, preferred_tag=preferred_tag)
+        entry = _recall(
+            lifeform,
+            "food",
+            timestamp,
+            preferred_tag=preferred_tag,
+            with_metadata=True,
+        )
+        if entry:
+            entry_kind = "food"
 
-    if target is None:
+    if entry is None:
         return Vector2()
 
-    direction, _ = lifeform._direction_to_point(target)
-    return direction
+    target_point = tuple(entry["pos"])
+    direction, distance = lifeform._direction_to_point(target_point)
+    if distance == 0:
+        _forget_memory_entry(lifeform, entry_kind or "food", entry)
+        return Vector2()
+
+    if (
+        entry_kind == "food"
+        and distance <= _MEMORY_TARGET_CLOSE_RADIUS
+        and not _food_available_near(lifeform, target_point, entry.get("tag"))
+    ):
+        _forget_memory_entry(lifeform, "food", entry)
+        return Vector2()
+
+    weight = 1.35 if entry_kind == "food" else 1.0
+    return direction * weight
 
 
 def _group_behavior_vector(lifeform: "Lifeform") -> Vector2:
     if not lifeform.in_group or not lifeform.group_neighbors:
         return Vector2()
 
+    boid_drive = float(
+        getattr(lifeform, "boid_tendency", getattr(lifeform, "social_tendency", 0.5))
+    )
+    boid_drive = max(0.0, min(1.0, boid_drive))
+    if boid_drive <= 0.01:
+        return Vector2()
+
     alignment = Vector2()
     cohesion_positions = Vector2()
     separation = Vector2()
+    partner_vector = Vector2()
     active_neighbors = 0
 
     for neighbor in lifeform.group_neighbors:
@@ -475,6 +558,13 @@ def _group_behavior_vector(lifeform: "Lifeform") -> Vector2:
         distance = offset.length()
         if 0 < distance < settings.BOID_SEPARATION_DISTANCE:
             separation += offset.normalize() * (1.0 - distance / settings.BOID_SEPARATION_DISTANCE)
+
+        if (
+            lifeform.can_reproduce()
+            and neighbor.dna_id == lifeform.dna_id
+            and neighbor.can_reproduce()
+        ):
+            partner_vector += Vector2(neighbor.x - lifeform.x, neighbor.y - lifeform.y)
 
         active_neighbors += 1
 
@@ -491,16 +581,172 @@ def _group_behavior_vector(lifeform: "Lifeform") -> Vector2:
     if separation.length_squared() > 0:
         separation = separation.normalize()
 
-    influence = Vector2()
-    influence += alignment * settings.BOID_ALIGNMENT_WEIGHT * lifeform.social_tendency
-    influence += cohesion * settings.BOID_COHESION_WEIGHT * lifeform.social_tendency
-    influence += separation * settings.BOID_SEPARATION_WEIGHT
+    if partner_vector.length_squared() > 0:
+        partner_vector = partner_vector.normalize()
 
-    if lifeform.closest_follower and not lifeform.is_leader and lifeform.closest_follower.health_now > 0:
+    influence = Vector2()
+    influence += alignment * settings.BOID_ALIGNMENT_WEIGHT * boid_drive
+    influence += cohesion * settings.BOID_COHESION_WEIGHT * boid_drive
+    influence += separation * settings.BOID_SEPARATION_WEIGHT
+    influence += partner_vector * settings.BOID_PARTNER_WEIGHT * boid_drive
+
+    leader = getattr(lifeform, "group_leader", None)
+    if (
+        leader
+        and leader is not lifeform
+        and getattr(leader, "health_now", 0) > 0
+    ):
+        leader_direction, _ = lifeform._direction_to_lifeform(leader)
+        influence += leader_direction * 0.4 * boid_drive
+
+    if (
+        lifeform.closest_follower
+        and not lifeform.is_leader
+        and lifeform.closest_follower.health_now > 0
+    ):
         follow_direction, _ = lifeform._direction_to_lifeform(lifeform.closest_follower)
-        influence += follow_direction * 0.35 * lifeform.social_tendency
+        influence += follow_direction * 0.35 * boid_drive
 
     return influence
+
+
+def _group_goal_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
+    if not lifeform.in_group or not lifeform.group_neighbors:
+        return Vector2()
+
+    boid_drive = float(
+        getattr(lifeform, "boid_tendency", getattr(lifeform, "social_tendency", 0.5))
+    )
+    boid_drive = max(0.0, min(1.0, boid_drive))
+    if boid_drive <= 0.05:
+        return Vector2()
+
+    leader = lifeform if lifeform.is_leader else getattr(lifeform, "group_leader", None)
+    if leader is None or getattr(leader, "health_now", 0) <= 0:
+        return Vector2()
+
+    target = _leader_goal_position(lifeform, leader, timestamp)
+    if target is None:
+        return Vector2()
+
+    direction, distance = lifeform._direction_to_point(target)
+    if distance == 0:
+        return Vector2()
+
+    weight = max(0.2, min(1.4, boid_drive + lifeform.group_strength))
+    return direction * weight
+
+
+def _leader_goal_position(
+    follower: "Lifeform", leader: "Lifeform", timestamp: int
+) -> Optional[Tuple[float, float]]:
+    if leader.should_seek_food():
+        if (
+            leader.closest_plant
+            and leader.closest_plant.resource > 0
+            and leader.prefers_plants()
+        ):
+            point = leader.plant_contact_point(leader.closest_plant)
+            _share_leader_memory(
+                follower,
+                {
+                    "pos": point,
+                    "weight": leader.closest_plant.resource,
+                    "tag": "plant",
+                },
+                "food",
+                timestamp,
+            )
+            return point
+        if (
+            leader.closest_prey
+            and leader.closest_prey.health_now > 0
+            and leader.prefers_meat()
+        ):
+            point = (leader.closest_prey.x, leader.closest_prey.y)
+            _share_leader_memory(
+                follower,
+                {
+                    "pos": point,
+                    "weight": max(1.0, leader.closest_prey.health_now),
+                    "tag": "meat",
+                },
+                "food",
+                timestamp,
+            )
+            return point
+
+        preferred_tag = None
+        if leader.prefers_plants() and not leader.prefers_meat():
+            preferred_tag = "plant"
+        elif leader.prefers_meat() and not leader.prefers_plants():
+            preferred_tag = "meat"
+        entry = _recall(
+            leader,
+            "food",
+            timestamp,
+            preferred_tag=preferred_tag,
+            with_metadata=True,
+        )
+        if entry:
+            _share_leader_memory(follower, entry, "food", timestamp)
+            return tuple(entry["pos"])
+
+    if leader.can_reproduce():
+        if leader.closest_partner and leader.closest_partner.health_now > 0:
+            point = (leader.closest_partner.x, leader.closest_partner.y)
+            _share_leader_memory(
+                follower,
+                {
+                    "pos": point,
+                    "weight": 1.0,
+                },
+                "partner",
+                timestamp,
+            )
+            return point
+        entry = _recall(leader, "partner", timestamp, with_metadata=True)
+        if entry:
+            _share_leader_memory(follower, entry, "partner", timestamp)
+            return tuple(entry["pos"])
+
+    forward = Vector2(leader.x_direction, leader.y_direction)
+    if forward.length_squared() == 0:
+        forward = Vector2(leader.wander_direction)
+    if forward.length_squared() == 0:
+        forward = Vector2(1, 0)
+    forward = forward.normalize()
+    look_ahead = max(36.0, leader.vision * 0.35)
+    return (leader.x + forward.x * look_ahead, leader.y + forward.y * look_ahead)
+
+
+def _share_leader_memory(
+    lifeform: "Lifeform", entry: dict, kind: str, timestamp: int
+) -> None:
+    if lifeform.is_leader:
+        return
+    if kind not in ("food", "partner"):
+        return
+
+    weight = float(entry.get("weight", 1.0)) * 0.9
+    position = tuple(entry.get("pos", (lifeform.x, lifeform.y)))
+    if kind == "food":
+        _remember(
+            lifeform,
+            "food",
+            position,
+            timestamp,
+            weight=max(0.1, weight),
+            tag=entry.get("tag"),
+        )
+    else:
+        _remember(
+            lifeform,
+            "partner",
+            position,
+            timestamp,
+            weight=max(0.5, weight),
+        )
 
 
 def _avoid_recent_positions(lifeform: "Lifeform", timestamp: int) -> Vector2:
@@ -597,7 +843,7 @@ def _compute_pause_speed_factor(lifeform: "Lifeform", *, initial: bool = False) 
 def _apply_move_reorientation(lifeform: "Lifeform") -> None:
     restlessness = float(getattr(lifeform, "restlessness", 0.5))
     restlessness = max(0.0, min(1.0, restlessness))
-    spread = 35.0 + 70.0 * restlessness
+    spread = 90.0 + 90.0 * restlessness
     delta = math.radians(random.uniform(-spread, spread))
 
     base_vector = Vector2(lifeform.wander_direction)
@@ -610,6 +856,35 @@ def _apply_move_reorientation(lifeform: "Lifeform") -> None:
     lifeform._wander_theta = (heading + delta) % math.tau
 
 
+def _random_hard_turn_interval(lifeform: "Lifeform") -> float:
+    restlessness = float(getattr(lifeform, "restlessness", 0.5))
+    restlessness = max(0.0, min(1.0, restlessness))
+    base = _HARD_TURN_INTERVAL_MS * (1.0 - restlessness * 0.35)
+    variance = _HARD_TURN_VARIANCE * (0.6 + restlessness * 0.8)
+    return max(
+        _HARD_TURN_MIN_INTERVAL,
+        random.uniform(base - variance, base + variance),
+    )
+
+
+def _ensure_hard_turn_schedule(lifeform: "Lifeform", timestamp: int) -> None:
+    next_flip = getattr(lifeform, "_next_wander_flip", 0)
+    if next_flip <= 0 or timestamp >= next_flip:
+        interval = _random_hard_turn_interval(lifeform)
+        lifeform._next_wander_flip = timestamp + interval
+
+
+def _apply_hard_turn(lifeform: "Lifeform", timestamp: int) -> None:
+    turn_angle = random.uniform(-math.pi, math.pi)
+    lifeform._wander_theta = (lifeform._wander_theta + turn_angle) % math.tau
+    heading = lifeform._wander_theta
+    new_direction = Vector2(math.cos(heading), math.sin(heading))
+    if new_direction.length_squared() > 0:
+        lifeform.wander_direction = new_direction.normalize()
+    lifeform.last_wander_update = timestamp
+    lifeform._next_wander_flip = timestamp + _random_hard_turn_interval(lifeform)
+
+
 def _wander_vector(lifeform: "Lifeform", timestamp: int, dt: float) -> Vector2:
     if not hasattr(lifeform, "_wander_theta"):
         lifeform._wander_theta = random.uniform(0.0, math.tau)
@@ -618,6 +893,9 @@ def _wander_vector(lifeform: "Lifeform", timestamp: int, dt: float) -> Vector2:
 
     _ensure_wander_state(lifeform)
     _update_wander_phase(lifeform, dt)
+    _ensure_hard_turn_schedule(lifeform, timestamp)
+    if timestamp >= getattr(lifeform, "_next_wander_flip", 0):
+        _apply_hard_turn(lifeform, timestamp)
 
     restlessness = float(getattr(lifeform, "restlessness", 0.5))
     restlessness = max(0.0, min(1.0, restlessness))

@@ -164,15 +164,22 @@ class Lifeform:
         self.group_center: Optional[Tuple[float, float]] = None
         self.group_strength = 0.0
         self.group_state_timer = 0
+        self.group_leader: Optional[Lifeform] = None
 
         # Behaviour / traits
         self.diet = dna_profile.get("diet", "omnivore")
         self.social_tendency = float(dna_profile.get("social", 0.5))
+        self.boid_tendency = float(
+            dna_profile.get("boid_tendency", self.social_tendency)
+        )
         self.risk_tolerance = float(dna_profile.get("risk_tolerance", 0.5))
         self.restlessness = float(dna_profile.get("restlessness", 0.5))
         if not math.isfinite(self.restlessness):
             self.restlessness = 0.5
         self.restlessness = max(0.0, min(1.0, self.restlessness))
+        if not math.isfinite(self.boid_tendency):
+            self.boid_tendency = self.social_tendency
+        self.boid_tendency = max(0.0, min(1.0, self.boid_tendency))
 
         # Local memory buffers
         self.memory: Dict[str, Deque[dict]] = {
@@ -205,6 +212,7 @@ class Lifeform:
         self._escape_timer = 0
         self._escape_vector = Vector2()
         self._voluntary_pause = False
+        self._next_wander_flip = 0
 
     # ------------------------------------------------------------------
     # Convenience: access to global notification context via state
@@ -565,6 +573,7 @@ class Lifeform:
             self.group_center = None
             self.group_strength = 0
             self.group_state_timer = 0
+            self.group_leader = None
             return
 
         neighbors: List[Tuple[Lifeform, float]] = []
@@ -606,14 +615,33 @@ class Lifeform:
             total_members = neighbor_count + 1
             self.group_center = (total_x / total_members, total_y / total_members)
             self.group_strength = cohesion
+            self.group_leader = self._determine_group_leader()
         elif self.group_state_timer > 0:
             self.group_state_timer -= 1
             self.in_group = True
+            if not self.group_leader or getattr(self.group_leader, "health_now", 0) <= 0:
+                self.group_leader = self._determine_group_leader()
         else:
             self.in_group = False
             self.group_neighbors = []
             self.group_center = None
             self.group_strength = 0
+            self.group_leader = None
+
+    def _determine_group_leader(self) -> Optional["Lifeform"]:
+        candidates = [self]
+        candidates.extend(self.group_neighbors)
+        alive = [lf for lf in candidates if getattr(lf, "health_now", 0) > 0]
+        if not alive:
+            return None
+
+        def _leader_score(lf: "Lifeform") -> Tuple[float, float, float]:
+            leader_bonus = 1.0 if getattr(lf, "is_leader", False) else 0.0
+            boid_drive = getattr(lf, "boid_tendency", getattr(lf, "social_tendency", 0.5))
+            return (leader_bonus, boid_drive, getattr(lf, "age", 0.0))
+
+        alive.sort(key=_leader_score, reverse=True)
+        return alive[0]
 
     # ------------------------------------------------------------------
     # Stats / combat / lifecycle
@@ -981,8 +1009,11 @@ class Lifeform:
             "social": {
                 "in_group": self.in_group,
                 "is_leader": self.is_leader,
+                "leader_id": getattr(self.group_leader, "id", None),
                 "group_size": len(self.group_neighbors),
                 "group_strength": self.group_strength,
+                "boid_tendency": self.boid_tendency,
+                "social_tendency": self.social_tendency,
             },
             "behaviour": {
                 "diet": self.diet,
