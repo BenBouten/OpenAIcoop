@@ -69,7 +69,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         damage = max(1, lifeform.attack_power_now - prey.defence_power_now / 2)
         prey.health_now -= damage
         prey.wounded += 3
-        lifeform.hunger = max(0, lifeform.hunger - 40)
+        lifeform.hunger = max(settings.HUNGER_MINIMUM, lifeform.hunger - 40)
         if context:
             context.action(f"{lifeform.id} valt {prey.id} aan")
         if effects:
@@ -127,7 +127,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         plant
         and lifeform.closest_enemy is None
         and lifeform.prefers_plants()
-        and plant.resource > 10
+        and plant.resource > 0
         and lifeform.distance_to(plant) < plant_range
     ):
         if context:
@@ -136,20 +136,30 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
             settings.PLANT_BITE_NUTRITION_TARGET, eater=lifeform
         )
         if consumption:
-            satiety_bonus = plant.apply_effect(lifeform, consumption)
+            outcome = plant.apply_effect(lifeform, consumption)
             total_nutrition = sum(sample.nutrition for sample in consumption)
             hunger_reduction = (
-                total_nutrition * settings.PLANT_HUNGER_SATIATION_PER_NUTRITION + satiety_bonus
+                total_nutrition * settings.PLANT_HUNGER_SATIATION_PER_NUTRITION
+                + outcome.satiety_bonus
             )
-            lifeform.hunger = max(0.0, lifeform.hunger - hunger_reduction)
+            lifeform.hunger = max(
+                settings.HUNGER_MINIMUM, lifeform.hunger - hunger_reduction
+            )
             if effects:
                 anchor = _lifeform_anchor(lifeform)
-                bite_text = f"+{int(round(hunger_reduction))}"
-                effects.spawn_status_label(anchor, bite_text, color=(120, 220, 160))
-                effects.spawn_bite_label(anchor, bite_text)
+                hunger_amount = int(round(hunger_reduction))
+                hunger_prefix = "+" if hunger_amount >= 0 else ""
+                hunger_text = f"{hunger_prefix}{hunger_amount} honger"
+                effects.spawn_status_label(anchor, hunger_text, color=(120, 220, 160))
+
                 plant_center = (
                     plant.x + plant.width / 2,
                     plant.y + plant.height / 2,
+                )
+                effects.spawn_bite_label(
+                    plant_center,
+                    "Munch!",
+                    color=(120, 220, 160),
                 )
                 effects.spawn_confetti(
                     plant_center,
@@ -161,3 +171,10 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                     count=10,
                     strength=18,
                 )
+
+                if outcome.health_delta >= 0.5:
+                    heal_text = f"+{int(round(outcome.health_delta))} leven"
+                    effects.spawn_status_label(anchor, heal_text, color=(170, 240, 190))
+                elif outcome.health_delta <= -0.5:
+                    damage_text = f"-{int(round(-outcome.health_delta))} leven"
+                    effects.spawn_status_label(anchor, damage_text, color=(255, 140, 180))

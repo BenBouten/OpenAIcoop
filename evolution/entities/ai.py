@@ -20,7 +20,7 @@ logger = logging.getLogger("evolution.ai")
 
 CLOSE_FOOD_RADIUS = 6.0
 MAX_FEEDING_FRAMES = 180  # ~3 seconden bij 60 FPS
-COMFORT_HUNGER_LEVEL = settings.HUNGER_SEEK_THRESHOLD * 0.4
+COMFORT_HUNGER_LEVEL = settings.HUNGER_RELAX_THRESHOLD
 
 _WANDER_CIRCLE_DISTANCE = 1.6
 _WANDER_CIRCLE_RADIUS = 1.2
@@ -155,30 +155,57 @@ def _remember(
     position: Tuple[float, float],
     timestamp: int,
     weight: float = 1.0,
+    *,
+    tag: Optional[str] = None,
 ) -> None:
     if kind not in lifeform.memory:
         return
     entry = {"pos": position, "time": timestamp, "weight": float(weight)}
+    if tag:
+        entry["tag"] = tag
     lifeform.memory[kind].append(entry)
+    if tag and kind == "food" and logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "Lifeform %s onthoudt %s (%s) op %s met gewicht %.1f",
+            lifeform.id,
+            kind,
+            tag,
+            position,
+            entry["weight"],
+        )
 
 
 def _recall(
     lifeform: "Lifeform",
     kind: str,
     timestamp: int,
+    *,
+    preferred_tag: Optional[str] = None,
 ) -> Optional[Tuple[float, float]]:
     buffer = lifeform.memory.get(kind)
     if not buffer:
         return None
 
-    candidates: List[Tuple[float, Tuple[float, float]]] = []
+    primary: List[Tuple[float, Tuple[float, float]]] = []
+    secondary: List[Tuple[float, Tuple[float, float]]] = []
     for entry in buffer:
         age = timestamp - entry["time"]
         if age > settings.MEMORY_DECAY_MS:
             continue
         decay_factor = max(0.0, 1.0 - age / settings.MEMORY_DECAY_MS)
         weight = entry.get("weight", 1.0) * (0.5 + 0.5 * decay_factor)
-        candidates.append((weight, entry["pos"]))
+        if kind == "food":
+            urgency = max(0.0, lifeform.hunger - settings.HUNGER_SEEK_THRESHOLD)
+            weight *= 1.0 + urgency / 120.0
+
+        candidate = (weight, entry["pos"])
+        tag = entry.get("tag")
+        if preferred_tag is not None and tag != preferred_tag:
+            secondary.append(candidate)
+        else:
+            primary.append(candidate)
+
+    candidates = primary if primary else secondary
 
     if not candidates:
         return None
@@ -211,6 +238,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
             (lifeform.closest_prey.x, lifeform.closest_prey.y),
             timestamp,
             weight=weight,
+            tag="meat",
         )
 
     # Plantfood
@@ -226,6 +254,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
             _plant_center(lifeform),
             timestamp,
             weight=weight,
+            tag="plant",
         )
 
     # Partnerlocaties
@@ -268,7 +297,14 @@ def _compute_pursuit_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
     if lifeform.should_seek_food():
         food_vector = _immediate_food_vector(lifeform)
         if food_vector.length_squared() == 0:
-            remembered_food = _recall(lifeform, "food", timestamp)
+            preferred_tag = None
+            if lifeform.prefers_plants():
+                preferred_tag = "plant"
+            elif lifeform.prefers_meat():
+                preferred_tag = "meat"
+            remembered_food = _recall(
+                lifeform, "food", timestamp, preferred_tag=preferred_tag
+            )
             if remembered_food:
                 direction, _ = lifeform._direction_to_point(remembered_food)
                 desired += direction
@@ -405,7 +441,12 @@ def _memory_target_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
         target = _recall(lifeform, "partner", timestamp)
 
     if target is None and lifeform.should_seek_food():
-        target = _recall(lifeform, "food", timestamp)
+        preferred_tag = None
+        if lifeform.prefers_plants():
+            preferred_tag = "plant"
+        elif lifeform.prefers_meat():
+            preferred_tag = "meat"
+        target = _recall(lifeform, "food", timestamp, preferred_tag=preferred_tag)
 
     if target is None:
         return Vector2()

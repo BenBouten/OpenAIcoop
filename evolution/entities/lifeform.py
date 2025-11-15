@@ -175,6 +175,8 @@ class Lifeform:
             "partner": deque(maxlen=settings.MEMORY_MAX_PARTNERS),
         }
 
+        self._foraging_focus = False
+
         # Wander / escape state
         initial_wander = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
         if initial_wander.length_squared() == 0:
@@ -244,11 +246,29 @@ class Lifeform:
         return self.diet in ("carnivore", "omnivore")
 
     def should_seek_food(self) -> bool:
-        if self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
+        enemy_active = self.closest_enemy and self.closest_enemy.health_now > 0
+        if enemy_active:
+            self._foraging_focus = False
+            return False
+
+        if self._foraging_focus and self.hunger <= settings.HUNGER_RELAX_THRESHOLD:
+            self._foraging_focus = False
+
+        if self._foraging_focus:
             return True
+
+        if self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
+            self._foraging_focus = True
+            return True
+
         if self.energy_now < self.energy * 0.45:
             return True
+
         return False
+
+    @property
+    def is_foraging(self) -> bool:
+        return self._foraging_focus
 
     def can_reproduce(self) -> bool:
         if self.reproduced_cooldown != 0:
@@ -853,6 +873,9 @@ class Lifeform:
                 "is_leader": self.is_leader,
                 "group_size": len(self.group_neighbors),
                 "group_strength": self.group_strength,
+            },
+            "behaviour": {
+                "foraging_focus": self._foraging_focus,
             },
             "reproduction": {
                 "cooldown": self.reproduced_cooldown,
