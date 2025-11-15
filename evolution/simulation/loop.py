@@ -34,10 +34,13 @@ from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.effects import EffectManager
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
 from ..rendering.lifeform_inspector import LifeformInspector
+from ..rendering.tools_panel import EditorTool, ToolsPanel
 from ..systems import stats as stats_system
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
 from ..systems.player import PlayerController
+from ..world.types import Barrier
+from ..world.vegetation import create_cluster_from_brush
 from ..world.world import World
 from . import bootstrap, environment
 from .state import SimulationState
@@ -480,6 +483,11 @@ def run() -> None:
         font3,
         _build_slider_configs(),
     )
+    tools_panel = ToolsPanel(
+        font2,
+        font3,
+        topleft=(24, settings.WINDOW_HEIGHT - 300),
+    )
 
     def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
         if not lifeforms:
@@ -529,6 +537,101 @@ def run() -> None:
     effects_manager = EffectManager()
     effects_manager.set_font(font2)
 
+    def _screen_to_world(position: Tuple[int, int]) -> Tuple[float, float]:
+        return (
+            camera.viewport.x + position[0],
+            camera.viewport.y + position[1],
+        )
+
+    def _clamp_rect(rect: pygame.Rect) -> pygame.Rect:
+        left = max(0, rect.left)
+        top = max(0, rect.top)
+        right = min(world.width, rect.right)
+        bottom = min(world.height, rect.bottom)
+        rect.update(int(left), int(top), max(1, int(right - left)), max(1, int(bottom - top)))
+        return rect
+
+    def _world_rect_from_points(
+        start: Tuple[float, float], end: Tuple[float, float]
+    ) -> pygame.Rect:
+        left = min(start[0], end[0])
+        top = min(start[1], end[1])
+        width = abs(end[0] - start[0])
+        height = abs(end[1] - start[1])
+        rect = pygame.Rect(int(left), int(top), max(1, int(width)), max(1, int(height)))
+        return _clamp_rect(rect)
+
+    def _apply_modifiers_to_cluster(cluster: "MossCluster") -> None:
+        abundance = state.environment_modifiers.get("plant_regrowth", 1.0)
+        growth = state.environment_modifiers.get("moss_growth_speed", 1.0)
+        cluster.set_capacity_multiplier(abundance)
+        cluster.set_growth_speed_modifier(growth)
+
+    def _spawn_moss_cluster(
+        world_pos: Tuple[float, float], *, notify: bool = True
+    ) -> bool:
+        cluster = create_cluster_from_brush(
+            world,
+            world_pos,
+            int(tools_panel.brush_size),
+            rng=editor_rng,
+        )
+        if cluster is None:
+            if notify:
+                notification_manager.add(
+                    "Kan hier geen mos plaatsen; ruimte is geblokkeerd.",
+                    settings.RED,
+                )
+            return False
+        _apply_modifiers_to_cluster(cluster)
+        plants.append(cluster)
+        return True
+
+    def _stamp_wall_segment(world_pos: Tuple[float, float]) -> None:
+        size = max(8, int(tools_panel.brush_size))
+        left = int(world_pos[0]) - size // 2
+        top = int(world_pos[1]) - size // 2
+        rect = pygame.Rect(left, top, size, size)
+        rect = _clamp_rect(rect)
+        world.barriers.append(Barrier(rect, (80, 80, 120), "muur"))
+
+    def _draw_barrier_preview(surface: pygame.Surface, rect: pygame.Rect) -> None:
+        preview = pygame.Rect(
+            rect.left - camera.viewport.left,
+            rect.top - camera.viewport.top,
+            rect.width,
+            rect.height,
+        )
+        if (
+            preview.right < 0
+            or preview.bottom < 0
+            or preview.left > surface.get_width()
+            or preview.top > surface.get_height()
+        ):
+            return
+        shade = pygame.Surface((preview.width, preview.height), pygame.SRCALPHA)
+        shade.fill((220, 140, 90, 60))
+        surface.blit(shade, preview.topleft)
+        pygame.draw.rect(surface, (220, 140, 90), preview, 2)
+
+    def _begin_tool_action(position: Tuple[int, int]) -> None:
+        nonlocal painting_tool, barrier_drag_start, barrier_preview_rect
+        tool = tools_panel.selected_tool
+        if tool == EditorTool.INSPECT:
+            return
+        world_pos = _screen_to_world(position)
+        if tool == EditorTool.SPAWN_MOSS:
+            _spawn_moss_cluster(world_pos)
+        elif tool == EditorTool.PAINT_MOSS:
+            painting_tool = EditorTool.PAINT_MOSS
+            _spawn_moss_cluster(world_pos, notify=False)
+        elif tool == EditorTool.PAINT_WALL:
+            painting_tool = EditorTool.PAINT_WALL
+            _stamp_wall_segment(world_pos)
+        elif tool == EditorTool.DRAW_BARRIER:
+            barrier_drag_start = world_pos
+            barrier_preview_rect = _world_rect_from_points(world_pos, world_pos)
+
     bootstrap.reset_simulation(
         state,
         world,
@@ -541,6 +644,11 @@ def run() -> None:
     )
     graph = Graph()
     inspector = LifeformInspector(state, font2, font3)
+    editor_rng = random.Random()
+    legacy_ui_visible = True
+    painting_tool: Optional[EditorTool] = None
+    barrier_drag_start: Optional[Tuple[float, float]] = None
+    barrier_preview_rect: Optional[pygame.Rect] = None
 
     running = True
     starting_screen = True
@@ -569,6 +677,20 @@ def run() -> None:
             24,
         )
         map_button_rects: List[Tuple[pygame.Rect, str]] = []
+        legacy_toggle_rect = pygame.Rect(
+            panel_rect.left - 150,
+            max(16, panel_rect.top - 40),
+            140,
+            30,
+        )
+        if tools_panel.selected_tool != EditorTool.DRAW_BARRIER:
+            barrier_preview_rect = None
+            barrier_drag_start = None
+        if (
+            painting_tool is not None
+            and tools_panel.selected_tool not in {EditorTool.PAINT_MOSS, EditorTool.PAINT_WALL}
+        ):
+            painting_tool = None
 
         if starting_screen:
             screen.fill(settings.BACKGROUND)
@@ -612,9 +734,10 @@ def run() -> None:
                 option_surface = button_font.render(label, True, settings.BLACK)
                 option_rect = option_surface.get_rect(center=rect.center)
                 screen.blit(option_surface, option_rect)
-            gameplay_panel.draw(screen)
             notification_manager.update()
-            notification_manager.draw(screen, info_font)
+            if legacy_ui_visible:
+                gameplay_panel.draw(screen)
+                notification_manager.draw(screen, info_font)
 
         else:
             keys = pygame.key.get_pressed()
@@ -746,44 +869,64 @@ def run() -> None:
                 notification_manager.update()
 
                 screen.blit(world_surface, (0, 0), area=camera.viewport)
-                world.draw_weather_overview(screen, font2)
-                draw_stats_panel(screen, font2, font3, stats)
+                if legacy_ui_visible:
+                    world.draw_weather_overview(screen, font2)
+                    draw_stats_panel(screen, font2, font3, stats)
 
-                pygame.draw.rect(screen, settings.GREEN, reset_button)
-                pygame.draw.rect(screen, settings.BLACK, reset_button, 2)
-                pygame.draw.rect(screen, settings.GREEN, show_dna_button)
-                pygame.draw.rect(screen, settings.BLACK, show_dna_button, 2)
-                pygame.draw.rect(screen, settings.GREEN, show_dna_info_button)
-                pygame.draw.rect(screen, settings.BLACK, show_dna_info_button, 2)
+                    pygame.draw.rect(screen, settings.GREEN, reset_button)
+                    pygame.draw.rect(screen, settings.BLACK, reset_button, 2)
+                    pygame.draw.rect(screen, settings.GREEN, show_dna_button)
+                    pygame.draw.rect(screen, settings.BLACK, show_dna_button, 2)
+                    pygame.draw.rect(screen, settings.GREEN, show_dna_info_button)
+                    pygame.draw.rect(screen, settings.BLACK, show_dna_info_button, 2)
 
-                reset_label = font.render("Reset", True, settings.BLACK)
-                screen.blit(
-                    reset_label,
-                    (reset_button.x + 28, reset_button.y + 6),
-                )
-                dna_label = font.render("DNA", True, settings.BLACK)
-                screen.blit(
-                    dna_label,
-                    (show_dna_button.right + 8, show_dna_button.y + 4),
-                )
-                dna_info_label = font.render("Info", True, settings.BLACK)
-                screen.blit(
-                    dna_info_label,
-                    (show_dna_info_button.right + 8, show_dna_info_button.y + 4),
-                )
+                    reset_label = font.render("Reset", True, settings.BLACK)
+                    screen.blit(
+                        reset_label,
+                        (reset_button.x + 28, reset_button.y + 6),
+                    )
+                    dna_label = font.render("DNA", True, settings.BLACK)
+                    screen.blit(
+                        dna_label,
+                        (show_dna_button.right + 8, show_dna_button.y + 4),
+                    )
+                    dna_info_label = font.render("Info", True, settings.BLACK)
+                    screen.blit(
+                        dna_info_label,
+                        (show_dna_info_button.right + 8, show_dna_info_button.y + 4),
+                    )
 
-                if latest_stats:
-                    draw_stats_panel(screen, font2, font3, latest_stats)
+                    if latest_stats:
+                        draw_stats_panel(screen, font2, font3, latest_stats)
 
-                notification_manager.draw(screen, font)
-                player_controller.draw_overlay(screen, font2)
-                event_manager.draw(screen, font2)
+                    notification_manager.draw(screen, font)
+                    player_controller.draw_overlay(screen, font2)
+                    event_manager.draw(screen, font2)
 
             if paused:
                 screen.blit(world_surface, (0, 0), area=camera.viewport)
             inspector.draw_highlight(screen, camera)
-            gameplay_panel.draw(screen)
             inspector.draw(screen)
+
+        if legacy_ui_visible and not starting_screen:
+            gameplay_panel.draw(screen)
+        if not starting_screen and barrier_preview_rect and tools_panel.selected_tool == EditorTool.DRAW_BARRIER:
+            _draw_barrier_preview(screen, barrier_preview_rect)
+        tools_panel.draw(screen)
+        toggle_label = font2.render(
+            "UI verbergen" if legacy_ui_visible else "UI tonen",
+            True,
+            settings.BLACK,
+        )
+        pygame.draw.rect(screen, (235, 235, 235), legacy_toggle_rect, border_radius=6)
+        pygame.draw.rect(screen, (70, 70, 70), legacy_toggle_rect, 1, border_radius=6)
+        screen.blit(
+            toggle_label,
+            (
+                legacy_toggle_rect.centerx - toggle_label.get_width() // 2,
+                legacy_toggle_rect.centery - toggle_label.get_height() // 2,
+            ),
+        )
 
         pygame.display.flip()
 
@@ -791,7 +934,9 @@ def run() -> None:
         for event in pygame.event.get():
             if inspector.handle_event(event):
                 continue
-            if gameplay_panel.handle_event(event):
+            if tools_panel.handle_event(event):
+                continue
+            if legacy_ui_visible and gameplay_panel.handle_event(event):
                 continue
             if event.type == pygame.QUIT:
                 running = False
@@ -810,12 +955,23 @@ def run() -> None:
                             (settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT),
                         )
                     panel_rect.x = screen.get_width() - panel_width - panel_margin
+                    previous_tool = tools_panel.selected_tool
+                    previous_brush = tools_panel.brush_size
+                    tools_visible = tools_panel.visible
                     gameplay_panel = GameplaySettingsPanel(
                         panel_rect,
                         font2,
                         font3,
                         _build_slider_configs(),
                     )
+                    tools_panel = ToolsPanel(
+                        font2,
+                        font3,
+                        topleft=(24, settings.WINDOW_HEIGHT - 300),
+                    )
+                    tools_panel.selected_tool = previous_tool
+                    tools_panel.brush_size = previous_brush
+                    tools_panel.visible = tools_visible
                 elif event.key == pygame.K_p:
                     paused = not paused
                 elif event.key == pygame.K_n:
@@ -856,6 +1012,9 @@ def run() -> None:
                         player_controller.cycle_attribute(direction)
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button == 1 and legacy_toggle_rect.collidepoint(event.pos):
+                    legacy_ui_visible = not legacy_ui_visible
+                    continue
                 if starting_screen:
                     if start_button.collidepoint(event.pos):
                         bootstrap.reset_simulation(
@@ -893,7 +1052,11 @@ def run() -> None:
                                 camera.reset()
                                 break
                 else:
-                    if reset_button.collidepoint(event.pos):
+                    if (
+                        event.button == 1
+                        and legacy_ui_visible
+                        and reset_button.collidepoint(event.pos)
+                    ):
                         bootstrap.reset_simulation(
                             state,
                             world,
@@ -912,16 +1075,54 @@ def run() -> None:
                         )
                         starting_screen = True
                         paused = True
-                    elif show_dna_button.collidepoint(event.pos):
+                    elif (
+                        event.button == 1
+                        and legacy_ui_visible
+                        and show_dna_button.collidepoint(event.pos)
+                    ):
                         notification_manager.add("DNA-ID overlay gewisseld", settings.SEA)
                         show_dna_id = not show_dna_id
-                    elif show_dna_info_button.collidepoint(event.pos):
+                    elif (
+                        event.button == 1
+                        and legacy_ui_visible
+                        and show_dna_info_button.collidepoint(event.pos)
+                    ):
                         show_dna_info = not show_dna_info
                     else:
+                        if event.button == 1 and tools_panel.selected_tool != EditorTool.INSPECT:
+                            _begin_tool_action(event.pos)
+                            continue
                         selected_lifeform = _lifeform_at_screen_pos(event.pos)
                         if selected_lifeform is not None:
                             inspector.select(selected_lifeform)
                         else:
                             inspector.clear()
+            elif event.type == pygame.MOUSEMOTION and not starting_screen:
+                if painting_tool == EditorTool.PAINT_MOSS and event.buttons[0]:
+                    _spawn_moss_cluster(_screen_to_world(event.pos), notify=False)
+                elif painting_tool == EditorTool.PAINT_WALL and event.buttons[0]:
+                    _stamp_wall_segment(_screen_to_world(event.pos))
+                if (
+                    tools_panel.selected_tool == EditorTool.DRAW_BARRIER
+                    and barrier_drag_start is not None
+                    and event.buttons[0]
+                ):
+                    barrier_preview_rect = _world_rect_from_points(
+                        barrier_drag_start,
+                        _screen_to_world(event.pos),
+                    )
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                painting_tool = None
+                if (
+                    barrier_drag_start is not None
+                    and barrier_preview_rect is not None
+                    and tools_panel.selected_tool == EditorTool.DRAW_BARRIER
+                ):
+                    if barrier_preview_rect.width > 6 and barrier_preview_rect.height > 6:
+                        world.barriers.append(
+                            Barrier(barrier_preview_rect.copy(), (80, 80, 120), "muur"),
+                        )
+                    barrier_drag_start = None
+                    barrier_preview_rect = None
 
     pygame.quit()

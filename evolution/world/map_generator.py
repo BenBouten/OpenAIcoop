@@ -347,44 +347,8 @@ def _build_weather_patterns() -> Dict[str, List[WeatherPattern]]:
 
 def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
     patterns = _build_weather_patterns()
-    barriers = _create_border_barriers(width, height)
-    barriers.extend(
-        [
-            Barrier(
-                pygame.Rect(width // 3, 140, 40, height - 280),
-                (120, 110, 95),
-                "rotsrug",
-            ),
-            Barrier(
-                pygame.Rect(2 * width // 3, height // 2, 30, height // 2 - 60),
-                (110, 100, 85),
-                "canyon",
-            ),
-        ]
-    )
-
-    sea_rect = pygame.Rect(40, height - 220, width // 2, 220)
-    sea = WaterBody("sea", [sea_rect], color=(64, 140, 200))
-
-    river_segments: List[pygame.Rect] = []
-    segment_width = 32
-    x = width - 220
-    y = 0
-    while y < height:
-        segment = pygame.Rect(x, y, segment_width, 140)
-        river_segments.append(segment)
-        x += random.randint(-80, 60)
-        x = max(width // 3, min(width - segment_width - 40, x))
-        y += 120
-    river = WaterBody("river", river_segments, color=(60, 150, 210))
-
-    delta_segments: List[pygame.Rect] = []
-    for idx, segment in enumerate(river_segments[-3:]):
-        offset = idx * 50
-        delta_segments.append(
-            pygame.Rect(segment.x - offset, segment.bottom - 60, segment_width + 100, 80)
-        )
-    delta = WaterBody("delta", delta_segments, color=(70, 170, 220))
+    barriers: List[Barrier] = []
+    water_bodies: List[WaterBody] = []
 
     biomes = [
         _create_biome_region(
@@ -474,7 +438,7 @@ def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
     return MapBlueprint(
         background_color=(228, 222, 208),
         barriers=barriers,
-        water_bodies=[sea, river, delta],
+        water_bodies=water_bodies,
         biomes=biomes,
         vegetation_masks=vegetation_masks,
     )
@@ -510,21 +474,8 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
         height,
     )
 
-    water_bodies = [
-        WaterBody("open_sea", [vertical_strait, horizontal_strait], color=(58, 150, 210)),
-        WaterBody("lagoon", [lagoon1, lagoon2], color=(70, 190, 220)),
-    ]
-
-    barriers = _create_border_barriers(width, height)
-    reef_color = (100, 120, 120)
-    reef_top = pygame.Rect(vertical_strait.left - 30, strait_top - 30, strait_width + 60, 20)
-    reef_bottom = pygame.Rect(vertical_strait.left - 30, strait_top + strait_height + 10, strait_width + 60, 20)
-    barriers.extend(
-        [
-            Barrier(reef_top, reef_color, "rif"),
-            Barrier(reef_bottom, reef_color, "rif"),
-        ]
-    )
+    water_bodies: List[WaterBody] = []
+    barriers: List[Barrier] = []
 
     margin = 80
     top_left = _rect_from_bounds(
@@ -651,43 +602,8 @@ def _generate_archipelago(width: int, height: int) -> MapBlueprint:
 
 def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
     patterns = _build_weather_patterns()
-
-    barriers = _create_border_barriers(width, height)
-    barriers.extend(
-        [
-            Barrier(
-                pygame.Rect(60, height // 3, 50, height // 3),
-                (200, 178, 120),
-                "duinrug",
-            ),
-            Barrier(
-                pygame.Rect(width - 140, 140, 32, height - 280),
-                (70, 120, 70),
-                "boomwortels",
-            ),
-            Barrier(
-                pygame.Rect(width // 2 - 160, height // 2 - 24, 320, 48),
-                (150, 130, 90),
-                "klif",
-            ),
-        ]
-    )
-
-    oasis_rect = pygame.Rect(width // 4 - 70, height // 2 + 40, 140, 120)
-    river_segments: List[pygame.Rect] = []
-    river_width = 42
-    x = width // 2 + 80
-    y = 60
-    while y < height - 60:
-        segment = pygame.Rect(x, y, river_width, 150)
-        river_segments.append(segment)
-        x += random.randint(-40, 60)
-        x = max(width // 2 + 40, min(width - river_width - 80, x))
-        y += 110
-    water_bodies = [
-        WaterBody("oasis", [oasis_rect], color=(80, 180, 210)),
-        WaterBody("jungle_river", river_segments, color=(50, 140, 180)),
-    ]
+    barriers: List[Barrier] = []
+    water_bodies: List[WaterBody] = []
 
     desert_rect = _rect_from_bounds(40, 60, width // 2 + 20, height - 60, width, height)
     dunes_rect = _rect_from_bounds(60, height // 2 + 80, width // 2 - 140, height - 80, width, height)
