@@ -42,6 +42,15 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
             if enemy.health_now <= 0:
                 effects.spawn_status_label(
                     enemy_anchor,
+            effects.spawn_damage_label(_lifeform_anchor(enemy), damage)
+            effects.spawn_bite_label(
+                _lifeform_anchor(lifeform),
+                "Chomp!",
+                color=(255, 180, 120),
+            )
+            if enemy.health_now <= 0:
+                effects.spawn_bite_label(
+                    _lifeform_anchor(enemy),
                     "KO!",
                     color=(255, 220, 120),
                 )
@@ -78,6 +87,15 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
             if prey.health_now <= 0:
                 effects.spawn_status_label(
                     prey_anchor,
+            effects.spawn_damage_label(_lifeform_anchor(prey), damage)
+            effects.spawn_bite_label(
+                _lifeform_anchor(lifeform),
+                "Chomp!",
+                color=(255, 200, 160),
+            )
+            if prey.health_now <= 0:
+                effects.spawn_bite_label(
+                    _lifeform_anchor(prey),
                     "KO!",
                     color=(255, 240, 150),
                 )
@@ -122,6 +140,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                 anchor = _lifeform_anchor(lifeform)
                 bite_text = f"+{int(round(hunger_reduction))}"
                 effects.spawn_status_label(anchor, bite_text, color=(120, 220, 160))
+                effects.spawn_bite_label(anchor, bite_text)
                 plant_center = (
                     plant.x + plant.width / 2,
                     plant.y + plant.height / 2,

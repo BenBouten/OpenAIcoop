@@ -5,6 +5,7 @@ from __future__ import annotations
 import random
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Iterable, List, Tuple
 
 import pygame
 from pygame.math import Vector2
@@ -35,6 +36,9 @@ class FloatingLabel:
         self.velocity *= 0.9
         # Encourage the label to float upwards slowly.
         self.velocity.y -= 7.0 * delta
+        self.velocity *= 0.88
+        # Encourage the label to float upwards slowly.
+        self.velocity.y -= 6.0 * delta
         self.time_left -= delta
 
     @property
@@ -59,12 +63,13 @@ class ConfettiParticle:
         self.velocity *= 0.9
         # Let the particle gently fall downwards over time.
         self.velocity.y += 14.0 * delta
+        self.velocity.y += 12.0 * delta
         self.time_left -= delta
 
     @property
     def alpha(self) -> int:
         ratio = max(0.0, min(1.0, self.time_left / self.duration))
-        return int(220 * ratio)
+        return int(200 * ratio)
 
 
 class EffectManager:
