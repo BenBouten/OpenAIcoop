@@ -25,6 +25,17 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         damage = max(1, lifeform.attack_power_now - enemy.defence_power_now / 2)
         enemy.health_now -= damage
         enemy.wounded += 2
+        lifeform.record_activity(
+            "Valt vijand aan",
+            doel=getattr(enemy, "id", None),
+            schade=damage,
+        )
+        if hasattr(enemy, "record_activity"):
+            enemy.record_activity(
+                "Wordt aangevallen",
+                aanvaller=getattr(lifeform, "id", None),
+                schade=damage,
+            )
         if effects:
             enemy_anchor = _lifeform_anchor(enemy)
             lifeform_anchor = _lifeform_anchor(lifeform)
@@ -72,6 +83,17 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         lifeform.hunger = max(settings.HUNGER_MINIMUM, lifeform.hunger - 40)
         if context:
             context.action(f"{lifeform.id} valt {prey.id} aan")
+        lifeform.record_activity(
+            "Aanvallen prooi",
+            doel=getattr(prey, "id", None),
+            schade=damage,
+        )
+        if hasattr(prey, "record_activity"):
+            prey.record_activity(
+                "Wordt opgejaagd",
+                aanvaller=getattr(lifeform, "id", None),
+                schade=damage,
+            )
         if effects:
             prey_anchor = _lifeform_anchor(prey)
             lifeform_anchor = _lifeform_anchor(lifeform)
@@ -144,6 +166,11 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
             )
             lifeform.hunger = max(
                 settings.HUNGER_MINIMUM, lifeform.hunger - hunger_reduction
+            )
+            lifeform.record_activity(
+                "Eet plant",
+                voeding=total_nutrition,
+                positie=(plant.x, plant.y),
             )
             if effects:
                 anchor = _lifeform_anchor(lifeform)

@@ -177,6 +177,12 @@ class Lifeform:
 
         self._foraging_focus = False
 
+        self.last_activity: Dict[str, Any] = {
+            "name": "Verkennen",
+            "details": {},
+            "timestamp": pygame.time.get_ticks(),
+        }
+
         # Wander / escape state
         initial_wander = Vector2(random.uniform(-1, 1), random.uniform(-1, 1))
         if initial_wander.length_squared() == 0:
@@ -227,6 +233,8 @@ class Lifeform:
         self.y_direction = escape.y
         self._boundary_contact_frames = 0
         self._stuck_frames = 0
+
+        self.record_activity("Vluchten", reden=reason)
 
         logger.warning(
             "Lifeform %s executing escape manoeuvre (%s) towards vector (%.2f, %.2f)",
@@ -597,6 +605,8 @@ class Lifeform:
         if self.health_now > 0:
             return False
 
+        self.record_activity("Gestorven")
+
         context = self.notification_context
         if context:
             context.action(f"{self.id} is gestorven")
@@ -658,6 +668,16 @@ class Lifeform:
         if self.defence_power_now > 100:
             self.defence_power_now = 100
 
+    def record_activity(self, name: str, **details: Any) -> None:
+        """Sla de laatst uitgevoerde actie op voor inspectie-overlays."""
+
+        timestamp = pygame.time.get_ticks()
+        self.last_activity = {
+            "name": name,
+            "details": details,
+            "timestamp": timestamp,
+        }
+
     def grow(self) -> None:
         if self.age < self.maturity:
             factor = self.age / self.maturity
@@ -675,6 +695,16 @@ class Lifeform:
             retry = max(1, settings.POPULATION_CAP_RETRY_COOLDOWN)
             self.reproduced_cooldown = retry
             partner.reproduced_cooldown = retry
+            self.record_activity(
+                "Reproductie mislukt",
+                reden="populatie limiet",
+                partner=partner.id,
+            )
+            partner.record_activity(
+                "Reproductie mislukt",
+                reden="populatie limiet",
+                partner=self.id,
+            )
             return False
 
         child_dna_profile, metadata = reproduction.create_offspring_profile(
@@ -728,6 +758,9 @@ class Lifeform:
             self.y,
             child.dna_id,
         )
+
+        self.record_activity("Reproduceert", partner=partner.id, kind=child.id)
+        partner.record_activity("Reproduceert", partner=self.id, kind=child.id)
 
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
         partner.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
