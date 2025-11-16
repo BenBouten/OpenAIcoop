@@ -36,6 +36,7 @@ from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
 from ..rendering.lifeform_inspector import LifeformInspector
 from ..rendering.tools_panel import EditorTool, ToolsPanel
 from ..rendering.stats_window import StatsWindow
+from ..physics.test_creatures import build_fin_swimmer_prototype
 from ..systems import stats as stats_system
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
@@ -253,6 +254,28 @@ def run() -> None:
         panel_width,
         settings.WINDOW_HEIGHT - 40,
     )
+
+    def _run_modular_creature_test() -> Dict[str, float]:
+        """Build and sample the first modular creature prototype."""
+
+        creature = build_fin_swimmer_prototype()
+        aggregation = creature.graph.aggregate_physics_stats()
+        dt = 1.0 / 60.0
+        samples = []
+        for _ in range(180):
+            thrust_vector = creature.step(dt)
+            samples.append(thrust_vector.length())
+        average_thrust = sum(samples) / len(samples) if samples else 0.0
+        peak_thrust = max(samples) if samples else 0.0
+        return {
+            "name": creature.name,
+            "modules": float(len(creature.graph)),
+            "mass": creature.physics.mass,
+            "drag": creature.physics.drag_coefficient,
+            "avg_thrust": average_thrust,
+            "peak_thrust": peak_thrust,
+            "frontal_area": aggregation.frontal_area,
+        }
 
     def _set_environment_modifier(key: str, value: float) -> None:
         numeric_value = float(value)
@@ -591,6 +614,7 @@ def run() -> None:
     painting_tool: Optional[EditorTool] = None
     barrier_drag_start: Optional[Tuple[float, float]] = None
     barrier_preview_rect: Optional[pygame.Rect] = None
+    modular_test_report: Optional[Dict[str, float]] = None
 
     running = True
     starting_screen = True
@@ -604,6 +628,12 @@ def run() -> None:
             settings.WINDOW_HEIGHT // 2 - 30,
             200,
             60,
+        )
+        modular_test_button = pygame.Rect(
+            start_button.left,
+            start_button.bottom + 80,
+            start_button.width,
+            start_button.height,
         )
         reset_button = pygame.Rect(30, settings.WINDOW_HEIGHT - 60, 180, 40)
         show_dna_button = pygame.Rect(
@@ -648,6 +678,13 @@ def run() -> None:
             text_rect = start_text.get_rect(center=start_button.center)
             screen.blit(start_text, text_rect)
 
+            pygame.draw.rect(screen, settings.SEA, modular_test_button)
+            pygame.draw.rect(screen, settings.BLACK, modular_test_button, 3)
+
+            test_text = button_font.render("Test prototype", True, settings.BLACK)
+            test_rect = test_text.get_rect(center=modular_test_button.center)
+            screen.blit(test_text, test_rect)
+
             title_surface = title_font.render("Evolution Sim", True, settings.BLACK)
             screen.blit(title_surface, (50, 40))
 
@@ -660,6 +697,30 @@ def run() -> None:
             for idx, line in enumerate(instructions):
                 info_surface = info_font.render(line, True, settings.BLACK)
                 screen.blit(info_surface, (50, 110 + idx * 32))
+
+            report_y = modular_test_button.bottom + 20
+            report_title = info_font.render(
+                "Modulaire creature testresultaat:", True, settings.BLACK
+            )
+            screen.blit(report_title, (50, report_y))
+            report_lines: List[str]
+            if modular_test_report is None:
+                report_lines = [
+                    "Nog niet uitgevoerd. Klik op 'Test prototype' voor een snelle check.",
+                ]
+            else:
+                report_lines = [
+                    f"Naam: {modular_test_report['name']}",
+                    f"Modules: {int(modular_test_report['modules'])}",
+                    f"Massa: {modular_test_report['mass']:.1f}",
+                    f"Frontal area: {modular_test_report['frontal_area']:.1f}",
+                    f"Drag-coëfficiënt: {modular_test_report['drag']:.2f}",
+                    f"Gem. stuwkracht: {modular_test_report['avg_thrust']:.1f}",
+                    f"Piek stuwkracht: {modular_test_report['peak_thrust']:.1f}",
+                ]
+            for idx, line in enumerate(report_lines):
+                info_surface = info_font.render(line, True, settings.BLACK)
+                screen.blit(info_surface, (50, report_y + 32 + idx * 28))
 
             button_width = 180
             button_height = 32
@@ -1003,6 +1064,11 @@ def run() -> None:
                         notification_manager.add(
                             "Gebruik WASD of pijltjes om de camera te bewegen (Shift = snel)",
                             settings.BLUE,
+                        )
+                    elif modular_test_button.collidepoint(event.pos):
+                        modular_test_report = _run_modular_creature_test()
+                        notification_manager.add(
+                            "Prototype test uitgevoerd", settings.SEA
                         )
                     else:
                         previous_type = state.world_type
