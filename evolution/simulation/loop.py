@@ -29,6 +29,7 @@ except ImportError:  # pragma: no cover - fallback when matplotlib is missing
 import pygame
 from pygame.math import Vector2
 
+from ..body.attachment import Joint, JointType
 from ..config import settings
 from ..entities import movement
 from ..entities.lifeform import Lifeform
@@ -181,6 +182,32 @@ MODULE_COLORS = {
     "sensor": (214, 235, 255),
 }
 
+BASE_MODULE_ALPHA = 210
+
+MODULE_RENDER_STYLES: Dict[str, Dict[str, Tuple[float, float, float] | int]] = {
+    "default": {"tint": (0.95, 0.95, 1.05), "alpha_offset": -15},
+    "core": {"tint": (1.0, 1.0, 1.0), "alpha_offset": 25},
+    "head": {"tint": (1.15, 1.08, 1.05), "alpha_offset": -5},
+    "limb": {"tint": (0.85, 1.05, 1.25), "alpha_offset": -30},
+    "propulsion": {"tint": (1.3, 0.92, 0.78), "alpha_offset": -10},
+    "sensor": {"tint": (1.1, 1.3, 1.4), "alpha_offset": -40},
+}
+
+JOINT_COLORS = {
+    JointType.FIXED: (210, 210, 220),
+    JointType.HINGE: (255, 210, 140),
+    JointType.BALL: (160, 225, 255),
+    JointType.MUSCLE: (255, 150, 180),
+}
+
+
+def _clamp_channel(value: float) -> int:
+    return max(0, min(255, int(value)))
+
+
+def _tint_color(base: Tuple[int, int, int], tint: Tuple[float, float, float]) -> Tuple[int, int, int]:
+    return tuple(_clamp_channel(base[idx] * tint[idx]) for idx in range(3))
+
 
 @dataclass
 class PrototypeSwimPreview:
@@ -194,9 +221,11 @@ class PrototypeSwimPreview:
     needs_reset: bool = True
     trail: Deque[Vector2] = field(default_factory=lambda: deque(maxlen=40))
     layout: Dict[str, Vector2] = field(default_factory=dict)
+    torso_color: Tuple[int, int, int] = field(init=False)
 
     def __post_init__(self) -> None:
         self.layout = self._layout_graph(self.creature.graph)
+        self.torso_color = self._resolve_torso_color()
 
     @staticmethod
     def _layout_graph(graph) -> Dict[str, Vector2]:
@@ -322,6 +351,9 @@ class PrototypeSwimPreview:
                 [_vec(start), _vec(control), _vec(end)],
                 width,
             )
+            joint = self._joint_for_connection(node)
+            if joint:
+                self._draw_joint_indicator(surface, start, direction, joint)
 
         for node_id, offset in self.layout.items():
             node = self.creature.graph.get_node(node_id)
@@ -331,17 +363,130 @@ class PrototypeSwimPreview:
             height = max(12, int(module.size[1] * 28))
             rect = pygame.Rect(0, 0, length, height)
             rect.center = (int(center.x), int(center.y))
-            color = MODULE_COLORS.get(module.module_type, (140, 210, 220))
-            pygame.draw.ellipse(surface, color, rect)
-            pygame.draw.ellipse(surface, (10, 25, 40), rect, 2)
+            color, alpha = self._module_visuals(module.module_type)
+            module_surface = pygame.Surface(rect.size, pygame.SRCALPHA)
+            ellipse_rect = pygame.Rect(0, 0, rect.width, rect.height)
+            pygame.draw.ellipse(module_surface, (*color, alpha), ellipse_rect)
+            pygame.draw.ellipse(
+                module_surface,
+                (15, 30, 45, max(alpha, 160)),
+                ellipse_rect,
+                2,
+            )
+            surface.blit(module_surface, rect)
             if module.module_type == "propulsion":
                 flame = rect.copy()
                 flame.width = max(6, rect.width // 3)
                 flame.left = rect.left - flame.width + 4
-                pygame.draw.ellipse(surface, (255, 200, 150), flame)
+                flame_surface = pygame.Surface(flame.size, pygame.SRCALPHA)
+                pygame.draw.ellipse(
+                    flame_surface,
+                    (255, 200, 150, max(120, alpha - 20)),
+                    pygame.Rect(0, 0, flame.width, flame.height),
+                )
+                surface.blit(flame_surface, flame)
             if module.module_type == "head":
                 eye_center = (rect.centerx + rect.width // 4, rect.centery - rect.height // 4)
                 pygame.draw.circle(surface, (15, 30, 60), eye_center, 4)
+            self._draw_orientation_arrow(surface, node_id, center, positions)
+
+    def _module_visuals(self, module_type: str) -> Tuple[Tuple[int, int, int], int]:
+        style = MODULE_RENDER_STYLES.get(module_type, MODULE_RENDER_STYLES["default"])
+        tint = style.get("tint", (1.0, 1.0, 1.0))
+        tinted = _tint_color(self.torso_color, tint)  # type: ignore[arg-type]
+        alpha_offset = int(style.get("alpha_offset", 0))
+        alpha = max(60, min(255, BASE_MODULE_ALPHA + alpha_offset))
+        return tinted, alpha
+
+    def _resolve_torso_color(self) -> Tuple[int, int, int]:
+        raw_color = getattr(self.creature, "torso_color", None) or getattr(
+            self.creature, "body_color", None
+        )
+        if raw_color is not None:
+            return tuple(_clamp_channel(channel) for channel in raw_color)
+        base = MODULE_COLORS.get("core", (72, 130, 168))
+        seed = abs(hash(self.creature.name))
+        jitter = (
+            ((seed >> 0) & 0xFF) - 128,
+            ((seed >> 8) & 0xFF) - 128,
+            ((seed >> 16) & 0xFF) - 128,
+        )
+        return tuple(
+            _clamp_channel(base[idx] + jitter[idx] // 6)
+            for idx in range(3)
+        )
+
+    def _joint_for_connection(self, node) -> Optional[Joint]:
+        if node.parent is None or not node.attachment_point:
+            return None
+        try:
+            parent_node = self.creature.graph.get_node(node.parent)
+            point = parent_node.module.get_attachment_point(node.attachment_point)
+        except KeyError:
+            return None
+        return point.joint
+
+    def _draw_joint_indicator(
+        self, surface: pygame.Surface, position: Vector2, direction: Vector2, joint: Joint
+    ) -> None:
+        color = JOINT_COLORS.get(joint.joint_type, (220, 220, 220))
+        center = (int(position.x), int(position.y))
+        pygame.draw.circle(surface, color, center, 6, 2)
+        base_angle = math.atan2(direction.y, direction.x) if direction.length_squared() > 1e-4 else 0.0
+        if joint.joint_type == JointType.HINGE and joint.swing_limits:
+            for limit in joint.swing_limits:
+                total_angle = base_angle + math.radians(limit)
+                endpoint = (
+                    int(position.x + math.cos(total_angle) * 18),
+                    int(position.y + math.sin(total_angle) * 18),
+                )
+                pygame.draw.line(surface, color, center, endpoint, 1)
+        elif joint.joint_type == JointType.BALL:
+            pygame.draw.circle(surface, color, center, 4)
+        elif joint.joint_type == JointType.MUSCLE:
+            pygame.draw.circle(surface, color, center, 3)
+
+    def _orientation_vector(self, node_id: str, positions: Dict[str, Vector2]) -> Vector2:
+        node = self.creature.graph.get_node(node_id)
+        center = positions.get(node_id, Vector2())
+        if node.parent and node.parent in positions:
+            direction = center - positions[node.parent]
+            if direction.length_squared() > 1e-4:
+                return direction
+        if node.children:
+            accum = Vector2()
+            count = 0
+            for child_id in node.children:
+                if child_id in positions:
+                    accum += positions[child_id] - center
+                    count += 1
+            if count and accum.length_squared() > 1e-4:
+                return accum / count
+        return Vector2(1.0, 0.0)
+
+    def _draw_orientation_arrow(
+        self, surface: pygame.Surface, node_id: str, center: Vector2, positions: Dict[str, Vector2]
+    ) -> None:
+        direction = self._orientation_vector(node_id, positions)
+        if direction.length_squared() <= 1e-4:
+            return
+        direction = direction.normalize()
+        module = self.creature.graph.get_node(node_id).module
+        arrow_length = max(18, int(module.size[2] * 32))
+        start = Vector2(center.x, center.y)
+        end = start + direction * arrow_length
+        pygame.draw.line(surface, (250, 250, 255), (int(start.x), int(start.y)), (int(end.x), int(end.y)), 2)
+        left = end - direction * 4 + direction.rotate(140) * 6
+        right = end - direction * 4 + direction.rotate(-140) * 6
+        pygame.draw.polygon(
+            surface,
+            (250, 250, 255),
+            [
+                (int(end.x), int(end.y)),
+                (int(left.x), int(left.y)),
+                (int(right.x), int(right.y)),
+            ],
+        )
 
 
 def _draw_vertical_gradient(surface: pygame.Surface, rect: pygame.Rect, top_color: Tuple[int, int, int], bottom_color: Tuple[int, int, int]) -> None:
