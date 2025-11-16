@@ -11,7 +11,7 @@ class SimulationState:
     lifeforms: List = field(default_factory=list)
     plants: List = field(default_factory=list)
     world: 'World' = None
-    world_type: str = "Rift Valley"
+    world_type: str = "Abyssal Ocean"
     camera: 'Camera' = None
     notifications: 'NotificationManager' = None
     notification_context: object = None
