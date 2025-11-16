@@ -6,4 +6,6 @@ __all__ = [
     "profiles",
     "mutation",
     "selection",
+    "genes",
+    "factory",
 ]
