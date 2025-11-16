@@ -12,9 +12,9 @@ from .genotype import MorphologyGenotype, clamp_float, clamp_int
 class MorphStats:
     """Derived morphology statistics that influence gameplay systems."""
 
-    ground_speed_multiplier: float
+    swim_speed_multiplier: float
     turn_rate: float
-    traction: float
+    grip_strength: float
     vision_range_bonus: float
     fov_cosine_threshold: float
     perception_rays: int
@@ -50,13 +50,18 @@ def compute_morph_stats(genotype: MorphologyGenotype, base_size: Tuple[int, int]
     ears_factor = genotype.ears / 6.0
     whisker_factor = genotype.whiskers / 12.0
 
-    ground_speed_multiplier = 0.7 + legs_factor * 0.6 - fins_factor * 0.25
-    ground_speed_multiplier -= max(0.0, fins_factor - 0.5) * 0.2
-    ground_speed_multiplier = clamp_float(ground_speed_multiplier, 0.4, 1.8)
+    swim_speed_multiplier = 0.8 + fins_factor * 0.55 - legs_factor * 0.18
+    swim_speed_multiplier += max(0.0, fins_factor - 0.5) * 0.25
+    swim_speed_multiplier -= max(0.0, legs_factor - 0.25) * 0.18
+    swim_speed_multiplier = clamp_float(swim_speed_multiplier, 0.45, 2.2)
 
-    turn_rate = clamp_float(0.35 + fins_factor * 0.3 + eyes_factor * 0.2, 0.2, 1.0)
+    turn_rate = clamp_float(0.35 + fins_factor * 0.3 + eyes_factor * 0.2, 0.2, 1.05)
 
-    traction = clamp_float(0.7 + legs_factor * 0.5 + whisker_factor * 0.25 - fins_factor * 0.2, 0.4, 1.8)
+    grip_strength = clamp_float(
+        0.6 + legs_factor * 0.45 + whisker_factor * 0.18 - fins_factor * 0.15,
+        0.35,
+        2.0,
+    )
 
     vision_range_bonus = clamp_float(
         diagonal * (0.25 + eyes_factor * 0.4 + antennae_factor * 0.45),
@@ -99,9 +104,9 @@ def compute_morph_stats(genotype: MorphologyGenotype, base_size: Tuple[int, int]
     pigment_tint = _compute_pigment_tint(genotype.pigment)
 
     return MorphStats(
-        ground_speed_multiplier=ground_speed_multiplier,
+        swim_speed_multiplier=swim_speed_multiplier,
         turn_rate=turn_rate,
-        traction=traction,
+        grip_strength=grip_strength,
         vision_range_bonus=vision_range_bonus,
         fov_cosine_threshold=fov_cosine_threshold,
         perception_rays=perception_rays,

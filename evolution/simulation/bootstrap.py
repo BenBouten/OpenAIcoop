@@ -46,6 +46,7 @@ def reset_simulation(
     state.dna_lineage.clear()
     state.lifeform_genetics.clear()
     state.plants.clear()
+    state.carcasses.clear()
     state.death_ages.clear()
     state.dna_home_biome.clear()
     state.lifeform_id_counter = 0

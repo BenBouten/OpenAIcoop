@@ -202,6 +202,7 @@ player_controller: PlayerController
 lifeforms: List[Lifeform] = state.lifeforms
 dna_profiles: List[dict] = state.dna_profiles
 plants: List = state.plants
+carcasses: List = state.carcasses
 
 death_ages: List[int] = state.death_ages
 latest_stats: Optional[Dict[str, float]] = None
@@ -709,6 +710,13 @@ def run() -> None:
                     plant.set_size()
                     plant.regrow(world, plants)
                     plant.draw(world_surface)
+
+                for carcass in list(carcasses):
+                    carcass.update(world, delta_time)
+                    if carcass.is_depleted():
+                        carcasses.remove(carcass)
+                        continue
+                    carcass.draw(world_surface)
 
                 lifeform_snapshot = list(lifeforms)
                 average_maturity = (
