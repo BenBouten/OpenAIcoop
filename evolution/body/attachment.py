@@ -49,9 +49,26 @@ class AttachmentPoint:
     joint: Joint
     allowed_modules: Sequence[Type["BodyModule"]]
     description: str = ""
+    max_child_mass: float | None = None
+    allowed_materials: Sequence[str] | None = None
 
     def allows(self, module: "BodyModule" | Type["BodyModule"]) -> bool:
         """Return ``True`` if the ``module`` is allowed to attach here."""
 
         module_type = module if isinstance(module, type) else type(module)
-        return any(issubclass(module_type, allowed) for allowed in self.allowed_modules)
+        if not any(issubclass(module_type, allowed) for allowed in self.allowed_modules):
+            return False
+
+        if isinstance(module, type):
+            return True
+
+        stats = getattr(module, "stats", None)
+        if self.max_child_mass is not None:
+            if stats is None or stats.mass > self.max_child_mass:
+                return False
+
+        if self.allowed_materials is not None:
+            material = getattr(module, "material", None)
+            if material is None or material not in self.allowed_materials:
+                return False
+        return True
