@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from math import prod
 from typing import Dict, Iterator, List, Optional
 
 from .modules import BodyModule
@@ -29,6 +30,100 @@ class BodyGraph:
     def __init__(self, root_id: str, root_module: BodyModule) -> None:
         self.root_id = root_id
         self.nodes: Dict[str, BodyNode] = {root_id: BodyNode(module=root_module)}
+
+    # ------------------------------------------------------------------
+    # Aggregation helpers
+
+    @dataclass(frozen=True)
+    class PhysicsAggregation:
+        """Aggregated geometry/force stats derived from all modules."""
+
+        mass: float
+        volume: float
+        frontal_area: float
+        lateral_area: float
+        dorsal_area: float
+        drag_area: float
+        total_thrust: float
+        total_grip: float
+        power_output: float
+        energy_cost: float
+        buoyancy_volume: float
+
+    def _aggregate_geometry(self) -> PhysicsAggregation:
+        """Internal helper that walks modules once to derive stats."""
+
+        mass = 0.0
+        volume = 0.0
+        frontal_area = 0.0
+        lateral_area = 0.0
+        dorsal_area = 0.0
+        drag_area = 0.0
+        thrust = 0.0
+        grip = 0.0
+        power_output = 0.0
+        energy_cost = 0.0
+        buoyancy_volume = 0.0
+
+        for module in self.iter_modules():
+            stats = module.stats
+            width, height, length = module.size
+            module_volume = max(0.0, prod(module.size))
+            module_frontal = max(0.0, width * height)
+            module_lateral = max(0.0, height * length)
+            module_dorsal = max(0.0, width * length)
+
+            streamlining = self._streamlining_factor(module)
+            module_drag = (
+                module_frontal * streamlining
+                + module_lateral * 0.5 * streamlining
+                + module_dorsal * 0.35 * streamlining
+            )
+
+            thrust += float(getattr(module, "thrust", 0.0))
+            thrust += float(getattr(module, "thrust_power", 0.0))
+            grip += float(getattr(module, "grip_strength", 0.0))
+
+            mass += float(stats.mass)
+            power_output += float(stats.power_output)
+            energy_cost += float(stats.energy_cost)
+            volume += module_volume
+            frontal_area += module_frontal
+            lateral_area += module_lateral
+            dorsal_area += module_dorsal
+            drag_area += module_drag
+            buoyancy_volume += module_volume
+
+        return BodyGraph.PhysicsAggregation(
+            mass=mass,
+            volume=volume,
+            frontal_area=frontal_area,
+            lateral_area=lateral_area,
+            dorsal_area=dorsal_area,
+            drag_area=drag_area,
+            total_thrust=thrust,
+            total_grip=grip,
+            power_output=power_output,
+            energy_cost=energy_cost,
+            buoyancy_volume=buoyancy_volume,
+        )
+
+    @staticmethod
+    def _streamlining_factor(module: BodyModule) -> float:
+        """Return a heuristic factor to describe hydrodynamic drag."""
+
+        base = 1.0
+        if module.module_type == "propulsion":
+            base = 0.75
+        elif module.module_type == "head":
+            base = 0.85
+        elif module.module_type == "limb":
+            base = 1.2
+        elif module.module_type == "sensor":
+            base = 0.95
+        elif module.module_type == "core":
+            base = 0.9
+        return base
 
     def add_module(
         self,
@@ -137,6 +232,36 @@ class BodyGraph:
         """Aggregate mass by summing each module's stats."""
 
         return sum(node.module.stats.mass for node in self.nodes.values())
+
+    def total_volume(self) -> float:
+        """Aggregate module volume (used for buoyancy calculations)."""
+
+        return self.aggregate_physics_stats().volume
+
+    def total_thrust(self) -> float:
+        """Sum of all locomotion modules' thrust output."""
+
+        return self.aggregate_physics_stats().total_thrust
+
+    def total_grip_strength(self) -> float:
+        """Sum of limb grip strengths for crawling/balancing heuristics."""
+
+        return self.aggregate_physics_stats().total_grip
+
+    def drag_signature(self) -> float:
+        """Return a heuristic drag area derived from module cross-sections."""
+
+        return self.aggregate_physics_stats().drag_area
+
+    def buoyancy_volume(self) -> float:
+        """Effective displaced volume used to estimate buoyancy."""
+
+        return self.aggregate_physics_stats().buoyancy_volume
+
+    def aggregate_physics_stats(self) -> "BodyGraph.PhysicsAggregation":
+        """Expose a cached view combining geometry, forces and resources."""
+
+        return self._aggregate_geometry()
 
     def validate(self) -> None:
         """Run sanity checks to ensure every connection is valid."""
