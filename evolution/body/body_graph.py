@@ -30,6 +30,7 @@ class BodyGraph:
     def __init__(self, root_id: str, root_module: BodyModule) -> None:
         self.root_id = root_id
         self.nodes: Dict[str, BodyNode] = {root_id: BodyNode(module=root_module)}
+        self._physics_cache: Optional["BodyGraph.PhysicsAggregation"] = None
 
     # ------------------------------------------------------------------
     # Aggregation helpers
@@ -148,6 +149,7 @@ class BodyGraph:
 
         parent_node.add_child(node_id, attachment_point)
         self.nodes[node_id] = BodyNode(module=module, parent=parent_id, attachment_point=attachment_point)
+        self._physics_cache = None
 
     def remove_module(self, node_id: str) -> None:
         """Remove ``node_id`` and detach its entire sub-tree."""
@@ -162,6 +164,7 @@ class BodyGraph:
         parent_node.children.pop(node_id, None)
         for child_id in list(node.children.keys()):
             self.remove_module(child_id)
+        self._physics_cache = None
 
     def get_node(self, node_id: str) -> BodyNode:
         try:
@@ -231,7 +234,7 @@ class BodyGraph:
     def total_mass(self) -> float:
         """Aggregate mass by summing each module's stats."""
 
-        return sum(node.module.stats.mass for node in self.nodes.values())
+        return self.aggregate_physics_stats().mass
 
     def total_volume(self) -> float:
         """Aggregate module volume (used for buoyancy calculations)."""
@@ -258,10 +261,37 @@ class BodyGraph:
 
         return self.aggregate_physics_stats().buoyancy_volume
 
+    def frontal_area(self) -> float:
+        """Return the combined frontal cross-section."""
+
+        return self.aggregate_physics_stats().frontal_area
+
+    def lateral_area(self) -> float:
+        """Return the combined lateral cross-section."""
+
+        return self.aggregate_physics_stats().lateral_area
+
+    def dorsal_area(self) -> float:
+        """Return the combined dorsal cross-section."""
+
+        return self.aggregate_physics_stats().dorsal_area
+
+    def available_power(self) -> float:
+        """Return the total power output produced by all modules."""
+
+        return self.aggregate_physics_stats().power_output
+
+    def upkeep_energy_cost(self) -> float:
+        """Return the sum of passive energy costs for the body."""
+
+        return self.aggregate_physics_stats().energy_cost
+
     def aggregate_physics_stats(self) -> "BodyGraph.PhysicsAggregation":
         """Expose a cached view combining geometry, forces and resources."""
 
-        return self._aggregate_geometry()
+        if self._physics_cache is None:
+            self._physics_cache = self._aggregate_geometry()
+        return self._physics_cache
 
     def validate(self) -> None:
         """Run sanity checks to ensure every connection is valid."""

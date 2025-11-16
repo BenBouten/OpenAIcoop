@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from pygame.math import Vector2
+from .vector_math import Vector2
 
 from .physics_body import PhysicsBody
 
