@@ -42,7 +42,9 @@ class ModuleGene:
 
         if "module_type" not in data:
             raise ValueError(f"Gene '{gene_id}' is missing the 'module_type' attribute")
-        module_type = str(data["module_type"])
+        module_type = str(data["module_type"]).strip()
+        if not module_type:
+            raise ValueError(f"Gene '{gene_id}' requires a non-empty module type")
         parameters_raw = data.get("parameters", {})
         parameters: Mapping[str, object]
         if isinstance(parameters_raw, Mapping):
@@ -53,6 +55,10 @@ class ModuleGene:
         parent = str(parent_value) if parent_value not in (None, "") else None
         slot_value = data.get("slot")
         slot = str(slot_value) if slot_value not in (None, "") else None
+        if parent and not slot:
+            raise ValueError(
+                f"Gene '{gene_id}' attaches to '{parent}' but no slot was provided"
+            )
         return cls(
             gene_id=str(gene_id),
             module_type=module_type,
@@ -97,6 +103,12 @@ class Genome:
             "constraints": self.constraints.to_dict(),
             "modules": {gene_id: gene.to_dict() for gene_id, gene in self.genes.items()},
         }
+
+    def validate_structure(self) -> None:
+        """Sanity check ordering and ensure a single root exists."""
+
+        self.root_gene()
+        self.ordered_genes()
 
     def ordered_genes(self) -> List[ModuleGene]:
         """Return genes sorted so that parents appear before their children."""
@@ -149,6 +161,5 @@ def ensure_genome(data: Mapping[str, object]) -> Genome:
     )
     genome = Genome(genes=genes, constraints=constraints)
     # Validate structure early to provide fast feedback.
-    genome.root_gene()
-    genome.ordered_genes()
+    genome.validate_structure()
     return genome
