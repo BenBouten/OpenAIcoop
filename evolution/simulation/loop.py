@@ -492,9 +492,7 @@ def run() -> None:
     def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
         if not lifeforms:
             return None
-        screen_x, screen_y = position
-        world_x = camera.viewport.x + screen_x
-        world_y = camera.viewport.y + screen_y
+        world_x, world_y = camera.screen_to_world(position)
         best: Optional[Lifeform] = None
         best_distance = float("inf")
         for lifeform in lifeforms:
@@ -538,10 +536,7 @@ def run() -> None:
     effects_manager.set_font(font2)
 
     def _screen_to_world(position: Tuple[int, int]) -> Tuple[float, float]:
-        return (
-            camera.viewport.x + position[0],
-            camera.viewport.y + position[1],
-        )
+        return camera.screen_to_world(position)
 
     def _clamp_rect(rect: pygame.Rect) -> pygame.Rect:
         left = max(0, rect.left)
@@ -596,23 +591,24 @@ def run() -> None:
         world.barriers.append(Barrier(rect, (80, 80, 120), "muur"))
 
     def _draw_barrier_preview(surface: pygame.Surface, rect: pygame.Rect) -> None:
-        preview = pygame.Rect(
-            rect.left - camera.viewport.left,
-            rect.top - camera.viewport.top,
-            rect.width,
-            rect.height,
-        )
-        if (
-            preview.right < 0
-            or preview.bottom < 0
-            or preview.left > surface.get_width()
-            or preview.top > surface.get_height()
-        ):
+        if not rect.colliderect(camera.viewport):
             return
+        visible = rect.clip(camera.viewport)
+        scale_x = surface.get_width() / camera.viewport.width
+        scale_y = surface.get_height() / camera.viewport.height
+        left = int((visible.left - camera.viewport.left) * scale_x)
+        top = int((visible.top - camera.viewport.top) * scale_y)
+        width = max(1, int(visible.width * scale_x))
+        height = max(1, int(visible.height * scale_y))
+        preview = pygame.Rect(left, top, width, height)
         shade = pygame.Surface((preview.width, preview.height), pygame.SRCALPHA)
         shade.fill((220, 140, 90, 60))
         surface.blit(shade, preview.topleft)
         pygame.draw.rect(surface, (220, 140, 90), preview, 2)
+
+    def _draw_world(target: pygame.Surface) -> None:
+        view = world_surface.subsurface(camera.viewport)
+        pygame.transform.smoothscale(view, target.get_size(), target)
 
     def _begin_tool_action(position: Tuple[int, int]) -> None:
         nonlocal painting_tool, barrier_drag_start, barrier_preview_rect
@@ -868,7 +864,7 @@ def run() -> None:
                 environment.sync_moss_growth_speed(state)
                 notification_manager.update()
 
-                screen.blit(world_surface, (0, 0), area=camera.viewport)
+                _draw_world(screen)
                 if legacy_ui_visible:
                     world.draw_weather_overview(screen, font2)
                     draw_stats_panel(screen, font2, font3, stats)
@@ -904,7 +900,7 @@ def run() -> None:
                     event_manager.draw(screen, font2)
 
             if paused:
-                screen.blit(world_surface, (0, 0), area=camera.viewport)
+                _draw_world(screen)
             inspector.draw_highlight(screen, camera)
             inspector.draw(screen)
 
@@ -954,6 +950,7 @@ def run() -> None:
                         screen = pygame.display.set_mode(
                             (settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT),
                         )
+                    camera.set_window_size(screen.get_width(), screen.get_height())
                     panel_rect.x = screen.get_width() - panel_width - panel_margin
                     previous_tool = tools_panel.selected_tool
                     previous_brush = tools_panel.brush_size
@@ -998,6 +995,14 @@ def run() -> None:
                     show_dna_id = not show_dna_id
                 elif event.key == pygame.K_m:
                     player_controller.toggle_management()
+                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                    mouse_pos = pygame.mouse.get_pos()
+                    focus = camera.screen_to_world(mouse_pos)
+                    camera.adjust_zoom(1, focus, mouse_pos)
+                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                    mouse_pos = pygame.mouse.get_pos()
+                    focus = camera.screen_to_world(mouse_pos)
+                    camera.adjust_zoom(-1, focus, mouse_pos)
                 elif player_controller.management_mode:
                     if event.key == pygame.K_RIGHT:
                         player_controller.cycle_profile(1)
@@ -1012,6 +1017,12 @@ def run() -> None:
                         player_controller.cycle_attribute(direction)
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
+                if event.button in (4, 5):
+                    mouse_pos = getattr(event, "pos", pygame.mouse.get_pos())
+                    focus = camera.screen_to_world(mouse_pos)
+                    delta = 1 if event.button == 4 else -1
+                    camera.adjust_zoom(delta, focus, mouse_pos)
+                    continue
                 if event.button == 1 and legacy_toggle_rect.collidepoint(event.pos):
                     legacy_ui_visible = not legacy_ui_visible
                     continue
@@ -1124,5 +1135,9 @@ def run() -> None:
                         )
                     barrier_drag_start = None
                     barrier_preview_rect = None
+            elif event.type == pygame.MOUSEWHEEL:
+                mouse_pos = pygame.mouse.get_pos()
+                focus = camera.screen_to_world(mouse_pos)
+                camera.adjust_zoom(event.y, focus, mouse_pos)
 
     pygame.quit()

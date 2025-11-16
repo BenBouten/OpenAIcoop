@@ -93,14 +93,11 @@ class LifeformInspector:
             self.clear()
             return
 
-        center = (
-            int(lifeform.rect.centerx - camera.viewport.x),
-            int(lifeform.rect.centery - camera.viewport.y),
-        )
+        center = camera.world_to_screen((lifeform.rect.centerx, lifeform.rect.centery))
         if not (0 <= center[0] < surface.get_width() and 0 <= center[1] < surface.get_height()):
             return
 
-        radius = max(lifeform.width, lifeform.height) + 18
+        radius = int((max(lifeform.width, lifeform.height) + 18) * camera.zoom)
         pygame.draw.circle(surface, (255, 200, 40), center, radius, 2)
         pygame.draw.circle(surface, (30, 30, 30), center, radius + 2, 1)
 
@@ -411,8 +408,9 @@ class LifeformInspector:
             return None
 
         sample_side = 180
-        center_x = int(lifeform.rect.centerx - camera.viewport.left)
-        center_y = int(lifeform.rect.centery - camera.viewport.top)
+        center_x, center_y = camera.world_to_screen(
+            (lifeform.rect.centerx, lifeform.rect.centery)
+        )
         source_rect = pygame.Rect(
             center_x - sample_side // 2,
             center_y - sample_side // 2,
