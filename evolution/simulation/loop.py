@@ -281,15 +281,52 @@ class PrototypeSwimPreview:
             return
         scale_x = 70
         scale_y = 45
+        positions: Dict[str, Vector2] = {}
+
         for node_id, offset in self.layout.items():
-            node = self.creature.graph.get_node(node_id)
-            module = node.module
-            center = Vector2(
+            base_center = Vector2(
                 self.position.x + offset.x * scale_x,
                 self.position.y + offset.y * scale_y,
             )
-            sway = math.sin(self.elapsed * 6.0 + offset.x * 0.4)
-            center.y += sway * (4 + offset.x * 2)
+            sway_phase = self.elapsed * 4.6 + offset.x * 0.65
+            lateral_sway = math.sin(sway_phase) * (5 + offset.x * 3)
+            vertical_sway = math.sin(sway_phase * 0.7 + offset.y) * (4 + abs(offset.y) * 2)
+            base_center.x += lateral_sway
+            base_center.y += vertical_sway
+            positions[node_id] = base_center
+
+        def _vec(point: Vector2) -> Tuple[int, int]:
+            return (int(point.x), int(point.y))
+
+        for node_id, node in self.creature.graph.nodes.items():
+            parent_id = node.parent
+            if not parent_id:
+                continue
+            if parent_id not in positions or node_id not in positions:
+                continue
+            start = positions[parent_id]
+            end = positions[node_id]
+            direction = end - start
+            control = (start + end) / 2
+            normal = Vector2(-direction.y, direction.x)
+            if normal.length_squared() > 1e-3:
+                normal = normal.normalize()
+                bend = math.sin(self.elapsed * 2.4 + self.layout[node_id].x * 0.8)
+                normal *= bend * min(26.0, direction.length() * 0.45)
+            control += normal
+            width = 6 if node.module.module_type == "core" else 4
+            pygame.draw.lines(
+                surface,
+                (18, 42, 68),
+                False,
+                [_vec(start), _vec(control), _vec(end)],
+                width,
+            )
+
+        for node_id, offset in self.layout.items():
+            node = self.creature.graph.get_node(node_id)
+            module = node.module
+            center = positions[node_id]
             length = max(14, int(module.size[2] * 30))
             height = max(12, int(module.size[1] * 28))
             rect = pygame.Rect(0, 0, length, height)
@@ -348,6 +385,37 @@ def _draw_modular_preview(
     else:
         preview.render(surface, rect, delta_time)
     pygame.draw.rect(surface, (15, 30, 60), rect, 2)
+
+
+def _draw_ocean_showcase(
+    surface: pygame.Surface,
+    preview: Optional[PrototypeSwimPreview],
+    info_font: pygame.font.Font,
+    delta_time: float,
+    *,
+    bounds_margin: int = 90,
+) -> None:
+    ocean_rect = surface.get_rect()
+    _draw_vertical_gradient(surface, ocean_rect, (120, 210, 230), (6, 28, 60))
+    if preview is not None:
+        swim_rect = ocean_rect.inflate(-bounds_margin * 2, -bounds_margin)
+        preview.render(surface, swim_rect, delta_time)
+    else:
+        placeholder = info_font.render("Klik op Start om het testwezen te zien zwemmen.", True, settings.BLACK)
+        surface.blit(
+            placeholder,
+            (
+                ocean_rect.centerx - placeholder.get_width() // 2,
+                ocean_rect.centery - placeholder.get_height() // 2,
+            ),
+        )
+    pygame.draw.line(
+        surface,
+        (10, 25, 45),
+        (0, bounds_margin // 2),
+        (surface.get_width(), bounds_margin // 2),
+        3,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -797,6 +865,8 @@ def run() -> None:
     barrier_preview_rect: Optional[pygame.Rect] = None
     modular_test_report: Optional[Dict[str, float]] = None
     test_preview: Optional[PrototypeSwimPreview] = None
+    ocean_showcase_active = False
+    ocean_showcase_preview: Optional[PrototypeSwimPreview] = None
 
     running = True
     starting_screen = True
@@ -846,6 +916,8 @@ def run() -> None:
             not in {EditorTool.PAINT_MOSS, EditorTool.PAINT_WALL, EditorTool.PAINT_BIOME}
         ):
             painting_tool = None
+
+        live_simulation_active = not starting_screen and not ocean_showcase_active
 
         if starting_screen:
             screen.fill(settings.BACKGROUND)
@@ -930,6 +1002,26 @@ def run() -> None:
             if legacy_ui_visible:
                 gameplay_panel.draw(screen)
                 notification_manager.draw(screen, info_font)
+
+        elif ocean_showcase_active:
+            info_font = pygame.font.Font(None, 32)
+            subtitle_font = pygame.font.Font(None, 26)
+            _draw_ocean_showcase(screen, ocean_showcase_preview, info_font, delta_time)
+            headline = info_font.render("Diepe oceaantest", True, settings.BLACK)
+            screen.blit(headline, (40, 30))
+            subtext = subtitle_font.render(
+                "Het prototype zwemt vrij rond – druk op Reset om terug te keren.",
+                True,
+                settings.BLACK,
+            )
+            screen.blit(subtext, (40, 70))
+
+            pygame.draw.rect(screen, settings.GREEN, reset_button)
+            pygame.draw.rect(screen, settings.BLACK, reset_button, 2)
+            reset_label = font2.render("Reset", True, settings.BLACK)
+            screen.blit(reset_label, (reset_button.x + 32, reset_button.y + 6))
+            notification_manager.update()
+            notification_manager.draw(screen, subtitle_font)
 
         else:
             keys = pygame.key.get_pressed()
@@ -1099,14 +1191,20 @@ def run() -> None:
                     player_controller.draw_overlay(screen, font2)
                     event_manager.draw(screen, font2)
 
+        if not starting_screen and not ocean_showcase_active:
             if paused:
                 _draw_world(screen)
             inspector.draw_highlight(screen, camera)
             inspector.draw(screen)
 
-        if legacy_ui_visible and not starting_screen:
+        if legacy_ui_visible and not starting_screen and not ocean_showcase_active:
             gameplay_panel.draw(screen)
-        if not starting_screen and barrier_preview_rect and tools_panel.selected_tool == EditorTool.DRAW_BARRIER:
+        if (
+            not starting_screen
+            and not ocean_showcase_active
+            and barrier_preview_rect
+            and tools_panel.selected_tool == EditorTool.DRAW_BARRIER
+        ):
             _draw_barrier_preview(screen, barrier_preview_rect)
         tools_panel.draw(screen)
         stats_window.draw(screen)
@@ -1129,13 +1227,13 @@ def run() -> None:
 
         # Event handling
         for event in pygame.event.get():
-            if inspector.handle_event(event):
+            if live_simulation_active and inspector.handle_event(event):
                 continue
-            if tools_panel.handle_event(event):
+            if not ocean_showcase_active and tools_panel.handle_event(event):
                 continue
             if stats_window.handle_event(event):
                 continue
-            if legacy_ui_visible and gameplay_panel.handle_event(event):
+            if live_simulation_active and legacy_ui_visible and gameplay_panel.handle_event(event):
                 continue
             if event.type == pygame.QUIT:
                 running = False
@@ -1173,9 +1271,9 @@ def run() -> None:
                     tools_panel.selected_tool = previous_tool
                     tools_panel.brush_size = previous_brush
                     tools_panel.visible = tools_visible
-                elif event.key == pygame.K_p:
+                elif event.key == pygame.K_p and live_simulation_active:
                     paused = not paused
-                elif event.key == pygame.K_n:
+                elif event.key == pygame.K_n and live_simulation_active:
                     x = random.randint(0, max(0, world.width - 1))
                     y = random.randint(0, max(0, world.height - 1))
                     generation = 1
@@ -1185,29 +1283,35 @@ def run() -> None:
                         lifeform.is_leader = True
                     lifeforms.append(lifeform)
 
-                elif event.key == pygame.K_b:
+                elif event.key == pygame.K_b and live_simulation_active:
                     show_debug = not show_debug
                     notification_context.show_debug = show_debug
-                elif event.key == pygame.K_l:
+                elif event.key == pygame.K_l and live_simulation_active:
                     show_leader = not show_leader
-                elif event.key == pygame.K_s:
+                elif event.key == pygame.K_s and live_simulation_active:
                     show_action = not show_action
                     notification_context.show_action = show_action
-                elif event.key == pygame.K_v:
+                elif event.key == pygame.K_v and live_simulation_active:
                     show_vision = not show_vision
-                elif event.key == pygame.K_d:
+                elif event.key == pygame.K_d and live_simulation_active:
                     show_dna_id = not show_dna_id
-                elif event.key == pygame.K_m:
+                elif event.key == pygame.K_m and live_simulation_active:
                     player_controller.toggle_management()
-                elif event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS):
+                elif (
+                    live_simulation_active
+                    and event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS)
+                ):
                     mouse_pos = pygame.mouse.get_pos()
                     focus = camera.screen_to_world(mouse_pos)
                     camera.adjust_zoom(1, focus, mouse_pos)
-                elif event.key in (pygame.K_MINUS, pygame.K_KP_MINUS):
+                elif (
+                    live_simulation_active
+                    and event.key in (pygame.K_MINUS, pygame.K_KP_MINUS)
+                ):
                     mouse_pos = pygame.mouse.get_pos()
                     focus = camera.screen_to_world(mouse_pos)
                     camera.adjust_zoom(-1, focus, mouse_pos)
-                elif player_controller.management_mode:
+                elif live_simulation_active and player_controller.management_mode:
                     if event.key == pygame.K_RIGHT:
                         player_controller.cycle_profile(1)
                     elif event.key == pygame.K_LEFT:
@@ -1221,7 +1325,7 @@ def run() -> None:
                         player_controller.cycle_attribute(direction)
 
             elif event.type == pygame.MOUSEBUTTONDOWN:
-                if event.button in (4, 5):
+                if live_simulation_active and event.button in (4, 5):
                     mouse_pos = getattr(event, "pos", pygame.mouse.get_pos())
                     focus = camera.screen_to_world(mouse_pos)
                     delta = 1 if event.button == 4 else -1
@@ -1232,6 +1336,8 @@ def run() -> None:
                     continue
                 if starting_screen:
                     if start_button.collidepoint(event.pos):
+                        state.world_type = "Abyssal Ocean"
+                        world.set_world_type(state.world_type)
                         bootstrap.reset_simulation(
                             state,
                             world,
@@ -1243,16 +1349,15 @@ def run() -> None:
                             state.world_type,
                         )
                         inspector.clear()
-                        _initialise_population()
                         start_time = datetime.datetime.now()
-                        notification_manager.add("Simulatie gestart", settings.GREEN)
+                        notification_manager.add("Diepe oceaantest gestart", settings.SEA)
                         starting_screen = False
                         paused = False
-                        camera.reset()
-                        notification_manager.add(
-                            "Gebruik WASD of pijltjes om de camera te bewegen (Shift = snel)",
-                            settings.BLUE,
+                        ocean_showcase_active = True
+                        ocean_showcase_preview = PrototypeSwimPreview(
+                            build_fin_swimmer_prototype()
                         )
+                        camera.reset()
                     elif modular_test_button.collidepoint(event.pos):
                         modular_test_report, test_preview = _run_modular_creature_test()
                         notification_manager.add(
@@ -1271,6 +1376,15 @@ def run() -> None:
                                     )
                                 camera.reset()
                                 break
+                elif ocean_showcase_active:
+                    if event.button == 1 and reset_button.collidepoint(event.pos):
+                        ocean_showcase_active = False
+                        ocean_showcase_preview = None
+                        starting_screen = True
+                        paused = True
+                        notification_manager.add(
+                            "Terug naar het hoofdmenu", settings.BLUE
+                        )
                 else:
                     if (
                         event.button == 1
@@ -1318,7 +1432,7 @@ def run() -> None:
                             inspector.select(selected_lifeform)
                         else:
                             inspector.clear()
-            elif event.type == pygame.MOUSEMOTION and not starting_screen:
+            elif event.type == pygame.MOUSEMOTION and live_simulation_active:
                 if painting_tool == EditorTool.PAINT_MOSS and event.buttons[0]:
                     _spawn_moss_cluster(_screen_to_world(event.pos), notify=False)
                 elif painting_tool == EditorTool.PAINT_WALL and event.buttons[0]:
@@ -1334,7 +1448,7 @@ def run() -> None:
                         barrier_drag_start,
                         _screen_to_world(event.pos),
                     )
-            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1 and live_simulation_active:
                 painting_tool = None
                 if (
                     barrier_drag_start is not None
@@ -1347,7 +1461,7 @@ def run() -> None:
                         )
                     barrier_drag_start = None
                     barrier_preview_rect = None
-            elif event.type == pygame.MOUSEWHEEL:
+            elif event.type == pygame.MOUSEWHEEL and live_simulation_active:
                 mouse_pos = pygame.mouse.get_pos()
                 focus = camera.screen_to_world(mouse_pos)
                 camera.adjust_zoom(event.y, focus, mouse_pos)
