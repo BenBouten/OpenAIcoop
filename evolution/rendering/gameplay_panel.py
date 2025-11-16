@@ -7,6 +7,7 @@ from typing import Callable, List, Tuple
 
 import pygame
 
+from .window_chrome import WindowChrome, draw_resize_grip
 
 @dataclass
 class SliderConfig:
@@ -50,6 +51,12 @@ class Slider:
         track_y = y + 26
         self._track_rect = pygame.Rect(x, track_y, self.width, 6)
         self._update_handle_rect()
+
+    def set_width(self, width: int) -> None:
+        if width != self.width:
+            self.width = width
+            self._track_rect.width = width
+            self._update_handle_rect()
 
     def _update_handle_rect(self) -> None:
         ratio = 0.0
@@ -129,20 +136,41 @@ class GameplaySettingsPanel:
         self.font = font
         self.heading_font = heading_font
         self._sliders: List[Slider] = []
+        self._chrome = WindowChrome(self.rect, min_size=(280, 280))
+        self._header_height = 60
 
         slider_width = rect.width - 70
-        y_offset = rect.top + 60
+        y_offset = rect.top + self._header_height
         for config in slider_configs:
             slider = Slider(config, slider_width)
             slider.set_position(rect.left + 20, y_offset)
             self._sliders.append(slider)
             y_offset += slider.height
 
+    def _header_rect(self) -> pygame.Rect:
+        return pygame.Rect(self.rect.left, self.rect.top, self.rect.width, self._header_height)
+
+    def _reflow_sliders(self) -> None:
+        slider_width = max(140, self.rect.width - 70)
+        y_offset = self.rect.top + self._header_height
+        for slider in self._sliders:
+            slider.set_width(slider_width)
+            slider.set_position(self.rect.left + 20, y_offset)
+            y_offset += slider.height
+
     def handle_event(self, event: pygame.event.Event) -> bool:
+        consumed = False
+        if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+            chrome_consumed, geometry_changed = self._chrome.handle_event(
+                event, self._header_rect()
+            )
+            if geometry_changed:
+                self._reflow_sliders()
+            if chrome_consumed:
+                consumed = True
         if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP):
             if event.type == pygame.MOUSEBUTTONDOWN and not self.rect.collidepoint(event.pos):
-                return False
-        consumed = False
+                return consumed
         for slider in self._sliders:
             if slider.handle_event(event):
                 consumed = True
@@ -163,3 +191,5 @@ class GameplaySettingsPanel:
 
         for slider in self._sliders:
             slider.draw(surface, self.font)
+
+        draw_resize_grip(surface, self._chrome)

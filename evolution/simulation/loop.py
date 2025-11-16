@@ -6,7 +6,7 @@ import datetime
 import logging
 import os
 import random
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -35,6 +35,7 @@ from ..rendering.effects import EffectManager
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
 from ..rendering.lifeform_inspector import LifeformInspector
 from ..rendering.tools_panel import EditorTool, ToolsPanel
+from ..rendering.stats_window import StatsWindow
 from ..systems import stats as stats_system
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
@@ -216,87 +217,6 @@ show_dna_info = False
 start_time = datetime.datetime.now()
 clock = pygame.time.Clock()
 fps = settings.FPS
-
-
-
-def draw_stats_panel(
-    surface: pygame.Surface,
-    font_small: pygame.font.Font,
-    font_large: pygame.font.Font,
-    stats: Dict[str, object],
-) -> None:
-    text_lines = [
-        f"Number of Lifeforms: {stats['lifeform_count']}",
-        f"Total time passed: {stats['formatted_time']}",
-        f"Average health: {int(stats['average_health'])}",
-        f"Average vision: {int(stats['average_vision'])}",
-        f"Average generation: {int(stats['average_gen'])}",
-        f"Average hunger: {int(stats['average_hunger'])}",
-        f"Average size: {int(stats['average_size'])}",
-        f"Average age: {int(stats['average_age'])}",
-        f"Average age of dying: {int(stats['death_age_avg'])}",
-        f"Average maturity age: {int(stats['average_maturity'])}",
-        f"Average speed: {round(stats['average_speed'], 2)}",
-        f"Average mass: {round(stats['average_mass'], 2)}",
-        f"Average reach: {round(stats['average_reach'], 2)}",
-        f"Average maintenance cost: {round(stats['average_maintenance_cost'], 3)}",
-        f"Average sensory rays: {round(stats['average_perception_rays'], 1)}",
-        f"Average hearing range: {round(stats['average_hearing_range'], 1)}",
-        f"Average reproduction cooldown: {round(stats['average_cooldown'])}",
-        f"Total of DNA id's: {len(dna_profiles)}",
-        "Alive lifeforms: ",
-    ]
-
-    for idx, line in enumerate(text_lines):
-        text_surface = font_small.render(line, True, settings.BLACK)
-        surface.blit(text_surface, (50, 20 + idx * 20))
-
-    y_offset = 300
-    dna_count_sorted = sorted(
-        stats['dna_count'].items(),
-        key=lambda item: item[1],
-        reverse=True,
-    )
-    dna_attribute_averages = stats.get('dna_attribute_averages', {})
-    for dna_id, count in dna_count_sorted:
-        text = font_large.render(
-            f"Nr. per dna_{dna_id}: {count}",
-            True,
-            settings.BLACK,
-        )
-        surface.blit(text, (50, y_offset))
-        y_offset += 35
-
-        if show_dna_info:
-            averages = dna_attribute_averages.get(dna_id)
-            if averages:
-                for attribute in [
-                    "health",
-                    "vision",
-                    "attack_power_now",
-                    "defence_power_now",
-                    "speed",
-                    "maturity",
-                    "size",
-                    "longevity",
-                    "energy",
-                    "mass",
-                    "reach",
-                    "perception_rays",
-                    "maintenance_cost",
-                    "hearing_range",
-                ]:
-                    attribute_value = averages.get(attribute)
-                    if attribute_value is not None:
-                        text = font_small.render(
-                            f"{attribute}: {round(attribute_value, 2)}",
-                            True,
-                            settings.BLACK,
-                        )
-                        surface.blit(text, (50, y_offset))
-                        y_offset += 20
-
-
 # ---------------------------------------------------------------------------
 # Hoofd-loop
 # ---------------------------------------------------------------------------
@@ -372,6 +292,7 @@ def run() -> None:
         environment.sync_food_abundance(state)
         environment.sync_moss_growth_speed(state)
         latest_stats = None
+        stats_window.clear()
 
     def _build_slider_configs() -> List[SliderConfig]:
         return [
@@ -486,8 +407,10 @@ def run() -> None:
     tools_panel = ToolsPanel(
         font2,
         font3,
-        topleft=(24, settings.WINDOW_HEIGHT - 300),
+        topleft=(24, settings.WINDOW_HEIGHT - 360),
+        available_biomes=world.biomes,
     )
+    stats_window = StatsWindow(font2, font3)
 
     def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
         if not lifeforms:
@@ -590,6 +513,24 @@ def run() -> None:
         rect = _clamp_rect(rect)
         world.barriers.append(Barrier(rect, (80, 80, 120), "muur"))
 
+    def _paint_biome(world_pos: Tuple[float, float]) -> None:
+        template = tools_panel.get_selected_biome()
+        if template is None:
+            return
+        size = max(24, int(tools_panel.brush_size))
+        left = int(world_pos[0]) - size // 2
+        top = int(world_pos[1]) - size // 2
+        rect = pygame.Rect(left, top, size, size)
+        rect = _clamp_rect(rect)
+        new_biome = replace(
+            template,
+            rect=rect,
+            mask=None,
+            mask_offset=(0, 0),
+        )
+        new_biome.update_weather(pygame.time.get_ticks())
+        world.biomes.insert(0, new_biome)
+
     def _draw_barrier_preview(surface: pygame.Surface, rect: pygame.Rect) -> None:
         if not rect.colliderect(camera.viewport):
             return
@@ -624,6 +565,9 @@ def run() -> None:
         elif tool == EditorTool.PAINT_WALL:
             painting_tool = EditorTool.PAINT_WALL
             _stamp_wall_segment(world_pos)
+        elif tool == EditorTool.PAINT_BIOME:
+            painting_tool = EditorTool.PAINT_BIOME
+            _paint_biome(world_pos)
         elif tool == EditorTool.DRAW_BARRIER:
             barrier_drag_start = world_pos
             barrier_preview_rect = _world_rect_from_points(world_pos, world_pos)
@@ -684,7 +628,8 @@ def run() -> None:
             barrier_drag_start = None
         if (
             painting_tool is not None
-            and tools_panel.selected_tool not in {EditorTool.PAINT_MOSS, EditorTool.PAINT_WALL}
+            and tools_panel.selected_tool
+            not in {EditorTool.PAINT_MOSS, EditorTool.PAINT_WALL, EditorTool.PAINT_BIOME}
         ):
             painting_tool = None
 
@@ -854,6 +799,7 @@ def run() -> None:
                     state, formatted_time_passed
                 )
                 latest_stats = stats
+                stats_window.update_stats(stats)
                 event_manager.schedule_default_events()
                 event_manager.update(
                     pygame.time.get_ticks(),
@@ -867,7 +813,6 @@ def run() -> None:
                 _draw_world(screen)
                 if legacy_ui_visible:
                     world.draw_weather_overview(screen, font2)
-                    draw_stats_panel(screen, font2, font3, stats)
 
                     pygame.draw.rect(screen, settings.GREEN, reset_button)
                     pygame.draw.rect(screen, settings.BLACK, reset_button, 2)
@@ -892,9 +837,6 @@ def run() -> None:
                         (show_dna_info_button.right + 8, show_dna_info_button.y + 4),
                     )
 
-                    if latest_stats:
-                        draw_stats_panel(screen, font2, font3, latest_stats)
-
                     notification_manager.draw(screen, font)
                     player_controller.draw_overlay(screen, font2)
                     event_manager.draw(screen, font2)
@@ -909,6 +851,7 @@ def run() -> None:
         if not starting_screen and barrier_preview_rect and tools_panel.selected_tool == EditorTool.DRAW_BARRIER:
             _draw_barrier_preview(screen, barrier_preview_rect)
         tools_panel.draw(screen)
+        stats_window.draw(screen)
         toggle_label = font2.render(
             "UI verbergen" if legacy_ui_visible else "UI tonen",
             True,
@@ -931,6 +874,8 @@ def run() -> None:
             if inspector.handle_event(event):
                 continue
             if tools_panel.handle_event(event):
+                continue
+            if stats_window.handle_event(event):
                 continue
             if legacy_ui_visible and gameplay_panel.handle_event(event):
                 continue
@@ -964,7 +909,8 @@ def run() -> None:
                     tools_panel = ToolsPanel(
                         font2,
                         font3,
-                        topleft=(24, settings.WINDOW_HEIGHT - 300),
+                        topleft=(24, settings.WINDOW_HEIGHT - 360),
+                        available_biomes=world.biomes,
                     )
                     tools_panel.selected_tool = previous_tool
                     tools_panel.brush_size = previous_brush
@@ -1080,6 +1026,7 @@ def run() -> None:
                         )
                         inspector.clear()
                         latest_stats = None
+                        stats_window.clear()
                         notification_manager.add(
                             "Simulatie gereset",
                             settings.BLUE,
@@ -1113,6 +1060,8 @@ def run() -> None:
                     _spawn_moss_cluster(_screen_to_world(event.pos), notify=False)
                 elif painting_tool == EditorTool.PAINT_WALL and event.buttons[0]:
                     _stamp_wall_segment(_screen_to_world(event.pos))
+                elif painting_tool == EditorTool.PAINT_BIOME and event.buttons[0]:
+                    _paint_biome(_screen_to_world(event.pos))
                 if (
                     tools_panel.selected_tool == EditorTool.DRAW_BARRIER
                     and barrier_drag_start is not None

@@ -13,6 +13,7 @@ import pygame
 
 from ..config import settings
 from ..dna.development import describe_feature, describe_skin_stage
+from .window_chrome import WindowChrome, draw_resize_grip
 
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from ..entities.lifeform import Lifeform
@@ -37,10 +38,12 @@ class LifeformInspector:
         self._body_font = body_font
         self._heading_font = heading_font
         self._selected: Optional["Lifeform"] = None
-        self._panel_rect = pygame.Rect(0, 0, 420, 420)
+        self._panel_rect = pygame.Rect(80, 80, 640, 520)
         self._debug_button = pygame.Rect(0, 0, 160, 36)
         self._close_button = pygame.Rect(0, 0, 24, 24)
         self._hover_entries: List[Tuple[pygame.Rect, List[str]]] = []
+        self._chrome = WindowChrome(self._panel_rect, min_size=(420, 360))
+        self._header_height = 70
 
     # ------------------------------------------------------------------
     # Selection helpers
@@ -74,11 +77,13 @@ class LifeformInspector:
             if self._debug_button.collidepoint(event.pos):
                 self._write_debug_log()
                 return True
+        if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
+            chrome_consumed, _ = self._chrome.handle_event(event, self._header_rect())
+            if chrome_consumed:
+                return True
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if not self._panel_rect.collidepoint(event.pos):
-                # Let the caller handle potential selection changes.
                 self.clear()
-                return False
-
         return False
 
     # ------------------------------------------------------------------
@@ -111,11 +116,7 @@ class LifeformInspector:
 
         preview_surface = self._capture_preview(surface, lifeform)
 
-        width = min(760, surface.get_width() - 40)
-        height = min(700, surface.get_height() - 40)
-        left = surface.get_width() // 2 - width // 2
-        top = surface.get_height() // 2 - height // 2
-        self._panel_rect = pygame.Rect(left, top, width, height)
+        self._chrome.clamp_to_display()
 
         overlay = pygame.Surface(self._panel_rect.size, pygame.SRCALPHA)
         overlay.fill((255, 255, 255, 235))
@@ -336,7 +337,16 @@ class LifeformInspector:
         hint_surface = self._body_font.render(hint_text, True, (60, 60, 60))
         surface.blit(hint_surface, (self._panel_rect.left + 24, log_hint_y))
 
+        draw_resize_grip(surface, self._chrome)
         self._draw_tooltip(surface)
+
+    def _header_rect(self) -> pygame.Rect:
+        return pygame.Rect(
+            self._panel_rect.left,
+            self._panel_rect.top,
+            self._panel_rect.width,
+            self._header_height,
+        )
 
     # ------------------------------------------------------------------
     # Detail helpers
