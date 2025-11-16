@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Mapping, Sequence, Tuple
+from typing import ClassVar, Dict, Iterable, Mapping, Sequence, Tuple
 
 from .attachment import AttachmentPoint, Joint, JointType
 
@@ -28,6 +28,7 @@ class BodyModule:
     description: str
     size: Tuple[float, float, float]
     stats: ModuleStats
+    material: str = "biomass"
     attachment_points: Dict[str, AttachmentPoint] = field(default_factory=dict)
 
     module_type: str = "generic"
@@ -99,128 +100,226 @@ class SensoryModule(BodyModule):
     module_type: str = "sensor"
 
 
+# Concrete module implementations -------------------------------------------
+
+
+def _clone_attachment_points(points: Iterable[AttachmentPoint]) -> Iterable[AttachmentPoint]:
+    """Return fresh ``AttachmentPoint`` instances for the provided template."""
+
+    return [
+        AttachmentPoint(
+            name=point.name,
+            joint=point.joint,
+            allowed_modules=point.allowed_modules,
+            description=point.description,
+            max_child_mass=point.max_child_mass,
+            allowed_materials=point.allowed_materials,
+        )
+        for point in points
+    ]
+
+
+@dataclass
+class TrunkCore(CoreModule):
+    """Stock torso that provides power, cargo slots and attachment sockets."""
+
+    key: str = "core"
+    name: str = "Core"
+    description: str = "Main torso providing power distribution"
+    size: Tuple[float, float, float] = (1.2, 1.0, 1.4)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=40.0,
+            energy_cost=3.5,
+            integrity=120.0,
+            heat_dissipation=15.0,
+            power_output=60.0,
+        )
+    )
+    material: str = "bio-alloy"
+    energy_capacity: float = 200.0
+    cargo_slots: int = 2
+
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="head_socket",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(HeadModule,),
+            description="Connection for the head module",
+            max_child_mass=18.0,
+            allowed_materials=("bio-alloy", "chitin"),
+        ),
+        AttachmentPoint(
+            name="dorsal_mount",
+            joint=Joint(JointType.BALL, swing_limits=(-35.0, 35.0)),
+            allowed_modules=(SensoryModule,),
+            max_child_mass=5.0,
+            allowed_materials=("ceramic", "bio-alloy"),
+        ),
+        AttachmentPoint(
+            name="ventral_core",
+            joint=Joint(JointType.HINGE, swing_limits=(-20.0, 20.0)),
+            allowed_modules=(PropulsionModule, LimbModule),
+            max_child_mass=25.0,
+            allowed_materials=("flex-polymer", "titanium"),
+        ),
+        AttachmentPoint(
+            name="lateral_mount_left",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-50.0, 50.0), torque_limit=120.0),
+            allowed_modules=(LimbModule,),
+            max_child_mass=12.0,
+            allowed_materials=("flex-polymer",),
+        ),
+        AttachmentPoint(
+            name="lateral_mount_right",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-50.0, 50.0), torque_limit=120.0),
+            allowed_modules=(LimbModule,),
+            max_child_mass=12.0,
+            allowed_materials=("flex-polymer",),
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+
+
+@dataclass
+class CephalonHead(HeadModule):
+    """Default head packed with visual and cognitive enhancers."""
+
+    key: str = "head"
+    name: str = "Cephalon"
+    description: str = "Primary sensory organ"
+    size: Tuple[float, float, float] = (0.8, 0.6, 0.9)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(mass=10.0, energy_cost=1.2, integrity=60.0, heat_dissipation=6.0)
+    )
+    material: str = "bio-alloy"
+    vision_bonus: float = 45.0
+    cognition_bonus: float = 12.0
+
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="cranial_sensor",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(SensoryModule,),
+            max_child_mass=4.0,
+            allowed_materials=("ceramic",),
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+
+
+@dataclass
+class HydroFin(LimbModule):
+    """Flexible fin-like limb specialised for aquatic locomotion."""
+
+    key: str = "fin"
+    name: str = "Hydro Fin"
+    description: str = "Flexible fin for aquatic thrust"
+    size: Tuple[float, float, float] = (1.2, 0.2, 0.6)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(mass=6.0, energy_cost=0.6, integrity=35.0, heat_dissipation=4.0)
+    )
+    material: str = "flex-polymer"
+    thrust: float = 45.0
+    grip_strength: float = 5.0
+
+
+@dataclass
+class TailThruster(PropulsionModule):
+    """Directional thruster that can also host lightweight sensors."""
+
+    key: str = "thruster"
+    name: str = "Tail Thruster"
+    description: str = "Powerful axial thruster"
+    size: Tuple[float, float, float] = (1.5, 0.5, 0.5)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=12.0,
+            energy_cost=2.5,
+            integrity=50.0,
+            heat_dissipation=10.0,
+            power_output=30.0,
+        )
+    )
+    material: str = "titanium"
+    thrust_power: float = 120.0
+    fuel_efficiency: float = 0.8
+
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="tail_sensors",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(SensoryModule,),
+            max_child_mass=4.0,
+            allowed_materials=("ceramic",),
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+
+
+@dataclass
+class SensorPod(SensoryModule):
+    """Compact sensor pod that can be reconfigured with a spectrum."""
+
+    key: str = "sensor"
+    name: str = "Sensor Pod"
+    description: str = "Specialised detection apparatus"
+    size: Tuple[float, float, float] = (0.5, 0.4, 0.4)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(mass=2.5, energy_cost=0.4, integrity=20.0, heat_dissipation=2.5)
+    )
+    material: str = "ceramic"
+    detection_range: float = 75.0
+    spectrum: Sequence[str] = field(default_factory=lambda: ("light", "colour"))
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.spectrum, tuple):
+            self.spectrum = tuple(self.spectrum)
+
+
 # Convenience builders -----------------------------------------------------
 
 def build_default_core(key: str = "core") -> CoreModule:
     """Return a lightweight default core with a few attachment points."""
 
-    module = CoreModule(
-        key=key,
-        name="Core",
-        description="Main torso providing power distribution",
-        size=(1.2, 1.0, 1.4),
-        stats=ModuleStats(mass=40.0, energy_cost=3.5, integrity=120.0, heat_dissipation=15.0, power_output=60.0),
-        energy_capacity=200.0,
-        cargo_slots=2,
-    )
-    module.add_attachment_points(
-        [
-            AttachmentPoint(
-                name="head_socket",
-                joint=Joint(JointType.FIXED),
-                allowed_modules=(HeadModule,),
-                description="Connection for the head module",
-            ),
-            AttachmentPoint(
-                name="dorsal_mount",
-                joint=Joint(JointType.BALL, swing_limits=(-35.0, 35.0)),
-                allowed_modules=(SensoryModule,),
-            ),
-            AttachmentPoint(
-                name="ventral_core",
-                joint=Joint(JointType.HINGE, swing_limits=(-20.0, 20.0)),
-                allowed_modules=(PropulsionModule, LimbModule),
-            ),
-            AttachmentPoint(
-                name="lateral_mount_left",
-                joint=Joint(JointType.MUSCLE, swing_limits=(-50.0, 50.0), torque_limit=120.0),
-                allowed_modules=(LimbModule,),
-            ),
-            AttachmentPoint(
-                name="lateral_mount_right",
-                joint=Joint(JointType.MUSCLE, swing_limits=(-50.0, 50.0), torque_limit=120.0),
-                allowed_modules=(LimbModule,),
-            ),
-        ]
-    )
+    module = TrunkCore(key=key)
     return module
 
 
 def build_default_head(key: str = "head") -> HeadModule:
     """Return a head module with sensory attachment points."""
 
-    module = HeadModule(
-        key=key,
-        name="Cephalon",
-        description="Primary sensory organ",
-        size=(0.8, 0.6, 0.9),
-        stats=ModuleStats(mass=10.0, energy_cost=1.2, integrity=60.0, heat_dissipation=6.0),
-        vision_bonus=45.0,
-        cognition_bonus=12.0,
-    )
-    module.add_attachment_points(
-        [
-            AttachmentPoint(
-                name="cranial_sensor",
-                joint=Joint(JointType.FIXED),
-                allowed_modules=(SensoryModule,),
-            )
-        ]
-    )
+    module = CephalonHead(key=key)
     return module
 
 
 def build_default_fin(key: str) -> LimbModule:
     """Return a fin-like limb module."""
 
-    module = LimbModule(
-        key=key,
-        name="Hydro Fin",
-        description="Flexible fin for aquatic thrust",
-        size=(1.2, 0.2, 0.6),
-        stats=ModuleStats(mass=6.0, energy_cost=0.6, integrity=35.0, heat_dissipation=4.0),
-        thrust=45.0,
-        grip_strength=5.0,
-    )
+    module = HydroFin(key=key)
     return module
 
 
 def build_default_thruster(key: str) -> PropulsionModule:
     """Return a tail thruster module."""
 
-    module = PropulsionModule(
-        key=key,
-        name="Tail Thruster",
-        description="Powerful axial thruster",
-        size=(1.5, 0.5, 0.5),
-        stats=ModuleStats(mass=12.0, energy_cost=2.5, integrity=50.0, heat_dissipation=10.0, power_output=30.0),
-        thrust_power=120.0,
-        fuel_efficiency=0.8,
-    )
-    module.add_attachment_points(
-        [
-            AttachmentPoint(
-                name="tail_sensors",
-                joint=Joint(JointType.FIXED),
-                allowed_modules=(SensoryModule,),
-            )
-        ]
-    )
+    module = TailThruster(key=key)
     return module
 
 
 def build_default_sensor(key: str, spectrum: Sequence[str]) -> SensoryModule:
     """Return a sensory module that can be attached on multiple sockets."""
 
-    return SensoryModule(
-        key=key,
-        name="Sensor Pod",
-        description="Specialised detection apparatus",
-        size=(0.5, 0.4, 0.4),
-        stats=ModuleStats(mass=2.5, energy_cost=0.4, integrity=20.0, heat_dissipation=2.5),
-        detection_range=75.0,
-        spectrum=tuple(spectrum),
-    )
+    return SensorPod(key=key, spectrum=tuple(spectrum))
 
 
 def catalogue_default_modules() -> Mapping[str, BodyModule]:
