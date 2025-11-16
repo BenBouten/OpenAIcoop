@@ -12,60 +12,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from evolution.dna.factory import build_body_graph, serialize_body_graph
-from evolution.dna.genes import Genome, GenomeConstraints, ModuleGene
-
-
-def _sample_genes() -> dict[str, ModuleGene]:
-    """Return a representative set of module genes for tests."""
-
-    return {
-        "core": ModuleGene("core", "core", {}),
-        "head": ModuleGene("head", "head", {}, parent="core", slot="head_socket"),
-        "fin_left": ModuleGene(
-            "fin_left",
-            "limb",
-            {},
-            parent="core",
-            slot="lateral_mount_left",
-        ),
-        "fin_right": ModuleGene(
-            "fin_right",
-            "limb",
-            {},
-            parent="core",
-            slot="lateral_mount_right",
-        ),
-        "thruster": ModuleGene(
-            "thruster",
-            "propulsion",
-            {},
-            parent="core",
-            slot="ventral_core",
-        ),
-        "tail_eye": ModuleGene(
-            "tail_eye",
-            "sensor",
-            {"spectrum": ["light", "sonar"]},
-            parent="thruster",
-            slot="tail_sensors",
-        ),
-        "crown_sensor": ModuleGene(
-            "crown_sensor",
-            "sensor",
-            {"spectrum": ["bioelectric"]},
-            parent="head",
-            slot="cranial_sensor",
-        ),
-    }
-
-
-def _build_genome(**overrides: object) -> Genome:
-    constraints = overrides.get(
-        "constraints",
-        GenomeConstraints(max_mass=200.0, nerve_capacity=20.0),
-    )
-    genes = overrides.get("genes", _sample_genes())
-    return Genome(genes=genes, constraints=constraints)
+from evolution.dna.genes import GenomeConstraints
+from .dna_helpers import build_genome as _build_genome
 
 
 def test_build_body_graph_assembles_modules() -> None:
