@@ -31,6 +31,8 @@ def normalize_world_type(world_type: str | None) -> str:
         return "Rift Valley"
     cleaned = world_type.strip().lower().replace("_", " ")
     cleaned = cleaned.replace("–", "-")
+    if cleaned in {"abyssal ocean", "ocean", "ocean depths", "deep ocean"}:
+        return "Abyssal Ocean"
     if cleaned in {"archipelago", "archipel"}:
         return "Archipelago"
     if cleaned in {"desert-jungle split", "desert jungle split"}:
@@ -342,7 +344,327 @@ def _build_weather_patterns() -> Dict[str, List[WeatherPattern]]:
                 energy_modifier=1.05,
             ),
         ],
+        "sunlit": [
+            WeatherPattern(
+                "Kalme golfslag",
+                24,
+                "helder",
+                movement_modifier=1.1,
+                hunger_modifier=0.85,
+                regrowth_modifier=1.35,
+                energy_modifier=1.15,
+            ),
+            WeatherPattern(
+                "Storm op het oppervlak",
+                20,
+                "storm",
+                movement_modifier=0.85,
+                hunger_modifier=0.95,
+                regrowth_modifier=1.2,
+                energy_modifier=0.9,
+                duration_range=(9000, 16000),
+            ),
+            WeatherPattern(
+                "Planktonbloei",
+                22,
+                "bewolkt",
+                movement_modifier=1.0,
+                hunger_modifier=0.8,
+                regrowth_modifier=1.5,
+                energy_modifier=1.05,
+            ),
+        ],
+        "twilight": [
+            WeatherPattern(
+                "Drijfzand van licht",
+                14,
+                "mist",
+                movement_modifier=0.9,
+                hunger_modifier=1.05,
+                regrowth_modifier=1.15,
+                energy_modifier=0.95,
+            ),
+            WeatherPattern(
+                "Koude stroming",
+                10,
+                "bewolkt",
+                movement_modifier=0.85,
+                hunger_modifier=1.1,
+                regrowth_modifier=1.1,
+                energy_modifier=0.9,
+            ),
+            WeatherPattern(
+                "Zoemende bioluminescentie",
+                12,
+                "helder",
+                movement_modifier=0.95,
+                hunger_modifier=1.0,
+                regrowth_modifier=1.2,
+                energy_modifier=1.0,
+            ),
+        ],
+        "midnight": [
+            WeatherPattern(
+                "Diepzee stilte",
+                4,
+                "stil",
+                movement_modifier=0.8,
+                hunger_modifier=1.2,
+                regrowth_modifier=0.9,
+                energy_modifier=0.85,
+            ),
+            WeatherPattern(
+                "Drukgolven",
+                2,
+                "winderig",
+                movement_modifier=0.75,
+                hunger_modifier=1.25,
+                regrowth_modifier=0.85,
+                energy_modifier=0.8,
+                health_tick=-0.1,
+            ),
+            WeatherPattern(
+                "Bioluminescente regen",
+                6,
+                "regen",
+                movement_modifier=0.82,
+                hunger_modifier=1.1,
+                regrowth_modifier=0.95,
+                energy_modifier=0.9,
+            ),
+        ],
+        "abyss": [
+            WeatherPattern(
+                "Abyssale druk",
+                1,
+                "stil",
+                movement_modifier=0.7,
+                hunger_modifier=1.35,
+                regrowth_modifier=0.6,
+                energy_modifier=0.8,
+                health_tick=-0.2,
+            ),
+            WeatherPattern(
+                "Chemische nevel",
+                3,
+                "mist",
+                movement_modifier=0.75,
+                hunger_modifier=1.3,
+                regrowth_modifier=0.65,
+                energy_modifier=0.85,
+                health_tick=-0.15,
+            ),
+            WeatherPattern(
+                "Echo van de diepzee",
+                -1,
+                "helder",
+                movement_modifier=0.72,
+                hunger_modifier=1.25,
+                regrowth_modifier=0.7,
+                energy_modifier=0.82,
+                health_tick=-0.18,
+            ),
+        ],
+        "vents": [
+            WeatherPattern(
+                "Zwarte roker",
+                5,
+                "storm",
+                movement_modifier=0.75,
+                hunger_modifier=0.95,
+                regrowth_modifier=1.4,
+                energy_modifier=0.9,
+                health_tick=0.08,
+            ),
+            WeatherPattern(
+                "Chemosynthese",
+                8,
+                "mist",
+                movement_modifier=0.8,
+                hunger_modifier=0.9,
+                regrowth_modifier=1.6,
+                energy_modifier=0.95,
+                health_tick=0.12,
+            ),
+            WeatherPattern(
+                "Thermale kolom",
+                12,
+                "winderig",
+                movement_modifier=0.85,
+                hunger_modifier=0.92,
+                regrowth_modifier=1.45,
+                energy_modifier=1.0,
+            ),
+        ],
     }
+
+
+def _generate_abyssal_ocean(width: int, height: int) -> MapBlueprint:
+    patterns = _build_weather_patterns()
+    barriers = _create_border_barriers(width, height, thickness=18)
+    water_bodies: List[WaterBody] = []
+
+    def _layer_rect(start_ratio: float, end_ratio: float) -> pygame.Rect:
+        top = int(height * start_ratio) + 30
+        bottom = int(height * end_ratio) - 30
+        rect_height = max(80, bottom - top)
+        return pygame.Rect(60, top, width - 120, rect_height)
+
+    depth_layers = [
+        {
+            "name": "Oppervlaktezone",
+            "color": (86, 176, 224),
+            "start": 0.0,
+            "end": 0.16,
+            "pattern": "sunlit",
+            "movement": 1.15,
+            "hunger": 0.9,
+            "regrowth": 1.4,
+            "energy": 1.1,
+            "health": 0.05,
+            "mask_complexity": 18,
+            "mask_irregularity": 0.3,
+        },
+        {
+            "name": "Schemerzone",
+            "color": (62, 120, 180),
+            "start": 0.16,
+            "end": 0.35,
+            "pattern": "twilight",
+            "movement": 0.95,
+            "hunger": 1.05,
+            "regrowth": 1.15,
+            "energy": 0.95,
+            "health": 0.02,
+            "mask_complexity": 16,
+            "mask_irregularity": 0.36,
+        },
+        {
+            "name": "Middernachtzone",
+            "color": (28, 64, 120),
+            "start": 0.35,
+            "end": 0.58,
+            "pattern": "midnight",
+            "movement": 0.85,
+            "hunger": 1.2,
+            "regrowth": 0.95,
+            "energy": 0.88,
+            "health": -0.02,
+            "mask_complexity": 14,
+            "mask_irregularity": 0.38,
+        },
+        {
+            "name": "Abyss",
+            "color": (12, 30, 78),
+            "start": 0.58,
+            "end": 0.82,
+            "pattern": "abyss",
+            "movement": 0.78,
+            "hunger": 1.3,
+            "regrowth": 0.7,
+            "energy": 0.82,
+            "health": -0.08,
+            "mask_complexity": 12,
+            "mask_irregularity": 0.4,
+        },
+        {
+            "name": "Bathyplaine",
+            "color": (6, 14, 38),
+            "start": 0.82,
+            "end": 1.0,
+            "pattern": "abyss",
+            "movement": 0.72,
+            "hunger": 1.35,
+            "regrowth": 0.6,
+            "energy": 0.78,
+            "health": -0.12,
+            "mask_complexity": 11,
+            "mask_irregularity": 0.42,
+        },
+    ]
+
+    biomes: List[BiomeRegion] = []
+    for layer in depth_layers:
+        biomes.append(
+            _create_biome_region(
+                layer["name"],
+                _layer_rect(layer["start"], layer["end"]),
+                layer["color"],
+                patterns[layer["pattern"]][:],
+                movement_modifier=layer["movement"],
+                hunger_modifier=layer["hunger"],
+                regrowth_modifier=layer["regrowth"],
+                energy_modifier=layer["energy"],
+                health_modifier=layer["health"],
+                mask_complexity=layer["mask_complexity"],
+                mask_irregularity=layer["mask_irregularity"],
+                mask_variation=0.32,
+            )
+        )
+
+    luminous_reef = _rect_from_bounds(
+        width // 6,
+        int(height * 0.26),
+        width - width // 6,
+        int(height * 0.36),
+        width,
+        height,
+    )
+    biomes.append(
+        _create_biome_region(
+            "Bioluminescente Rifwand",
+            luminous_reef,
+            (80, 160, 190),
+            patterns["twilight"][:],
+            movement_modifier=0.92,
+            hunger_modifier=0.95,
+            regrowth_modifier=1.25,
+            energy_modifier=1.05,
+            health_modifier=0.04,
+            mask_complexity=20,
+            mask_irregularity=0.28,
+            mask_variation=0.5,
+        )
+    )
+
+    vent_rect = _rect_from_bounds(
+        width // 2 - width // 6,
+        int(height * 0.8),
+        width // 2 + width // 6,
+        int(height * 0.92),
+        width,
+        height,
+    )
+    biomes.append(
+        _create_biome_region(
+            "Hydrothermale Vents",
+            vent_rect,
+            (48, 48, 96),
+            patterns["vents"][:],
+            movement_modifier=0.8,
+            hunger_modifier=0.9,
+            regrowth_modifier=1.35,
+            energy_modifier=0.92,
+            health_modifier=0.06,
+            mask_complexity=13,
+            mask_irregularity=0.4,
+            mask_variation=0.45,
+        )
+    )
+
+    vegetation_masks = [
+        pygame.Rect(140, int(height * 0.04), width - 280, 260),
+        pygame.Rect(220, int(height * 0.32), width - 440, 280),
+        pygame.Rect(260, int(height * 0.58), width - 520, 320),
+    ]
+
+    return MapBlueprint(
+        background_color=(4, 16, 32),
+        barriers=barriers,
+        water_bodies=water_bodies,
+        biomes=biomes,
+        vegetation_masks=vegetation_masks,
+    )
 
 
 def _generate_rift_valley(width: int, height: int) -> MapBlueprint:
@@ -704,6 +1026,7 @@ def _generate_desert_jungle(width: int, height: int) -> MapBlueprint:
 
 
 _GENERATOR_MAP: Dict[str, Callable[[int, int], MapBlueprint]] = {
+    "Abyssal Ocean": _generate_abyssal_ocean,
     "Archipelago": _generate_archipelago,
     "Rift Valley": _generate_rift_valley,
     "Desert–Jungle Split": _generate_desert_jungle,

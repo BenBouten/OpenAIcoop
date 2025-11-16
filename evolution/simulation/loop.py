@@ -103,6 +103,7 @@ state.notifications = notification_context.notification_manager
 
 
 MAP_TYPE_OPTIONS = [
+    "Abyssal Ocean",
     "Archipelago",
     "Rift Valley",
     "Desert–Jungle Split",
