@@ -4,12 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from pygame.math import Vector2
-
 from ..body.body_graph import BodyGraph
 from ..body.modules import catalogue_default_modules
 from .controllers import FinOscillationController
 from .physics_body import PhysicsBody, build_physics_body
+from .vector_math import Vector2
 
 
 @dataclass
@@ -20,6 +19,7 @@ class TestCreature:
     graph: BodyGraph
     physics: PhysicsBody
     controller: FinOscillationController
+    __test__ = False  # prevent pytest from collecting this helper
 
     def step(self, dt: float) -> Vector2:
         """Advance locomotion and return the resulting thrust vector."""
