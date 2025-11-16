@@ -4,12 +4,14 @@ from __future__ import annotations
 
 import datetime
 import logging
+import math
 import os
 import random
-from dataclasses import dataclass, replace
+from collections import deque
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 
 try:  # pragma: no cover - optional dependency
     import matplotlib
@@ -25,6 +27,7 @@ except ImportError:  # pragma: no cover - fallback when matplotlib is missing
     MATPLOTLIB_AVAILABLE = False
 
 import pygame
+from pygame.math import Vector2
 
 from ..config import settings
 from ..entities import movement
@@ -36,7 +39,7 @@ from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
 from ..rendering.lifeform_inspector import LifeformInspector
 from ..rendering.tools_panel import EditorTool, ToolsPanel
 from ..rendering.stats_window import StatsWindow
-from ..physics.test_creatures import build_fin_swimmer_prototype
+from ..physics.test_creatures import TestCreature, build_fin_swimmer_prototype
 from ..systems import stats as stats_system
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
@@ -170,6 +173,183 @@ class Graph:
             screen.blit(self.surface, (0, 0))
 
 
+MODULE_COLORS = {
+    "core": (70, 125, 160),
+    "head": (235, 232, 198),
+    "limb": (120, 200, 220),
+    "propulsion": (255, 162, 120),
+    "sensor": (214, 235, 255),
+}
+
+
+@dataclass
+class PrototypeSwimPreview:
+    """Lightweight preview that animates a prototype creature in water."""
+
+    creature: TestCreature
+    position: Vector2 = field(default_factory=lambda: Vector2(0.0, 0.0))
+    velocity: Vector2 = field(default_factory=lambda: Vector2(70.0, 0.0))
+    elapsed: float = 0.0
+    bounds: Optional[pygame.Rect] = None
+    needs_reset: bool = True
+    trail: Deque[Vector2] = field(default_factory=lambda: deque(maxlen=40))
+    layout: Dict[str, Vector2] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.layout = self._layout_graph(self.creature.graph)
+
+    @staticmethod
+    def _layout_graph(graph) -> Dict[str, Vector2]:
+        layout: Dict[str, Vector2] = {}
+        queue: List[Tuple[str, float, float]] = [(graph.root_id, 0.0, 0.0)]
+        visited: set[str] = set()
+        while queue:
+            node_id, offset_x, offset_y = queue.pop(0)
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            layout[node_id] = Vector2(offset_x, offset_y)
+            children = list(graph.children_of(node_id).keys())
+            if not children:
+                continue
+            spread = max(1, len(children))
+            for idx, child_id in enumerate(children):
+                child_offset_x = offset_x + 1.0
+                child_offset_y = offset_y + (idx - (spread - 1) / 2.0) * 0.8
+                queue.append((child_id, child_offset_x, child_offset_y))
+        return layout
+
+    def _ensure_bounds(self, rect: pygame.Rect) -> None:
+        if (
+            self.bounds is None
+            or self.needs_reset
+            or self.bounds.topleft != rect.topleft
+            or self.bounds.size != rect.size
+        ):
+            self.bounds = rect.copy()
+            self.position = Vector2(rect.left + rect.width * 0.2, rect.centery)
+            self.velocity = Vector2(85.0, 0.0)
+            self.trail.clear()
+            self.needs_reset = False
+
+    def update(self, dt: float, rect: pygame.Rect) -> None:
+        self._ensure_bounds(rect)
+        bounds = self.bounds or rect
+        self.elapsed += dt
+        thrust_vector = self.creature.step(dt)
+        mass = max(1.0, self.creature.physics.mass)
+        swim_force = abs(thrust_vector.x)
+        acceleration = Vector2((swim_force / mass) * 8.0, 0.0)
+        drag = -self.velocity * (0.35 + self.creature.physics.drag_coefficient * 0.05)
+        buoyancy = Vector2(0.0, -14.0)
+        self.velocity += (acceleration + drag + buoyancy) * dt
+        self.velocity.y += math.sin(self.elapsed * 0.9) * 18.0 * dt
+        self.velocity.x = max(40.0, min(self.velocity.x, 170.0))
+        self.position += self.velocity * dt
+        self.position.y += math.sin(self.elapsed * 3.2) * 0.6
+        self.trail.appendleft(self.position.copy())
+        margin = 30
+        min_y = bounds.top + margin
+        max_y = bounds.bottom - margin
+        if self.position.y < min_y:
+            self.position.y = min_y
+            self.velocity.y *= -0.35
+        elif self.position.y > max_y:
+            self.position.y = max_y
+            self.velocity.y *= -0.35
+        if self.position.x > bounds.right + 120:
+            self.position.x = bounds.left - 60
+        elif self.position.x < bounds.left - 120:
+            self.position.x = bounds.right + 120
+
+    def render(self, surface: pygame.Surface, rect: pygame.Rect, dt: float) -> None:
+        self.update(dt, rect)
+        self._draw_trail(surface)
+        self._draw_creature(surface)
+
+    def _draw_trail(self, surface: pygame.Surface) -> None:
+        if not self.trail:
+            return
+        for idx, point in enumerate(list(self.trail)[:24]):
+            fade = max(40, 180 - idx * 6)
+            radius = max(1, 5 - idx // 4)
+            color = (180 + idx * 2, 240, 255)
+            pygame.draw.circle(surface, color, (int(point.x) - idx * 2, int(point.y)), radius)
+
+    def _draw_creature(self, surface: pygame.Surface) -> None:
+        if not self.layout:
+            return
+        scale_x = 70
+        scale_y = 45
+        for node_id, offset in self.layout.items():
+            node = self.creature.graph.get_node(node_id)
+            module = node.module
+            center = Vector2(
+                self.position.x + offset.x * scale_x,
+                self.position.y + offset.y * scale_y,
+            )
+            sway = math.sin(self.elapsed * 6.0 + offset.x * 0.4)
+            center.y += sway * (4 + offset.x * 2)
+            length = max(14, int(module.size[2] * 30))
+            height = max(12, int(module.size[1] * 28))
+            rect = pygame.Rect(0, 0, length, height)
+            rect.center = (int(center.x), int(center.y))
+            color = MODULE_COLORS.get(module.module_type, (140, 210, 220))
+            pygame.draw.ellipse(surface, color, rect)
+            pygame.draw.ellipse(surface, (10, 25, 40), rect, 2)
+            if module.module_type == "propulsion":
+                flame = rect.copy()
+                flame.width = max(6, rect.width // 3)
+                flame.left = rect.left - flame.width + 4
+                pygame.draw.ellipse(surface, (255, 200, 150), flame)
+            if module.module_type == "head":
+                eye_center = (rect.centerx + rect.width // 4, rect.centery - rect.height // 4)
+                pygame.draw.circle(surface, (15, 30, 60), eye_center, 4)
+
+
+def _draw_vertical_gradient(surface: pygame.Surface, rect: pygame.Rect, top_color: Tuple[int, int, int], bottom_color: Tuple[int, int, int]) -> None:
+    height = rect.height
+    if height <= 0:
+        return
+    for row in range(height):
+        ratio = row / max(1, height - 1)
+        color = tuple(
+            int(top_color[idx] + (bottom_color[idx] - top_color[idx]) * ratio)
+            for idx in range(3)
+        )
+        pygame.draw.line(surface, color, (rect.left, rect.top + row), (rect.right, rect.top + row))
+
+    caustics = pygame.Surface(rect.size, pygame.SRCALPHA)
+    for wave in range(4):
+        offset = math.sin(pygame.time.get_ticks() / 900.0 + wave) * 18
+        arc_rect = pygame.Rect(0, int(wave * rect.height / 4 + offset), rect.width, rect.height // 2)
+        pygame.draw.arc(caustics, (255, 255, 255, 32), arc_rect, 0, math.pi, 2)
+    surface.blit(caustics, rect.topleft)
+
+
+def _draw_modular_preview(
+    surface: pygame.Surface,
+    rect: pygame.Rect,
+    preview: Optional[PrototypeSwimPreview],
+    info_font: pygame.font.Font,
+    delta_time: float,
+) -> None:
+    if rect.width <= 0 or rect.height <= 0:
+        return
+    _draw_vertical_gradient(surface, rect, (120, 210, 230), (6, 28, 60))
+    if preview is None:
+        placeholder = info_font.render(
+            "Klik op 'Test prototype' om de zwemtest te zien.",
+            True,
+            settings.BLACK,
+        )
+        text_rect = placeholder.get_rect(center=rect.center)
+        surface.blit(placeholder, text_rect)
+    else:
+        preview.render(surface, rect, delta_time)
+    pygame.draw.rect(surface, (15, 30, 60), rect, 2)
+
+
 # ---------------------------------------------------------------------------
 # Font helpers
 # ---------------------------------------------------------------------------
@@ -255,7 +435,7 @@ def run() -> None:
         settings.WINDOW_HEIGHT - 40,
     )
 
-    def _run_modular_creature_test() -> Dict[str, float]:
+    def _run_modular_creature_test() -> Tuple[Dict[str, float], PrototypeSwimPreview]:
         """Build and sample the first modular creature prototype."""
 
         creature = build_fin_swimmer_prototype()
@@ -267,7 +447,7 @@ def run() -> None:
             samples.append(thrust_vector.length())
         average_thrust = sum(samples) / len(samples) if samples else 0.0
         peak_thrust = max(samples) if samples else 0.0
-        return {
+        report = {
             "name": creature.name,
             "modules": float(len(creature.graph)),
             "mass": creature.physics.mass,
@@ -276,6 +456,7 @@ def run() -> None:
             "peak_thrust": peak_thrust,
             "frontal_area": aggregation.frontal_area,
         }
+        return report, PrototypeSwimPreview(creature)
 
     def _set_environment_modifier(key: str, value: float) -> None:
         numeric_value = float(value)
@@ -615,6 +796,7 @@ def run() -> None:
     barrier_drag_start: Optional[Tuple[float, float]] = None
     barrier_preview_rect: Optional[pygame.Rect] = None
     modular_test_report: Optional[Dict[str, float]] = None
+    test_preview: Optional[PrototypeSwimPreview] = None
 
     running = True
     starting_screen = True
@@ -721,6 +903,12 @@ def run() -> None:
             for idx, line in enumerate(report_lines):
                 info_surface = info_font.render(line, True, settings.BLACK)
                 screen.blit(info_surface, (50, report_y + 32 + idx * 28))
+
+            preview_height = 220
+            preview_width = max(260, panel_rect.left - 120)
+            preview_top = report_y + 32 + len(report_lines) * 28 + 20
+            preview_rect = pygame.Rect(50, preview_top, preview_width, preview_height)
+            _draw_modular_preview(screen, preview_rect, test_preview, info_font, delta_time)
 
             button_width = 180
             button_height = 32
@@ -1066,7 +1254,7 @@ def run() -> None:
                             settings.BLUE,
                         )
                     elif modular_test_button.collidepoint(event.pos):
-                        modular_test_report = _run_modular_creature_test()
+                        modular_test_report, test_preview = _run_modular_creature_test()
                         notification_manager.add(
                             "Prototype test uitgevoerd", settings.SEA
                         )
