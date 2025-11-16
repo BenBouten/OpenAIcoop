@@ -126,6 +126,26 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                     color=(255, 240, 150),
                 )
 
+    carcass = getattr(lifeform, "closest_carcass", None)
+    carrion_range = max(4.0, lifeform.reach * 0.6)
+    if (
+        carcass
+        and lifeform.prefers_meat()
+        and lifeform.closest_enemy is None
+        and getattr(carcass, "resource", 0) > 0
+        and lifeform.distance_to_carcass(carcass) < carrion_range
+    ):
+        bite = carcass.consume(settings.PLANT_BITE_NUTRITION_TARGET * 1.2)
+        if bite > 0:
+            carcass.apply_effect(lifeform, bite)
+            lifeform.record_activity("Eet aas", voeding=bite)
+            if effects:
+                anchor = _lifeform_anchor(lifeform)
+                effects.spawn_status_label(anchor, "Carrion", color=(220, 200, 160))
+            if getattr(carcass, "is_depleted", lambda: False)():
+                if carcass in getattr(lifeform.state, "carcasses", []):
+                    lifeform.state.carcasses.remove(carcass)
+
     partner = lifeform.closest_partner
     partner_range = max(3.0, lifeform.reach * 0.6)
     if (

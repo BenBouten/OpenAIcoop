@@ -98,6 +98,7 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     desired += _group_goal_vector(lifeform, now)
     desired += _group_behavior_vector(lifeform)
     desired += _avoid_recent_positions(lifeform, now)
+    desired += _depth_bias_vector(lifeform)
     desired += _boundary_repulsion_vector(lifeform)
 
     # 5) Obstakel ontwijken
@@ -305,6 +306,23 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
             timestamp,
             weight=weight,
             tag="plant",
+        )
+
+    if (
+        lifeform.closest_carcass
+        and lifeform.prefers_meat()
+        and not (lifeform.closest_enemy and lifeform.closest_enemy.health_now > 0)
+    ):
+        center = _carcass_center(lifeform)
+        carrion_weight = getattr(lifeform.closest_carcass, "resource", 0.0)
+        carrion_weight += max(0, lifeform.hunger - 40)
+        _remember(
+            lifeform,
+            "food",
+            center,
+            timestamp,
+            weight=max(5.0, carrion_weight),
+            tag="meat",
         )
 
     # Partnerlocaties
@@ -676,6 +694,25 @@ def _leader_goal_position(
             )
             return point
 
+        carrion = getattr(leader, "closest_carcass", None)
+        if (
+            carrion
+            and getattr(carrion, "resource", 0) > 0
+            and leader.prefers_meat()
+        ):
+            point = (carrion.rect.centerx, carrion.rect.centery)
+            _share_leader_memory(
+                follower,
+                {
+                    "pos": point,
+                    "weight": max(1.0, getattr(carrion, "resource", 0.0)),
+                    "tag": "meat",
+                },
+                "food",
+                timestamp,
+            )
+            return point
+
         preferred_tag = None
         if leader.prefers_plants() and not leader.prefers_meat():
             preferred_tag = "plant"
@@ -989,6 +1026,16 @@ def _search_mode_active(lifeform: "Lifeform") -> bool:
         if offset.length() <= _SEARCH_PROXIMITY_RADIUS:
             return False
 
+    if (
+        lifeform.closest_carcass
+        and getattr(lifeform.closest_carcass, "resource", 0) > 0
+        and lifeform.prefers_meat()
+    ):
+        center = _carcass_center(lifeform)
+        offset = Vector2(center[0] - lifeform.x, center[1] - lifeform.y)
+        if offset.length() <= _SEARCH_PROXIMITY_RADIUS:
+            return False
+
     return True
 
 
@@ -1030,6 +1077,21 @@ def _reset_speed_to_base(lifeform: "Lifeform") -> None:
 # ---------------------------------------------------------
 # Obstacle & boundary
 # ---------------------------------------------------------
+def _depth_bias_vector(lifeform: "Lifeform") -> Vector2:
+    bias = float(getattr(lifeform, "depth_bias", 0.0))
+    if abs(bias) < 0.01:
+        return Vector2()
+    world = getattr(lifeform.state, "world", None)
+    if not world:
+        return Vector2()
+    preferred = world.height * (0.5 + 0.45 * bias)
+    delta = preferred - lifeform.rect.centery
+    if abs(delta) < 2.0:
+        return Vector2()
+    strength = min(1.0, abs(delta) / max(1.0, world.height)) * abs(bias)
+    return Vector2(0.0, math.copysign(strength, delta))
+
+
 def _boundary_repulsion_vector(lifeform: "Lifeform") -> Vector2:
     margin = settings.BOUNDARY_REPULSION_MARGIN
     force = Vector2()
@@ -1154,6 +1216,18 @@ def _immediate_food_vector(lifeform: "Lifeform") -> Vector2:
             score = weight / (distance + 1)
             candidates.append((score, direction))
 
+    if (
+        lifeform.closest_carcass
+        and lifeform.prefers_meat()
+        and getattr(lifeform.closest_carcass, "resource", 0) > 0
+        and lifeform.closest_enemy is None
+    ):
+        direction, distance = lifeform.direction_to_carcass(lifeform.closest_carcass)
+        if distance > 0:
+            weight = getattr(lifeform.closest_carcass, "resource", 0) + max(10, lifeform.hunger)
+            score = weight / (distance + 1)
+            candidates.append((score, direction))
+
     if not candidates:
         return Vector2()
 
@@ -1178,6 +1252,15 @@ def _opportunistic_food_vector(lifeform: "Lifeform") -> Vector2:
     ):
         direction, distance = lifeform.direction_to_plant(lifeform.closest_plant)
         if distance > 0 and distance < max(10, lifeform.vision * 0.5):
+            return direction
+
+    if (
+        lifeform.closest_carcass
+        and lifeform.prefers_meat()
+        and lifeform.closest_enemy is None
+    ):
+        direction, distance = lifeform.direction_to_carcass(lifeform.closest_carcass)
+        if distance > 0 and distance < max(14, lifeform.vision * 0.6):
             return direction
 
     return Vector2()
@@ -1245,3 +1328,10 @@ def _plant_center(lifeform: "Lifeform") -> Tuple[float, float]:
     if plant is None:
         return (float(lifeform.rect.centerx), float(lifeform.rect.centery))
     return lifeform.plant_contact_point(plant)
+
+
+def _carcass_center(lifeform: "Lifeform") -> Tuple[float, float]:
+    carcass = getattr(lifeform, "closest_carcass", None)
+    if carcass is None:
+        return (float(lifeform.rect.centerx), float(lifeform.rect.centery))
+    return (float(carcass.rect.centerx), float(carcass.rect.centery))

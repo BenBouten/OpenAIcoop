@@ -25,8 +25,10 @@ from ..config import settings
 from ..dna.development import describe_skin_stage, ensure_development_plan
 from ..morphology import MorphologyGenotype, MorphStats, compute_morph_stats
 from ..simulation.state import SimulationState
+from ..world.carcass import SinkingCarcass
 from ..world.world import BiomeRegion
 from . import reproduction
+from .locomotion import LocomotionProfile, derive_locomotion_profile
 
 logger = logging.getLogger("evolution.simulation")
 
@@ -48,6 +50,7 @@ class Lifeform:
         self.y = y
         self.x_direction = 0.0
         self.y_direction = 0.0
+        self.velocity = Vector2()
 
         # Core DNA / stats
         self.dna_id = dna_profile["dna_id"]
@@ -91,10 +94,53 @@ class Lifeform:
         self.mass = self.morph_stats.mass
         self.reach = self.morph_stats.reach
         self.maintenance_cost = self.morph_stats.maintenance_cost
-        self.speed_multiplier = self.morph_stats.ground_speed_multiplier
-        self.traction_multiplier = self.morph_stats.traction
+        self.speed_multiplier = self.morph_stats.swim_speed_multiplier
+        self.grip_strength = self.morph_stats.grip_strength
         self.turn_rate = max(0.05, self.morph_stats.turn_rate)
         self.fov_threshold = self.morph_stats.fov_cosine_threshold
+        fins = getattr(self.morphology, "fins", 0)
+        legs = getattr(self.morphology, "legs", 0)
+        self.propulsion_efficiency = max(0.4, min(1.6, 0.75 + fins * 0.12 - legs * 0.04))
+        self._locomotion_drag_multiplier = 1.0
+        self.volume = float(self.width * self.height)
+        self.body_density = max(0.2, self.mass / max(1.0, self.volume))
+        self.drag_coefficient = 0.25
+        self.max_swim_speed = 80.0
+        self.last_fluid_properties = None
+
+        self.locomotion_profile: LocomotionProfile = derive_locomotion_profile(
+            dna_profile,
+            self.morphology,
+            self.morph_stats,
+        )
+        self.locomotion_strategy = self.locomotion_profile.key
+        self.locomotion_label = self.locomotion_profile.label
+        self.locomotion_description = self.locomotion_profile.description
+        self.depth_bias = self.locomotion_profile.depth_bias
+        self.drift_preference = self.locomotion_profile.drift_preference
+        self.motion_energy_cost = self.locomotion_profile.energy_cost
+        self.speed_multiplier *= self.locomotion_profile.speed_multiplier
+        self.propulsion_efficiency *= self.locomotion_profile.thrust_efficiency
+        self.grip_strength *= self.locomotion_profile.grip_bonus
+        self._locomotion_drag_multiplier = self.locomotion_profile.drag_multiplier
+        self.max_swim_speed *= max(0.85, self.locomotion_profile.speed_multiplier * 1.2)
+        self.uses_signal_cones = self.locomotion_profile.uses_signal_cones
+        self.signal_cone_threshold = self.locomotion_profile.signal_threshold
+        self._burst_timer = 0
+        self._burst_cooldown = 0
+
+        sensor_bonus = self.locomotion_profile.sensor_bonus
+        if self.locomotion_profile.light_penalty > 0:
+            light_factor = max(0.2, 1.0 - self.locomotion_profile.light_penalty)
+            self.vision *= light_factor
+        if sensor_bonus:
+            self.vision += sensor_bonus
+            self.hearing_range += sensor_bonus * 1.4
+        self.vision = max(
+            float(settings.VISION_MIN),
+            min(float(settings.VISION_MAX), self.vision),
+        )
+        self.hearing_range = max(0.0, self.hearing_range)
 
         self.parent_ids: Tuple[str, ...] = tuple(parents or ())
         self.family_signature: Tuple[str, ...] = (
@@ -141,6 +187,7 @@ class Lifeform:
         self.closest_partner: Optional[Lifeform] = None
         self.closest_follower: Optional[Lifeform] = None
         self.closest_plant = None  # Vegetation instance
+        self.closest_carcass: Optional[SinkingCarcass] = None
 
         # Environment / biome
         self.current_biome: Optional[BiomeRegion] = None
@@ -153,6 +200,10 @@ class Lifeform:
             "temperature": 20,
             "precipitation": "helder",
             "weather_name": "Stabiel",
+            "light": 1.0,
+            "pressure": 1.0,
+            "fluid_density": 1.0,
+            "current_speed": 0.0,
         }
 
         # Social / grouping
@@ -213,6 +264,7 @@ class Lifeform:
         self._escape_vector = Vector2()
         self._voluntary_pause = False
         self._next_wander_flip = 0
+        self._refresh_inertial_properties()
 
     # ------------------------------------------------------------------
     # Convenience: access to global notification context via state
@@ -359,6 +411,18 @@ class Lifeform:
             return Vector2(), 0.0
         return offset.normalize(), distance
 
+    def direction_to_carcass(self, carcass: SinkingCarcass) -> Tuple[Vector2, float]:
+        if carcass is None:
+            return Vector2(), 0.0
+        offset = Vector2(
+            carcass.rect.centerx - self.rect.centerx,
+            carcass.rect.centery - self.rect.centery,
+        )
+        distance = offset.length()
+        if distance <= 0:
+            return Vector2(), 0.0
+        return offset.normalize(), distance
+
     # ------------------------------------------------------------------
     # Geometry helpers
     # ------------------------------------------------------------------
@@ -381,6 +445,10 @@ class Lifeform:
         """Return the minimal distance between our centre and the plant mass."""
 
         _, distance = self.direction_to_plant(plant)
+        return distance
+
+    def distance_to_carcass(self, carcass: SinkingCarcass) -> float:
+        _, distance = self.direction_to_carcass(carcass)
         return distance
 
     def is_adult(self) -> bool:
@@ -469,6 +537,8 @@ class Lifeform:
         partner_distance = vision_sq
         follower_distance = vision_sq
         plant_distance = vision_sq
+        carcass_distance = vision_sq
+        carcass_candidate = None
 
         for lifeform in self.state.lifeforms:
             if lifeform is self:
@@ -489,11 +559,14 @@ class Lifeform:
             in_vision = distance_sq <= vision_sq
             fov_ok = in_close
             if not fov_ok and in_vision:
+                dot = forward.x * dx + forward.y * dy
                 if distance_sq <= 1e-6:
                     fov_ok = True
                 else:
-                    dot = forward.x * dx + forward.y * dy
+                    cos_angle = dot / max(1e-6, distance_sq**0.5)
                     if dot > 0 and dot * dot >= threshold_sq * distance_sq:
+                        fov_ok = True
+                    elif self.uses_signal_cones and cos_angle >= self.signal_cone_threshold:
                         fov_ok = True
 
             enemy_heard = False
@@ -546,17 +619,42 @@ class Lifeform:
                     pass
                 else:
                     dot = forward.x * dx + forward.y * dy
-                    if not (dot > 0 and dot * dot >= threshold_sq * distance_sq):
+                    cos_angle = dot / max(1e-6, distance_sq**0.5)
+                    within_cone = self.uses_signal_cones and cos_angle >= self.signal_cone_threshold
+                    if not (dot > 0 and dot * dot >= threshold_sq * distance_sq) and not within_cone:
                         continue
             if distance_sq < plant_distance:
                 plant_candidate = plant
                 plant_distance = distance_sq
+
+        for carcass in getattr(self.state, "carcasses", []):
+            if getattr(carcass, "is_depleted", lambda: False)():
+                continue
+            dx = carcass.rect.centerx - self.rect.centerx
+            dy = carcass.rect.centery - self.rect.centery
+            distance_sq = float(dx * dx + dy * dy)
+            if distance_sq > vision_sq:
+                continue
+            in_close = distance_sq <= close_range_sq
+            if not in_close:
+                if distance_sq <= 1e-6:
+                    pass
+                else:
+                    dot = forward.x * dx + forward.y * dy
+                    cos_angle = dot / max(1e-6, distance_sq**0.5)
+                    within_cone = self.uses_signal_cones and cos_angle >= self.signal_cone_threshold
+                    if not (dot > 0 and dot * dot >= threshold_sq * distance_sq) and not within_cone:
+                        continue
+            if distance_sq < carcass_distance:
+                carcass_candidate = carcass
+                carcass_distance = distance_sq
 
         self.closest_enemy = enemy_candidate
         self.closest_prey = prey_candidate
         self.closest_partner = partner_candidate
         self.closest_follower = follower_candidate if not self.is_leader else None
         self.closest_plant = plant_candidate
+        self.closest_carcass = carcass_candidate
 
     def set_size(self) -> None:
         self.size = self.width * self.height * max(0.5, self.mass)
@@ -564,6 +662,15 @@ class Lifeform:
             self.width = 1
         if self.height < 1:
             self.height = 1
+        self._refresh_inertial_properties()
+
+    def _refresh_inertial_properties(self) -> None:
+        area = max(1.0, self.width * self.height)
+        self.volume = area * 0.12
+        self.body_density = max(0.2, self.mass / max(1.0, self.volume))
+        base_drag = max(0.1, min(1.4, (self.width + self.height) / 220.0))
+        drag_scale = getattr(self, "_locomotion_drag_multiplier", 1.0)
+        self.drag_coefficient = max(0.05, min(2.4, base_drag * drag_scale))
 
     def check_group(self) -> None:
         relevant_radius = min(self.vision, settings.GROUP_MAX_RADIUS)
@@ -682,7 +789,7 @@ class Lifeform:
                 base_speed *= factor / 10
 
         base_speed *= self.speed_multiplier
-        base_speed *= self.traction_multiplier
+        base_speed *= self.grip_strength
         base_speed /= max(0.75, self.mass)
 
         base_speed = max(0.45, min(14.0, base_speed))
@@ -691,6 +798,7 @@ class Lifeform:
         base_speed = min(14.0, base_speed)
         base_speed = max(0.05, base_speed)
         self.speed = base_speed
+        self.max_swim_speed = max(48.0, self.speed * 28.0)
 
     def handle_death(self) -> bool:
         if self.health_now > 0:
@@ -714,6 +822,15 @@ class Lifeform:
         if effects:
             center_x = self.x + self.width / 2
             effects.spawn_death((center_x, self.y - 12))
+
+        carcass = SinkingCarcass(
+            position=(self.x, self.y),
+            size=(int(self.width), int(self.height)),
+            mass=self.mass,
+            nutrition=max(12.0, self.size * 0.18),
+            color=self.color,
+        )
+        self.state.carcasses.append(carcass)
 
         if self in self.state.lifeforms:
             self.state.lifeforms.remove(self)
@@ -750,7 +867,7 @@ class Lifeform:
         self.defence_power_now += (self.size - 50) * 0.8
         self.defence_power_now -= self.hunger * 0.1
         self.defence_power_now *= self.calculate_age_factor()
-        defence_bonus = 1.0 + (self.traction_multiplier - 1.0) * 0.25
+        defence_bonus = 1.0 + (self.grip_strength - 1.0) * 0.25
         defence_bonus *= 1.0 + (self.mass - 1.0) * 0.08
         self.defence_power_now *= max(0.4, defence_bonus)
 
@@ -880,6 +997,14 @@ class Lifeform:
         self.energy_now -= maintenance * delta_time
         self.wounded -= settings.WOUND_HEAL_PER_SECOND * delta_time
         self.health_now += float(effects["health"]) * delta_time
+
+        light_level = float(self.environment_effects.get("light", 1.0))
+        if light_level < 0.35:
+            self.energy_now -= (0.35 - light_level) * 12.0 * delta_time
+
+        pressure_level = float(self.environment_effects.get("pressure", 1.0))
+        if pressure_level > 10.0:
+            self.health_now -= (pressure_level - 10.0) * 0.12 * delta_time
 
         if self.age > self.longevity:
             self.health_now -= (

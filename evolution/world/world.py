@@ -6,11 +6,13 @@ import random
 from typing import Dict, List, Optional, Tuple
 
 import pygame
+from pygame.math import Vector2
 
 from ..config import settings
 
 
 from .map_generator import MapBlueprint, generate_map, normalize_world_type
+from .ocean_physics import OceanPhysics
 from .types import Barrier, BiomeRegion, WaterBody, WeatherPattern
 
 
@@ -30,6 +32,7 @@ class World:
         self.biomes: List[BiomeRegion] = []
         self.environment_modifiers = environment_modifiers
         self.world_type = normalize_world_type(world_type)
+        self.ocean = OceanPhysics(self.width, self.height)
         self._generate()
 
     def set_environment_modifiers(self, modifiers: Dict[str, float]) -> None:
@@ -46,11 +49,13 @@ class World:
         self.water_bodies = list(blueprint.water_bodies)
         self.biomes = list(blueprint.biomes)
         self.vegetation_masks = list(blueprint.vegetation_masks)
+        self.ocean = OceanPhysics(self.width, self.height)
 
     def regenerate(self) -> None:
         self._generate()
 
     def update(self, now_ms: int) -> None:
+        self.ocean.update(now_ms)
         for biome in self.biomes:
             biome.update_weather(now_ms)
 
@@ -140,7 +145,16 @@ class World:
             effects["regrowth"] = 1.0 + (regrowth - 1.0) * intensity
             effects["energy"] = 1.0 + (energy - 1.0) * intensity
             effects["health"] = 0.0 + health * intensity
+        self.ocean.enrich_effects(effects, y)
         return biome, effects
+
+    def apply_fluid_dynamics(
+        self, lifeform, thrust: Vector2, dt: float, *, max_speed: float
+    ) -> Tuple[Vector2, Optional[object]]:
+        if self.ocean:
+            return self.ocean.integrate_body(lifeform, thrust, dt, max_speed=max_speed)
+        position = Vector2(lifeform.x, lifeform.y) + thrust * dt
+        return position, None
 
     def get_regrowth_modifier(self, x: float, y: float) -> float:
         _, effects = self.get_environment_context(x, y)

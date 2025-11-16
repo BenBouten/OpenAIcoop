@@ -23,6 +23,8 @@ from . import ai, combat  # Gebruik aparte modules voor gedrag en interacties
 
 logger = logging.getLogger("evolution.movement")
 
+THRUST_SCALE = 18.0
+
 if TYPE_CHECKING:
     from .lifeform import Lifeform
     from evolution.simulation.state import SimulationState
@@ -47,15 +49,69 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
 
     previous_position = (lifeform.x, lifeform.y)
 
-    dx = lifeform.x_direction
-    dy = lifeform.y_direction
+    desired = Vector2(lifeform.x_direction, lifeform.y_direction)
+    if desired.length_squared() == 0:
+        desired = Vector2(1.0, 0.0)
+    else:
+        desired = desired.normalize()
 
-    # Safety fallback
-    if dx == 0 and dy == 0:
-        dx, dy = 1.0, 0.0
+    locomotion = getattr(lifeform, "locomotion_profile", None)
 
-    attempted_x = lifeform.x + dx * lifeform.speed
-    attempted_y = lifeform.y + dy * lifeform.speed
+    drift_bias = getattr(lifeform, "drift_preference", 0.0)
+    if drift_bias > 0 and lifeform.last_fluid_properties is not None:
+        current = lifeform.last_fluid_properties.current
+        if current.length_squared() > 0:
+            desired = desired.lerp(current.normalize(), min(0.95, drift_bias))
+
+    thrust_multiplier = 1.0
+    if locomotion and locomotion.burst_force > 1.0:
+        if lifeform._burst_timer > 0:
+            thrust_multiplier = locomotion.burst_force
+            lifeform._burst_timer -= 1
+        elif lifeform._burst_cooldown > 0:
+            lifeform._burst_cooldown -= 1
+        else:
+            should_burst = (
+                lifeform.closest_enemy
+                or lifeform.closest_prey
+                or lifeform.should_seek_food()
+            )
+            if should_burst and lifeform.energy_now > 5.0:
+                lifeform._burst_timer = max(4, locomotion.burst_duration)
+                lifeform._burst_cooldown = max(30, locomotion.burst_cooldown)
+                thrust_multiplier = locomotion.burst_force
+    elif getattr(lifeform, "_burst_cooldown", 0) > 0:
+        lifeform._burst_cooldown -= 1
+
+    thrust = (
+        desired
+        * lifeform.speed
+        * lifeform.propulsion_efficiency
+        * THRUST_SCALE
+        * thrust_multiplier
+    )
+    max_speed = getattr(lifeform, "max_swim_speed", 120.0)
+    attempted_position, fluid = state.world.apply_fluid_dynamics(
+        lifeform,
+        thrust,
+        dt,
+        max_speed=max_speed,
+    )
+    if fluid is not None:
+        lifeform.last_fluid_properties = fluid
+        if getattr(lifeform, "locomotion_strategy", "") == "tentacle_walker":
+            stick = min(0.9, getattr(lifeform, "grip_strength", 1.0) * 0.4)
+            lifeform.velocity -= fluid.current * stick * 0.015
+
+    motion_cost = getattr(lifeform, "motion_energy_cost", 1.0)
+    energy_spent = thrust.length() * 0.0008 * motion_cost
+    if thrust_multiplier > 1.0:
+        energy_spent *= thrust_multiplier * 1.3
+    if drift_bias > 0.5:
+        energy_spent *= 0.6
+    lifeform.energy_now = max(0.0, lifeform.energy_now - energy_spent)
+    attempted_x = float(attempted_position.x)
+    attempted_y = float(attempted_position.y)
 
     candidate_rect = lifeform.rect.copy()
     candidate_rect.update(
@@ -100,6 +156,8 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     blocked_by_plant = collision_type == "plant"
 
     if collided:
+        grip = max(0.5, getattr(lifeform, "grip_strength", 1.0))
+        lifeform.velocity *= -0.2 / grip
         if blocked_by_plant:
             # Zacht tegen een plant botsen: blijf staan zodat eten mogelijk is,
             # maar zie de plant wél als obstakel zodat we er niet doorheen lopen.
@@ -121,10 +179,13 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
 
 
     else:
+        grip = max(0.5, getattr(lifeform, "grip_strength", 1.0))
         if hit_boundary_x:
             lifeform.x_direction = -lifeform.x_direction
+            lifeform.velocity.x *= -0.25 / grip
         if hit_boundary_y:
             lifeform.y_direction = -lifeform.y_direction
+            lifeform.velocity.y *= -0.25 / grip
 
         if hit_boundary_x or hit_boundary_y:
             lifeform._boundary_contact_frames += 1
@@ -143,6 +204,11 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     # --------------------------------------------------
     # 4. Positie & rect bijwerken
     # --------------------------------------------------
+    if getattr(lifeform, "locomotion_strategy", "") == "benthic_crawler":
+        seafloor = state.world.height - lifeform.height - 2
+        if seafloor >= 0:
+            anchor = min(0.9, lifeform.grip_strength * 0.35)
+            resolved_y = resolved_y * (1.0 - anchor) + seafloor * anchor
     lifeform.x = resolved_x
     lifeform.y = resolved_y
     lifeform.rect.update(

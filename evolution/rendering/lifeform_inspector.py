@@ -676,11 +676,11 @@ class LifeformInspector:
         age_factor = lifeform.calculate_age_factor()
         if not math.isclose(age_factor, 1.0, rel_tol=1e-3):
             lines.append(f"Leeftijdsfactor → x{age_factor:.2f}")
-        traction_bonus = 1.0 + (lifeform.traction_multiplier - 1.0) * 0.25
+        grip_bonus = 1.0 + (lifeform.grip_strength - 1.0) * 0.25
         mass_bonus = 1.0 + (lifeform.mass - 1.0) * 0.08
-        combined = max(0.4, traction_bonus * mass_bonus)
+        combined = max(0.4, grip_bonus * mass_bonus)
         lines.append(
-            f"Tractie {lifeform.traction_multiplier:.2f} & massa {lifeform.mass:.2f} → x{combined:.2f}"
+            f"Grip {lifeform.grip_strength:.2f} & massa {lifeform.mass:.2f} → x{combined:.2f}"
         )
         lines.append(f"Resultaat: {lifeform.defence_power_now:.2f}")
         return lines
@@ -717,8 +717,8 @@ class LifeformInspector:
                 juvenile_factor = (lifeform.maturity / average) / 10.0
                 lines.append(f"Jeugdfactor: x{juvenile_factor:.2f}")
 
-        lines.append(f"Morph snelheid: x{lifeform.speed_multiplier:.2f}")
-        lines.append(f"Tractie: x{lifeform.traction_multiplier:.2f}")
+        lines.append(f"Hydrodynamica: x{lifeform.speed_multiplier:.2f}")
+        lines.append(f"Grip: x{lifeform.grip_strength:.2f}")
         mass_divisor = max(0.75, lifeform.mass)
         lines.append(f"Massa factor: /{mass_divisor:.2f}")
         pause_factor = getattr(lifeform, "_wander_pause_speed_factor", 1.0)
@@ -729,12 +729,21 @@ class LifeformInspector:
 
     def _environment_lines(self, lifeform: "Lifeform") -> List[str]:
         effects = lifeform.environment_effects
+        locomotion_label = getattr(lifeform, "locomotion_label", "Onbekend")
+        locomotion_desc = getattr(lifeform, "locomotion_description", "Geen omschrijving beschikbaar")
+        locomotion_line = f"Locomotie: {locomotion_label}"
         lines = [
+            locomotion_line,
+            locomotion_desc,
             f"Weer: {effects.get('weather_name', '-')}, {effects.get('temperature', '?')}°C, {effects.get('precipitation', '-')}",
             (
                 f"Beweging x{float(effects.get('movement', 1.0)):.2f} • "
                 f"Energie x{float(effects.get('energy', 1.0)):.2f} • "
                 f"Honger x{float(effects.get('hunger', 1.0)):.2f}"
+            ),
+            (
+                f"Dieptebias {float(getattr(lifeform, 'depth_bias', 0.0)):+.2f} • "
+                f"Drift voorkeur {float(getattr(lifeform, 'drift_preference', 0.0)):.2f}"
             ),
             f"Groei x{float(effects.get('regrowth', 1.0)):.2f} • Gezondheid {float(effects.get('health', 0.0)):+.2f}/s",
         ]

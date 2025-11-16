@@ -10,6 +10,7 @@ if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
 class SimulationState:
     lifeforms: List = field(default_factory=list)
     plants: List = field(default_factory=list)
+    carcasses: List = field(default_factory=list)
     world: 'World' = None
     world_type: str = "Rift Valley"
     camera: 'Camera' = None
