@@ -404,12 +404,6 @@ def run() -> None:
         font3,
         _build_slider_configs(),
     )
-    tools_panel = ToolsPanel(
-        font2,
-        font3,
-        topleft=(24, settings.WINDOW_HEIGHT - 360),
-        available_biomes=world.biomes,
-    )
     stats_window = StatsWindow(font2, font3)
 
     def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
@@ -457,6 +451,12 @@ def run() -> None:
     player_controller = PlayerController(notification_manager, dna_profiles, lifeforms)
     effects_manager = EffectManager()
     effects_manager.set_font(font2)
+    tools_panel = ToolsPanel(
+        font2,
+        font3,
+        topleft=(24, settings.WINDOW_HEIGHT - 360),
+        available_biomes=world.biomes,
+    )
 
     def _screen_to_world(position: Tuple[int, int]) -> Tuple[float, float]:
         return camera.screen_to_world(position)
