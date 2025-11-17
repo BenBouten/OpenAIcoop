@@ -184,12 +184,14 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
 def spawn_lifeforms(state: SimulationState, world: World) -> None:
     """Spawn the configured number of lifeforms using the DNA catalogue."""
 
+    if not state.dna_profiles:
+        return
+
     spawn_positions_by_dna: Dict[int, List[Tuple[float, float]]] = {
         profile["dna_id"]: [] for profile in state.dna_profiles
     }
 
-    for _ in range(settings.N_LIFEFORMS):
-        dna_profile = random.choice(state.dna_profiles)
+    def _spawn_from_profile(dna_profile: dict) -> None:
         preferred_biome = state.dna_home_biome.get(dna_profile["dna_id"])
         other_positions = [
             pos
@@ -228,6 +230,28 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
         lifeform = Lifeform(state, x, y, dna_profile, generation=1)
         lifeform.current_biome = biome
         state.lifeforms.append(lifeform)
+
+    # Ensure that the alien ocean always starts with a small, diverse roster.
+    guaranteed_species = 0
+    if state.world_type == "Alien Ocean":
+        guaranteed_species = min(
+            settings.STARTING_SPECIES_COUNT,
+            len(state.dna_profiles),
+            settings.N_LIFEFORMS,
+        )
+
+    guaranteed_profiles = (
+        random.sample(state.dna_profiles, guaranteed_species)
+        if guaranteed_species
+        else []
+    )
+    for profile in guaranteed_profiles:
+        _spawn_from_profile(profile)
+
+    remaining_spawns = max(0, settings.N_LIFEFORMS - len(state.lifeforms))
+    for _ in range(remaining_spawns):
+        dna_profile = random.choice(state.dna_profiles)
+        _spawn_from_profile(dna_profile)
 
 
 def seed_vegetation(state: SimulationState, world: World) -> None:

@@ -25,6 +25,8 @@ N_LIFEFORMS = 100
 N_VEGETATION = 100
 N_DNA_PROFILES = 10
 MAX_LIFEFORMS = 150
+# Zorg dat elke nieuwe oceaan minstens een handvol verschillende soorten bevat.
+STARTING_SPECIES_COUNT = 5
 MUTATION_CHANCE = 5
 MOSS_MUTATION_CHANCE = 0.2
 MOSS_MUTATION_STRENGTH = 0.25

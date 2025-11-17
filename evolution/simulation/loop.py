@@ -38,6 +38,14 @@ from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.effects import EffectManager
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
 from ..rendering.lifeform_inspector import LifeformInspector
+from ..rendering.modular_palette import (
+    BASE_MODULE_ALPHA,
+    JOINT_COLORS,
+    MODULE_COLORS,
+    MODULE_RENDER_STYLES,
+    clamp_channel,
+    tint_color,
+)
 from ..rendering.tools_panel import EditorTool, ToolsPanel
 from ..rendering.stats_window import StatsWindow
 from ..physics.test_creatures import TestCreature, build_fin_swimmer_prototype
@@ -166,25 +174,6 @@ class Graph:
             screen.blit(self.surface, (0, 0))
 
 
-MODULE_COLORS = {
-    "core": (70, 125, 160),
-    "head": (235, 232, 198),
-    "limb": (120, 200, 220),
-    "propulsion": (255, 162, 120),
-    "sensor": (214, 235, 255),
-}
-
-BASE_MODULE_ALPHA = 210
-
-MODULE_RENDER_STYLES: Dict[str, Dict[str, Tuple[float, float, float] | int]] = {
-    "default": {"tint": (0.95, 0.95, 1.05), "alpha_offset": -15},
-    "core": {"tint": (1.0, 1.0, 1.0), "alpha_offset": 25},
-    "head": {"tint": (1.15, 1.08, 1.05), "alpha_offset": -5},
-    "limb": {"tint": (0.85, 1.05, 1.25), "alpha_offset": -30},
-    "propulsion": {"tint": (1.3, 0.92, 0.78), "alpha_offset": -10},
-    "sensor": {"tint": (1.1, 1.3, 1.4), "alpha_offset": -40},
-}
-
 LAYER_SUMMARIES: Dict[str, str] = {
     "Surface": "Golfslag, kelpwouden en zonnige caustics.",
     "Sunlit": "Driftzones met plankton en zachte zijstromen.",
@@ -198,22 +187,6 @@ START_SCREEN_TIPS: Tuple[str, ...] = (
     "Muiswiel of +/- zoomt tussen lagen.",
     "M opent management, V toont zichtkegels, B toont debug info.",
 )
-
-JOINT_COLORS = {
-    JointType.FIXED: (210, 210, 220),
-    JointType.HINGE: (255, 210, 140),
-    JointType.BALL: (160, 225, 255),
-    JointType.MUSCLE: (255, 150, 180),
-}
-
-
-def _clamp_channel(value: float) -> int:
-    return max(0, min(255, int(value)))
-
-
-def _tint_color(base: Tuple[int, int, int], tint: Tuple[float, float, float]) -> Tuple[int, int, int]:
-    return tuple(_clamp_channel(base[idx] * tint[idx]) for idx in range(3))
-
 
 @dataclass
 class PrototypeSwimPreview:
@@ -399,7 +372,7 @@ class PrototypeSwimPreview:
     def _module_visuals(self, module_type: str) -> Tuple[Tuple[int, int, int], int]:
         style = MODULE_RENDER_STYLES.get(module_type, MODULE_RENDER_STYLES["default"])
         tint = style.get("tint", (1.0, 1.0, 1.0))
-        tinted = _tint_color(self.torso_color, tint)  # type: ignore[arg-type]
+        tinted = tint_color(self.torso_color, tint)  # type: ignore[arg-type]
         alpha_offset = int(style.get("alpha_offset", 0))
         alpha = max(60, min(255, BASE_MODULE_ALPHA + alpha_offset))
         return tinted, alpha
@@ -409,7 +382,7 @@ class PrototypeSwimPreview:
             self.creature, "body_color", None
         )
         if raw_color is not None:
-            return tuple(_clamp_channel(channel) for channel in raw_color)
+            return tuple(clamp_channel(channel) for channel in raw_color)
         base = MODULE_COLORS.get("core", (72, 130, 168))
         seed = abs(hash(self.creature.name))
         jitter = (
@@ -418,7 +391,7 @@ class PrototypeSwimPreview:
             ((seed >> 16) & 0xFF) - 128,
         )
         return tuple(
-            _clamp_channel(base[idx] + jitter[idx] // 6)
+            clamp_channel(base[idx] + jitter[idx] // 6)
             for idx in range(3)
         )
 
@@ -1445,6 +1418,7 @@ def run() -> None:
                             notification_manager,
                             effects_manager,
                         )
+                        _initialise_population()
                         inspector.clear()
                         start_time = datetime.datetime.now()
                         notification_manager.add("Alien Ocean simulatie gestart", settings.SEA)
@@ -1471,6 +1445,7 @@ def run() -> None:
                             notification_manager,
                             effects_manager,
                         )
+                        _initialise_population()
                         inspector.clear()
                         latest_stats = None
                         stats_window.clear()
