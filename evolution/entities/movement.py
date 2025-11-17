@@ -19,11 +19,10 @@ from typing import TYPE_CHECKING
 from pygame.math import Vector2
 
 from ..config import settings
+from ..physics.physics_body import PhysicsBody
 from . import ai, combat  # Gebruik aparte modules voor gedrag en interacties
 
 logger = logging.getLogger("evolution.movement")
-
-THRUST_SCALE = 18.0
 
 if TYPE_CHECKING:
     from .lifeform import Lifeform
@@ -57,6 +56,11 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
 
     locomotion = getattr(lifeform, "locomotion_profile", None)
 
+    physics_body: PhysicsBody | None = getattr(lifeform, "physics_body", None)
+    if physics_body is None:
+        logger.warning("Lifeform %s missing physics_body; skipping movement", lifeform.id)
+        return
+
     drift_bias = getattr(lifeform, "drift_preference", 0.0)
     if drift_bias > 0 and lifeform.last_fluid_properties is not None:
         current = lifeform.last_fluid_properties.current
@@ -83,14 +87,15 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     elif getattr(lifeform, "_burst_cooldown", 0) > 0:
         lifeform._burst_cooldown -= 1
 
-    thrust = (
-        desired
-        * lifeform.speed
-        * lifeform.propulsion_efficiency
-        * THRUST_SCALE
-        * thrust_multiplier
-    )
-    max_speed = getattr(lifeform, "max_swim_speed", 120.0)
+    base_speed = getattr(lifeform, "speed", 0.0)
+    max_speed = max(1.0, getattr(lifeform, "max_swim_speed", 120.0))
+    speed_ratio = max(0.0, min(1.0, base_speed / max_speed))
+    base_effort = speed_ratio * getattr(lifeform, "propulsion_efficiency", 1.0)
+    effort = base_effort * thrust_multiplier
+    clamped_effort = max(-1.0, min(1.0, effort))
+    propulsion_force = physics_body.max_thrust * clamped_effort
+    propulsion_acceleration = physics_body.propulsion_acceleration(clamped_effort)
+    thrust = desired * propulsion_acceleration
     attempted_position, fluid = state.world.apply_fluid_dynamics(
         lifeform,
         thrust,
@@ -103,10 +108,17 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
             stick = min(0.9, getattr(lifeform, "grip_strength", 1.0) * 0.4)
             lifeform.velocity -= fluid.current * stick * 0.015
 
+    effort_magnitude = abs(clamped_effort)
     motion_cost = getattr(lifeform, "motion_energy_cost", 1.0)
-    energy_spent = thrust.length() * 0.0008 * motion_cost
+    energy_spent = (
+        (physics_body.energy_cost * 0.01 + physics_body.power_output * 0.002)
+        * effort_magnitude
+        * motion_cost
+        * max(0.016, dt)
+        + abs(propulsion_force) * 0.0004
+    )
     if thrust_multiplier > 1.0:
-        energy_spent *= thrust_multiplier * 1.3
+        energy_spent *= thrust_multiplier * 1.1
     if drift_bias > 0.5:
         energy_spent *= 0.6
     lifeform.energy_now = max(0.0, lifeform.energy_now - energy_spent)

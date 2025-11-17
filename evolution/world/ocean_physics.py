@@ -141,16 +141,47 @@ class OceanPhysics:
         max_speed: float,
     ) -> Tuple[Vector2, FluidProperties]:
         fluid = self.properties_at(lifeform.rect.centery)
-        mass = max(0.4, float(getattr(lifeform, "mass", 1.0)))
-        body_density = max(0.2, float(getattr(lifeform, "body_density", 1.0)))
-        volume = max(1.0, float(getattr(lifeform, "volume", 1.0)))
-        propulsion = thrust / max(0.5, mass)
-        volume_scale = min(2.0, max(0.35, volume / 220.0))
+        physics_body = getattr(lifeform, "physics_body", None)
+        base_mass = float(getattr(physics_body, "mass", getattr(lifeform, "mass", 1.0)))
+        mass = max(0.4, base_mass)
+        body_density = max(
+            0.2,
+            float(getattr(physics_body, "density", getattr(lifeform, "body_density", 1.0))),
+        )
+        volume = max(
+            1.0,
+            float(getattr(physics_body, "volume", getattr(lifeform, "volume", 1.0))),
+        )
+        buoyancy_volume = max(
+            1.0,
+            float(
+                getattr(
+                    physics_body,
+                    "buoyancy_volume",
+                    getattr(lifeform, "buoyancy_volume", volume),
+                )
+            ),
+        )
+        propulsion = thrust
+        volume_scale = min(2.5, max(0.3, buoyancy_volume / 220.0))
         buoyancy_ratio = fluid.density / body_density
         buoyancy_acc = (buoyancy_ratio - 1.0) * self.gravity * volume_scale
-        drag_coefficient = fluid.drag + float(getattr(lifeform, "drag_coefficient", 0.2))
-        drag = -lifeform.velocity * drag_coefficient
-        current_adjust = (fluid.current - lifeform.velocity) * 0.12
+        locomotion_drag = getattr(lifeform, "_locomotion_drag_multiplier", 1.0)
+        base_drag = float(
+            getattr(
+                physics_body,
+                "drag_coefficient",
+                getattr(lifeform, "drag_coefficient", 0.2),
+            )
+        )
+        drag_coefficient = fluid.drag + base_drag * locomotion_drag
+        drag = -lifeform.velocity * (drag_coefficient / max(1.0, mass))
+        grip_strength = max(0.3, float(getattr(lifeform, "grip_strength", 1.0)))
+        if physics_body is not None:
+            grip_strength = max(grip_strength, physics_body.grip_strength / 6.0)
+        current_adjust = (fluid.current - lifeform.velocity) * (
+            0.12 / max(0.5, grip_strength)
+        )
         vertical = Vector2(0.0, self.gravity + buoyancy_acc)
         acceleration = propulsion + drag + current_adjust + vertical
         lifeform.velocity += acceleration * dt
