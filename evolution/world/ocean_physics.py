@@ -182,7 +182,8 @@ class OceanPhysics:
         current_adjust = (fluid.current - lifeform.velocity) * (
             0.12 / max(0.5, grip_strength)
         )
-        vertical = Vector2(0.0, self.gravity + buoyancy_acc)
+        net_gravity = self.gravity - buoyancy_acc
+        vertical = Vector2(0.0, net_gravity)
         acceleration = propulsion + drag + current_adjust + vertical
         lifeform.velocity += acceleration * dt
         speed = lifeform.velocity.length()
