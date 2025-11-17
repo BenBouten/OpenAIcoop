@@ -107,14 +107,6 @@ state.notification_context = notification_context
 state.notifications = notification_context.notification_manager
 
 
-MAP_TYPE_OPTIONS = [
-    "Abyssal Ocean",
-    "Archipelago",
-    "Rift Valley",
-    "Desert–Jungle Split",
-]
-
-
 class Graph:
     """Render a statistics bar chart using matplotlib when available."""
 
@@ -192,6 +184,20 @@ MODULE_RENDER_STYLES: Dict[str, Dict[str, Tuple[float, float, float] | int]] = {
     "propulsion": {"tint": (1.3, 0.92, 0.78), "alpha_offset": -10},
     "sensor": {"tint": (1.1, 1.3, 1.4), "alpha_offset": -40},
 }
+
+LAYER_SUMMARIES: Dict[str, str] = {
+    "Surface": "Golfslag, kelpwouden en zonnige caustics.",
+    "Sunlit": "Driftzones met plankton en zachte zijstromen.",
+    "Twilight": "Radioactieve vents en chemosynthese velden.",
+    "Midnight": "Plotselinge stromingswissels testen vinnen en thrusters.",
+    "Abyss": "2-bit donkerte met bioluminescente bakens.",
+}
+
+START_SCREEN_TIPS: Tuple[str, ...] = (
+    "WASD of pijltjestoetsen bewegen de camera; Shift geeft boost.",
+    "Muiswiel of +/- zoomt tussen lagen.",
+    "M opent management, V toont zichtkegels, B toont debug info.",
+)
 
 JOINT_COLORS = {
     JointType.FIXED: (210, 210, 220),
@@ -530,37 +536,6 @@ def _draw_modular_preview(
     else:
         preview.render(surface, rect, delta_time)
     pygame.draw.rect(surface, (15, 30, 60), rect, 2)
-
-
-def _draw_ocean_showcase(
-    surface: pygame.Surface,
-    preview: Optional[PrototypeSwimPreview],
-    info_font: pygame.font.Font,
-    delta_time: float,
-    *,
-    bounds_margin: int = 90,
-) -> None:
-    ocean_rect = surface.get_rect()
-    _draw_vertical_gradient(surface, ocean_rect, (120, 210, 230), (6, 28, 60))
-    if preview is not None:
-        swim_rect = ocean_rect.inflate(-bounds_margin * 2, -bounds_margin)
-        preview.render(surface, swim_rect, delta_time)
-    else:
-        placeholder = info_font.render("Klik op Start om het testwezen te zien zwemmen.", True, settings.BLACK)
-        surface.blit(
-            placeholder,
-            (
-                ocean_rect.centerx - placeholder.get_width() // 2,
-                ocean_rect.centery - placeholder.get_height() // 2,
-            ),
-        )
-    pygame.draw.line(
-        surface,
-        (10, 25, 45),
-        (0, bounds_margin // 2),
-        (surface.get_width(), bounds_margin // 2),
-        3,
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -999,7 +974,6 @@ def run() -> None:
         player_controller,
         notification_manager,
         effects_manager,
-        state.world_type,
     )
     graph = Graph()
     inspector = LifeformInspector(state, font2, font3)
@@ -1010,8 +984,6 @@ def run() -> None:
     barrier_preview_rect: Optional[pygame.Rect] = None
     modular_test_report: Optional[Dict[str, float]] = None
     test_preview: Optional[PrototypeSwimPreview] = None
-    ocean_showcase_active = False
-    ocean_showcase_preview: Optional[PrototypeSwimPreview] = None
 
     running = True
     starting_screen = True
@@ -1045,7 +1017,6 @@ def run() -> None:
             24,
             24,
         )
-        map_button_rects: List[Tuple[pygame.Rect, str]] = []
         legacy_toggle_rect = pygame.Rect(
             panel_rect.left - 150,
             max(16, panel_rect.top - 40),
@@ -1062,47 +1033,69 @@ def run() -> None:
         ):
             painting_tool = None
 
-        live_simulation_active = not starting_screen and not ocean_showcase_active
+        live_simulation_active = not starting_screen
 
         if starting_screen:
-            screen.fill(settings.BACKGROUND)
-            title_font = pygame.font.Font(None, 48)
-            info_font = pygame.font.Font(None, 26)
-            button_font = pygame.font.Font(None, 30)
+            _draw_vertical_gradient(
+                screen,
+                screen.get_rect(),
+                (40, 118, 180),
+                (4, 12, 32),
+            )
+            title_font = pygame.font.Font(None, 56)
+            info_font = pygame.font.Font(None, 30)
+            small_font = pygame.font.Font(None, 24)
+            button_font = pygame.font.Font(None, 34)
 
-            pygame.draw.rect(screen, settings.GREEN, start_button)
-            pygame.draw.rect(screen, settings.BLACK, start_button, 3)
-
-            start_text = button_font.render("Start", True, settings.BLACK)
-            text_rect = start_text.get_rect(center=start_button.center)
-            screen.blit(start_text, text_rect)
-
-            pygame.draw.rect(screen, settings.SEA, modular_test_button)
-            pygame.draw.rect(screen, settings.BLACK, modular_test_button, 3)
-
-            test_text = button_font.render("Test prototype", True, settings.BLACK)
-            test_rect = test_text.get_rect(center=modular_test_button.center)
-            screen.blit(test_text, test_rect)
-
-            title_surface = title_font.render("Evolution Sim", True, settings.BLACK)
+            title_surface = title_font.render("Alien Ocean – Evolutie POC", True, settings.WHITE)
             screen.blit(title_surface, (50, 40))
+            subtitle = info_font.render(
+                "Vijf oceaanlagen met Newtoniaanse physics en modulaire wezens.",
+                True,
+                settings.WHITE,
+            )
+            screen.blit(subtitle, (50, 100))
 
-            instructions = [
-                "Kies een kaarttype en druk op Start om te beginnen.",
-                "Gebruik WASD of de pijltjestoetsen om de camera te bewegen.",
-                "Houd Shift ingedrukt om sneller te scrollen.",
-                "Druk op M om het genlab te openen of sluiten.",
-            ]
-            for idx, line in enumerate(instructions):
-                info_surface = info_font.render(line, True, settings.BLACK)
-                screen.blit(info_surface, (50, 110 + idx * 32))
+            for idx, tip in enumerate(START_SCREEN_TIPS):
+                tip_surface = small_font.render(tip, True, settings.WHITE)
+                screen.blit(tip_surface, (50, 150 + idx * 28))
+
+            pygame.draw.rect(screen, settings.GREEN, start_button, border_radius=12)
+            pygame.draw.rect(screen, settings.BLACK, start_button, 3, border_radius=12)
+            start_text = button_font.render("Start oceaan", True, settings.BLACK)
+            screen.blit(start_text, start_text.get_rect(center=start_button.center))
+
+            pygame.draw.rect(screen, settings.SEA, modular_test_button, border_radius=12)
+            pygame.draw.rect(screen, settings.BLACK, modular_test_button, 3, border_radius=12)
+            test_text = button_font.render("Test prototype", True, settings.BLACK)
+            screen.blit(test_text, test_text.get_rect(center=modular_test_button.center))
+
+            layer_panel = pygame.Rect(screen.get_width() - 340, 60, 280, 360)
+            panel_surface = pygame.Surface(layer_panel.size, pygame.SRCALPHA)
+            panel_surface.fill((5, 12, 24, 210))
+            screen.blit(panel_surface, layer_panel.topleft)
+            panel_title = small_font.render("Oceaanlagen", True, settings.SEA)
+            screen.blit(panel_title, (layer_panel.left + 16, layer_panel.top + 12))
+            for idx, layer in enumerate(world.biomes):
+                name = layer.name
+                summary = LAYER_SUMMARIES.get(name, "Mysterieus ecosysteem")
+                swatch = pygame.Rect(layer_panel.left + 16, layer_panel.top + 50 + idx * 58, 28, 28)
+                pygame.draw.rect(screen, layer.color, swatch)
+                pygame.draw.rect(screen, settings.WHITE, swatch, 1)
+                name_surface = small_font.render(name, True, settings.WHITE)
+                screen.blit(name_surface, (swatch.right + 10, swatch.top))
+                summary_surface = small_font.render(summary, True, settings.WHITE)
+                screen.blit(summary_surface, (swatch.right + 10, swatch.top + 22))
+            vent_note = small_font.render(
+                "Twilight/Midnight: rad vents → mutatie + neon pulsen.",
+                True,
+                settings.SEA,
+            )
+            screen.blit(vent_note, (layer_panel.left + 16, layer_panel.bottom - 34))
 
             report_y = modular_test_button.bottom + 20
-            report_title = info_font.render(
-                "Modulaire creature testresultaat:", True, settings.BLACK
-            )
+            report_title = info_font.render("Prototype stats", True, settings.WHITE)
             screen.blit(report_title, (50, report_y))
-            report_lines: List[str]
             if modular_test_report is None:
                 report_lines = [
                     "Nog niet uitgevoerd. Klik op 'Test prototype' voor een snelle check.",
@@ -1118,55 +1111,17 @@ def run() -> None:
                     f"Piek stuwkracht: {modular_test_report['peak_thrust']:.1f}",
                 ]
             for idx, line in enumerate(report_lines):
-                info_surface = info_font.render(line, True, settings.BLACK)
-                screen.blit(info_surface, (50, report_y + 32 + idx * 28))
+                info_surface = small_font.render(line, True, settings.WHITE)
+                screen.blit(info_surface, (50, report_y + 32 + idx * 26))
 
             preview_height = 220
             preview_width = max(260, panel_rect.left - 120)
-            preview_top = report_y + 32 + len(report_lines) * 28 + 20
+            preview_top = report_y + 32 + len(report_lines) * 26 + 20
             preview_rect = pygame.Rect(50, preview_top, preview_width, preview_height)
-            _draw_modular_preview(screen, preview_rect, test_preview, info_font, delta_time)
+            _draw_modular_preview(screen, preview_rect, test_preview, small_font, delta_time)
 
-            button_width = 180
-            button_height = 32
-            for idx, label in enumerate(MAP_TYPE_OPTIONS):
-                rect = pygame.Rect(
-                    50,
-                    260 + idx * (button_height + 10),
-                    button_width,
-                    button_height,
-                )
-                map_button_rects.append((rect, label))
-                color = settings.SEA if label == state.world_type else settings.GREEN
-                pygame.draw.rect(screen, color, rect)
-                pygame.draw.rect(screen, settings.BLACK, rect, 2)
-                option_surface = button_font.render(label, True, settings.BLACK)
-                option_rect = option_surface.get_rect(center=rect.center)
-                screen.blit(option_surface, option_rect)
             notification_manager.update()
-            if legacy_ui_visible:
-                gameplay_panel.draw(screen)
-                notification_manager.draw(screen, info_font)
-
-        elif ocean_showcase_active:
-            info_font = pygame.font.Font(None, 32)
-            subtitle_font = pygame.font.Font(None, 26)
-            _draw_ocean_showcase(screen, ocean_showcase_preview, info_font, delta_time)
-            headline = info_font.render("Diepe oceaantest", True, settings.BLACK)
-            screen.blit(headline, (40, 30))
-            subtext = subtitle_font.render(
-                "Het prototype zwemt vrij rond – druk op Reset om terug te keren.",
-                True,
-                settings.BLACK,
-            )
-            screen.blit(subtext, (40, 70))
-
-            pygame.draw.rect(screen, settings.GREEN, reset_button)
-            pygame.draw.rect(screen, settings.BLACK, reset_button, 2)
-            reset_label = font2.render("Reset", True, settings.BLACK)
-            screen.blit(reset_label, (reset_button.x + 32, reset_button.y + 6))
-            notification_manager.update()
-            notification_manager.draw(screen, subtitle_font)
+            notification_manager.draw(screen, small_font)
 
         else:
             keys = pygame.key.get_pressed()
@@ -1336,37 +1291,33 @@ def run() -> None:
                     player_controller.draw_overlay(screen, font2)
                     event_manager.draw(screen, font2)
 
-        if not starting_screen and not ocean_showcase_active:
+        if not starting_screen:
             if paused:
                 _draw_world(screen)
             inspector.draw_highlight(screen, camera)
             inspector.draw(screen)
 
-        if legacy_ui_visible and not starting_screen and not ocean_showcase_active:
-            gameplay_panel.draw(screen)
-        if (
-            not starting_screen
-            and not ocean_showcase_active
-            and barrier_preview_rect
-            and tools_panel.selected_tool == EditorTool.DRAW_BARRIER
-        ):
-            _draw_barrier_preview(screen, barrier_preview_rect)
-        tools_panel.draw(screen)
-        stats_window.draw(screen)
-        toggle_label = font2.render(
-            "UI verbergen" if legacy_ui_visible else "UI tonen",
-            True,
-            settings.BLACK,
-        )
-        pygame.draw.rect(screen, (235, 235, 235), legacy_toggle_rect, border_radius=6)
-        pygame.draw.rect(screen, (70, 70, 70), legacy_toggle_rect, 1, border_radius=6)
-        screen.blit(
-            toggle_label,
-            (
-                legacy_toggle_rect.centerx - toggle_label.get_width() // 2,
-                legacy_toggle_rect.centery - toggle_label.get_height() // 2,
-            ),
-        )
+            if legacy_ui_visible:
+                gameplay_panel.draw(screen)
+            if barrier_preview_rect and tools_panel.selected_tool == EditorTool.DRAW_BARRIER:
+                _draw_barrier_preview(screen, barrier_preview_rect)
+
+            tools_panel.draw(screen)
+            stats_window.draw(screen)
+            toggle_label = font2.render(
+                "UI verbergen" if legacy_ui_visible else "UI tonen",
+                True,
+                settings.BLACK,
+            )
+            pygame.draw.rect(screen, (235, 235, 235), legacy_toggle_rect, border_radius=6)
+            pygame.draw.rect(screen, (70, 70, 70), legacy_toggle_rect, 1, border_radius=6)
+            screen.blit(
+                toggle_label,
+                (
+                    legacy_toggle_rect.centerx - toggle_label.get_width() // 2,
+                    legacy_toggle_rect.centery - toggle_label.get_height() // 2,
+                ),
+            )
 
         pygame.display.flip()
 
@@ -1374,7 +1325,7 @@ def run() -> None:
         for event in pygame.event.get():
             if live_simulation_active and inspector.handle_event(event):
                 continue
-            if not ocean_showcase_active and tools_panel.handle_event(event):
+            if not starting_screen and tools_panel.handle_event(event):
                 continue
             if stats_window.handle_event(event):
                 continue
@@ -1476,13 +1427,15 @@ def run() -> None:
                     delta = 1 if event.button == 4 else -1
                     camera.adjust_zoom(delta, focus, mouse_pos)
                     continue
-                if event.button == 1 and legacy_toggle_rect.collidepoint(event.pos):
+                if (
+                    event.button == 1
+                    and not starting_screen
+                    and legacy_toggle_rect.collidepoint(event.pos)
+                ):
                     legacy_ui_visible = not legacy_ui_visible
                     continue
                 if starting_screen:
                     if start_button.collidepoint(event.pos):
-                        state.world_type = "Abyssal Ocean"
-                        world.set_world_type(state.world_type)
                         bootstrap.reset_simulation(
                             state,
                             world,
@@ -1491,44 +1444,17 @@ def run() -> None:
                             player_controller,
                             notification_manager,
                             effects_manager,
-                            state.world_type,
                         )
                         inspector.clear()
                         start_time = datetime.datetime.now()
-                        notification_manager.add("Diepe oceaantest gestart", settings.SEA)
+                        notification_manager.add("Alien Ocean simulatie gestart", settings.SEA)
                         starting_screen = False
                         paused = False
-                        ocean_showcase_active = True
-                        ocean_showcase_preview = PrototypeSwimPreview(
-                            build_fin_swimmer_prototype()
-                        )
                         camera.reset()
                     elif modular_test_button.collidepoint(event.pos):
                         modular_test_report, test_preview = _run_modular_creature_test()
                         notification_manager.add(
                             "Prototype test uitgevoerd", settings.SEA
-                        )
-                    else:
-                        previous_type = state.world_type
-                        for rect, label in map_button_rects:
-                            if rect.collidepoint(event.pos):
-                                world.set_world_type(label)
-                                state.world_type = world.world_type
-                                if previous_type != state.world_type:
-                                    notification_manager.add(
-                                        f"Kaarttype ingesteld op {state.world_type}",
-                                        settings.SEA,
-                                    )
-                                camera.reset()
-                                break
-                elif ocean_showcase_active:
-                    if event.button == 1 and reset_button.collidepoint(event.pos):
-                        ocean_showcase_active = False
-                        ocean_showcase_preview = None
-                        starting_screen = True
-                        paused = True
-                        notification_manager.add(
-                            "Terug naar het hoofdmenu", settings.BLUE
                         )
                 else:
                     if (
@@ -1544,7 +1470,6 @@ def run() -> None:
                             player_controller,
                             notification_manager,
                             effects_manager,
-                            state.world_type,
                         )
                         inspector.clear()
                         latest_stats = None

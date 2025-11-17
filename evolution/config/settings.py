@@ -3,11 +3,11 @@
 import os
 from pathlib import Path
 
-WORLD_WIDTH = 4200
+WORLD_WIDTH = 4800
 # Een diepzeewereld vraagt om veel verticale speelruimte zodat spelers
-# langs meerdere oceaanlagen kunnen scrollen. 4800px geeft genoeg hoogte
-# voor zonlicht-, schemer- en abyssale zones.
-WORLD_HEIGHT = 4800
+# langs meerdere oceaanlagen kunnen scrollen. 6.000px hoogte geeft elke
+# biome minstens twee schermhoogtes om te ademen.
+WORLD_HEIGHT = 6000
 WINDOW_WIDTH = 1400
 WINDOW_HEIGHT = 780
 

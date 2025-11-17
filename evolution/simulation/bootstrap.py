@@ -36,7 +36,6 @@ def reset_simulation(
     player_controller: "PlayerController",
     notification_manager: "NotificationManager",
     effects_manager: "EffectManager",
-    world_type: Optional[str] = None,
 ) -> None:
     """Reset all shared simulation state and regenerate the world."""
 
@@ -53,10 +52,7 @@ def reset_simulation(
     state.selected_lifeform = None
     state.last_debug_log_path = None
 
-    if world_type is not None:
-        world.set_world_type(world_type)
-    else:
-        world.regenerate()
+    world.regenerate()
 
     state.world = world
     state.world_type = world.world_type
