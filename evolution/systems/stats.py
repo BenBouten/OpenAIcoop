@@ -28,10 +28,15 @@ def collect_population_stats(
         "average_speed": 0.0,
         "average_cooldown": 0.0,
         "average_mass": 0.0,
+        "average_body_mass": 0.0,
         "average_reach": 0.0,
         "average_maintenance_cost": 0.0,
         "average_perception_rays": 0.0,
         "average_hearing_range": 0.0,
+        "average_module_count": 0.0,
+        "average_drag": 0.0,
+        "average_max_thrust": 0.0,
+        "average_body_energy_cost": 0.0,
         "death_age_avg": sum(death_ages) / len(death_ages) if death_ages else 0.0,
         "dna_count": {},
         "dna_attribute_averages": {},
@@ -54,6 +59,11 @@ def collect_population_stats(
             "maintenance": 0.0,
             "perception_rays": 0.0,
             "hearing_range": 0.0,
+            "modules": 0.0,
+            "drag": 0.0,
+            "thrust": 0.0,
+            "body_mass": 0.0,
+            "body_energy": 0.0,
         }
         dna_attributes = [
             "health",
@@ -88,6 +98,11 @@ def collect_population_stats(
             totals["maintenance"] += getattr(lifeform, "maintenance_cost", 0.0)
             totals["perception_rays"] += getattr(lifeform, "perception_rays", 0.0)
             totals["hearing_range"] += getattr(lifeform, "hearing_range", 0.0)
+            totals["modules"] += float(getattr(lifeform, "body_module_count", 0.0))
+            totals["drag"] += float(getattr(lifeform, "drag_coefficient", 0.0))
+            totals["thrust"] += float(getattr(lifeform, "max_thrust", 0.0))
+            totals["body_mass"] += float(getattr(lifeform, "body_mass", getattr(lifeform, "mass", 0.0)))
+            totals["body_energy"] += float(getattr(lifeform, "body_energy_cost", getattr(lifeform, "maintenance_cost", 0.0)))
 
             dna_entry = dna_totals.setdefault(
                 lifeform.dna_id,
@@ -111,6 +126,11 @@ def collect_population_stats(
         stats["average_maintenance_cost"] = totals["maintenance"] / count
         stats["average_perception_rays"] = totals["perception_rays"] / count
         stats["average_hearing_range"] = totals["hearing_range"] / count
+        stats["average_module_count"] = totals["modules"] / count
+        stats["average_drag"] = totals["drag"] / count
+        stats["average_max_thrust"] = totals["thrust"] / count
+        stats["average_body_mass"] = totals["body_mass"] / count
+        stats["average_body_energy_cost"] = totals["body_energy"] / count
         stats["dna_count"] = {
             _normalize_dna_id(dna_id): int(data["count"])
             for dna_id, data in dna_totals.items()

@@ -7,6 +7,7 @@ import random
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
+from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import generate_development_plan
 from ..entities.lifeform import Lifeform
 from ..morphology.genotype import MorphologyGenotype
@@ -141,6 +142,8 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
         restlessness = random.uniform(*restlessness_range)
         boid_tendency = random.uniform(*boid_range)
 
+        genome_blueprint = generate_modular_blueprint(diet, rng=random)
+
         dna_profile = {
             "dna_id": dna_id,
             "width": random.randint(settings.MIN_WIDTH, settings.MAX_WIDTH),
@@ -167,6 +170,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "restlessness": restlessness,
             "morphology": morphology.to_dict(),
             "development": development,
+            "genome": genome_blueprint,
         }
         state.dna_profiles.append(dna_profile)
 

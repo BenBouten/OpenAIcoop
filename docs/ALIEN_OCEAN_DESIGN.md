@@ -34,9 +34,19 @@ Het nieuwe lijf wordt niet langer beschreven door vlakke `width/height`-velden m
 - `serialize_body_graph()` exporteert het resultaat terug naar een `Genome`, inclusief automatisch opgeschaalde constraints als de huidige graph zwaarder of zenuw-intensiever is dan de default. Hierdoor kunnen mutaties veilig heen en weer tussen DNA en runtime body graphs.【F:evolution/dna/factory.py†L163-L206】
 - Tests bewaken de volledige round-trip, massa/nerve-validatie en de verwachte module-structuur. Hiermee houden we regressies in de assemblage tegen terwijl we nieuwe moduletypes toevoegen.【F:tests/test_dna_factory.py†L1-L40】
 
+### DNA blueprints & populatie-integratie
+- `generate_modular_blueprint()` bouwt voor elk dieettype een klein maar valide moduleplan met kern, thruster, vinnen en sensor-suites; randomness bepaalt extra sensoren maar het resultaat blijft binnen `GenomeConstraints`, waardoor elke DNA-profiel op zijn minst een bruikbaar lichaamsplan bezit.【F:evolution/dna/blueprints.py†L1-L94】
+- Zowel het bootstrap-proces als reproductie haken hierin: `generate_dna_profiles()` vult alle catalogusprofielen met een blueprint op basis van hun dieet, terwijl `_mix_parent_genome()` bij het ontbreken van ouder-genomen automatisch een blueprint genereert. Hierdoor zijn newborns en seeds altijd compatibel met het modulaire lichaamssysteem.【F:evolution/simulation/bootstrap.py†L62-L135】【F:evolution/entities/reproduction.py†L70-L120】
+- Dedicated tests bouwen een BodyGraph uit de blueprint en verifiëren zowel de structurele geldigheid als dieetvariatie in sensor-spectrums, zodat regressies in de generator direct zichtbaar worden.【F:tests/test_dna_blueprints.py†L1-L26】
+
 ### PhysicsBody bridge
 - `BodyGraph.aggregate_physics_stats()` levert een `PhysicsAggregation` met massa, volume, drag-oppervlak, totale thrust, grip en power. `build_physics_body()` vertaalt die naar een compacte `PhysicsBody` met dichtheid, drag-coëfficiënt en maximale voortstuwing die direct in de Newtoniaanse ocean-simulator kan worden gebruikt.【F:evolution/body/body_graph.py†L34-L93】【F:evolution/physics/physics_body.py†L1-L53】
 - De resulterende `PhysicsBody` kan acceleratie berekenen op basis van thrust-effort en geeft hydrodynamische parameters terug aan movement/AI zodat locomotie-archetypen automatisch uit de modulecombinaties rollen.【F:evolution/physics/physics_body.py†L7-L40】
+
+## UI & statistieken
+- Tijdens spawning bouwt `Lifeform` zijn `BodyGraph` en `PhysicsBody`, waarna de resulterende waarden (modulecount, massa, drag, thrust, energie-upkeep, sensor-suite) worden gekopieerd naar publieke attributen. Deze stats voeden AI, energie- en locomotierekeningen maar worden nu ook geëxposeerd voor visualisatie.【F:evolution/entities/lifeform.py†L29-L142】
+- De `LifeformInspector` toont een sectie “Modulaire anatomie” waarin moduletypes, sensorbanden, drag/thrust en onderhoudskosten worden weergegeven met tooltips, zodat spelers de impact van het modulaire lichaam direct in de UI lezen.【F:evolution/rendering/lifeform_inspector.py†L280-L360】
+- Populatiestatistieken aggregeren dezelfde physics-data: `systems.stats` bundelt gemiddelde modulecounts, drag, thrust en energie-upkeep terwijl `stats_window` de waarden rendert in de HUD. Zo blijft de globale simulatiegezondheid zichtbaar tijdens lange runs.【F:evolution/systems/stats.py†L1-L52】【F:evolution/rendering/stats_window.py†L1-L80】
 
 ### Newtonian Ocean Physics
 - Meerlaags model (sunlit / twilight / midnight / abyss) met dichtheid, temperatuur en lichtverval per laag.
