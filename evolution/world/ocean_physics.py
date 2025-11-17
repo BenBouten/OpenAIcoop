@@ -162,10 +162,18 @@ class OceanPhysics:
                 )
             ),
         )
+        lift_per_fin = 0.0
+        buoyancy_offsets = (0.0, 0.0)
+        if physics_body is not None:
+            lift_per_fin = float(getattr(physics_body, "lift_per_fin", 0.0))
+            buoyancy_offsets = getattr(physics_body, "buoyancy_offsets", (0.0, 0.0))
+        positive_buoyancy, negative_buoyancy = buoyancy_offsets
         propulsion = thrust
         volume_scale = min(2.5, max(0.3, buoyancy_volume / 220.0))
         buoyancy_ratio = fluid.density / body_density
+        buoyant_bias = (positive_buoyancy - negative_buoyancy) / max(1.0, volume)
         buoyancy_acc = (buoyancy_ratio - 1.0) * self.gravity * volume_scale
+        buoyancy_acc += buoyant_bias * self.gravity * 0.25
         locomotion_drag = getattr(lifeform, "_locomotion_drag_multiplier", 1.0)
         base_drag = float(
             getattr(
@@ -179,11 +187,26 @@ class OceanPhysics:
         grip_strength = max(0.3, float(getattr(lifeform, "grip_strength", 1.0)))
         if physics_body is not None:
             grip_strength = max(grip_strength, physics_body.grip_strength / 6.0)
-        current_adjust = (fluid.current - lifeform.velocity) * (
-            0.12 / max(0.5, grip_strength)
-        )
+        ballast_grip = negative_buoyancy / max(1.0, volume)
+        buoyant_slip = positive_buoyancy / max(1.0, volume)
+        grip_multiplier = 0.12 / max(0.5, grip_strength * (1.0 + ballast_grip * 0.6))
+        current_adjust = (fluid.current - lifeform.velocity) * grip_multiplier
         net_gravity = self.gravity - buoyancy_acc
         vertical = Vector2(0.0, net_gravity)
+        if ballast_grip > 0.0:
+            vertical += Vector2(0.0, -lifeform.velocity.y * min(0.6, ballast_grip))
+        if buoyant_slip > 0.0:
+            vertical += Vector2(0.0, lifeform.velocity.y * min(0.4, buoyant_slip * 0.5))
+        morphology = getattr(lifeform, "morphology", None)
+        fallback_fins = getattr(morphology, "fins", 0) if morphology is not None else 0
+        fin_count = float(getattr(lifeform, "fin_count", fallback_fins))
+        hover_preference = float(getattr(lifeform, "hover_lift_preference", 1.0))
+        if lift_per_fin > 0.0 and fin_count > 0.0:
+            lift_signal = max(-1.0, min(1.0, float(getattr(lifeform, "y_direction", 0.0)) * hover_preference))
+            if abs(lift_signal) > 0.0:
+                lift_force = lift_per_fin * fin_count * lift_signal
+                lift_acc = lift_force / max(0.4, mass)
+                vertical += Vector2(0.0, lift_acc)
         acceleration = propulsion + drag + current_adjust + vertical
         lifeform.velocity += acceleration * dt
         speed = lifeform.velocity.length()

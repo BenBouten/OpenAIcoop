@@ -70,6 +70,7 @@ class Lifeform:
         self.morphology: MorphologyGenotype = MorphologyGenotype.from_mapping(
             dna_profile.get("morphology", {})
         )
+        self.fin_count = getattr(self.morphology, "fins", 0)
         self.morph_stats: MorphStats = compute_morph_stats(
             self.morphology, (self.base_width, self.base_height)
         )
@@ -111,6 +112,8 @@ class Lifeform:
                 grip_strength=self.morph_stats.grip_strength * 8.0,
                 power_output=20.0,
                 energy_cost=self.morph_stats.maintenance_cost * 12.0,
+                lift_per_fin=0.0,
+                buoyancy_offsets=(0.0, 0.0),
             )
             self.physics_body = physics
         self.body_module_count = len(getattr(self, "body_graph", []))
@@ -122,6 +125,8 @@ class Lifeform:
         self.body_energy_cost = physics.energy_cost
         self.body_power_output = physics.power_output
         self.body_grip_strength = physics.grip_strength
+        self.lift_per_fin = getattr(physics, "lift_per_fin", 0.0)
+        self.buoyancy_offsets = getattr(physics, "buoyancy_offsets", (0.0, 0.0))
         self.buoyancy_volume = physics.buoyancy_volume
         self.mass = self._scaled_mass(self.body_mass)
         self.reach = self.morph_stats.reach
@@ -176,6 +181,7 @@ class Lifeform:
         self.signal_cone_threshold = self.locomotion_profile.signal_threshold
         self._burst_timer = 0
         self._burst_cooldown = 0
+        self.hover_lift_preference = self.locomotion_profile.hover_lift_preference
 
         sensor_bonus = self.locomotion_profile.sensor_bonus
         if self.locomotion_profile.light_penalty > 0:
