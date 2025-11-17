@@ -29,6 +29,7 @@ class LocomotionProfile:
     signal_threshold: float
     light_penalty: float
     description: str
+    hover_lift_preference: float = 1.0
 
 
 _PROFILES: Mapping[str, LocomotionProfile] = {
@@ -50,6 +51,7 @@ _PROFILES: Mapping[str, LocomotionProfile] = {
         signal_threshold=0.3,
         light_penalty=0.0,
         description="Oscillerende vinnen vertalen naar efficiënte thrust en hoge wendbaarheid.",
+        hover_lift_preference=1.2,
     ),
     "jet_propulsion": LocomotionProfile(
         key="jet_propulsion",
@@ -69,6 +71,7 @@ _PROFILES: Mapping[str, LocomotionProfile] = {
         signal_threshold=0.25,
         light_penalty=0.0,
         description="Schorpioen- en squidachtige mantels leveren korte, dure explosies van snelheid.",
+        hover_lift_preference=0.8,
     ),
     "drift_feeder": LocomotionProfile(
         key="drift_feeder",
@@ -88,6 +91,7 @@ _PROFILES: Mapping[str, LocomotionProfile] = {
         signal_threshold=0.35,
         light_penalty=0.0,
         description="Sensor-rijke zwevers laten zich door stromingen voeren om planktonwolken te filteren.",
+        hover_lift_preference=1.4,
     ),
     "benthic_crawler": LocomotionProfile(
         key="benthic_crawler",
@@ -107,6 +111,7 @@ _PROFILES: Mapping[str, LocomotionProfile] = {
         signal_threshold=0.3,
         light_penalty=0.0,
         description="Gemuteerde pootjes kruipen veilig over de zeebodem en weerstaan stromingen.",
+        hover_lift_preference=0.5,
     ),
     "tentacle_walker": LocomotionProfile(
         key="tentacle_walker",
@@ -126,6 +131,7 @@ _PROFILES: Mapping[str, LocomotionProfile] = {
         signal_threshold=0.25,
         light_penalty=0.0,
         description="Langzame tentakel-trekkers haken zich vast aan rotsen en mineralen voor stabiliteit.",
+        hover_lift_preference=0.65,
     ),
     "electro_stalker": LocomotionProfile(
         key="electro_stalker",
@@ -145,6 +151,7 @@ _PROFILES: Mapping[str, LocomotionProfile] = {
         signal_threshold=-0.15,
         light_penalty=0.45,
         description="Diepzeejagers voelen elektrische geur-signalen en sluipen via signal cones.",
+        hover_lift_preference=0.9,
     ),
 }
 

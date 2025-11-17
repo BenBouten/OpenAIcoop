@@ -50,6 +50,10 @@ class BodyGraph:
         power_output: float
         energy_cost: float
         buoyancy_volume: float
+        lift_total: float
+        lift_modules: int
+        buoyancy_positive: float
+        buoyancy_negative: float
 
     def _aggregate_geometry(self) -> PhysicsAggregation:
         """Internal helper that walks modules once to derive stats."""
@@ -65,6 +69,10 @@ class BodyGraph:
         power_output = 0.0
         energy_cost = 0.0
         buoyancy_volume = 0.0
+        lift_total = 0.0
+        lift_modules = 0
+        buoyancy_positive = 0.0
+        buoyancy_negative = 0.0
 
         for module in self.iter_modules():
             stats = module.stats
@@ -94,6 +102,15 @@ class BodyGraph:
             dorsal_area += module_dorsal
             drag_area += module_drag
             buoyancy_volume += module_volume
+            bias = float(getattr(stats, "buoyancy_bias", 0.0))
+            if bias >= 0.0:
+                buoyancy_positive += bias
+            else:
+                buoyancy_negative += abs(bias)
+            lift_coeff = float(getattr(module, "lift_coefficient", 0.0))
+            if lift_coeff > 0.0:
+                lift_total += lift_coeff
+                lift_modules += 1
 
         return BodyGraph.PhysicsAggregation(
             mass=mass,
@@ -107,6 +124,10 @@ class BodyGraph:
             power_output=power_output,
             energy_cost=energy_cost,
             buoyancy_volume=buoyancy_volume,
+            lift_total=lift_total,
+            lift_modules=lift_modules,
+            buoyancy_positive=buoyancy_positive,
+            buoyancy_negative=buoyancy_negative,
         )
 
     @staticmethod

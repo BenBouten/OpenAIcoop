@@ -17,6 +17,7 @@ class ModuleStats:
     integrity: float
     heat_dissipation: float
     power_output: float = 0.0
+    buoyancy_bias: float = 0.0
 
 
 @dataclass
@@ -76,6 +77,7 @@ class LimbModule(BodyModule):
 
     thrust: float = 0.0
     grip_strength: float = 0.0
+    lift_coefficient: float = 0.0
 
     module_type: str = "limb"
 
@@ -126,14 +128,15 @@ class TrunkCore(CoreModule):
     key: str = "core"
     name: str = "Core"
     description: str = "Main torso providing power distribution"
-    size: Tuple[float, float, float] = (1.2, 1.0, 1.4)
+    size: Tuple[float, float, float] = (2.8, 1.8, 7.2)
     stats: ModuleStats = field(
         default_factory=lambda: ModuleStats(
-            mass=40.0,
+            mass=34.0,
             energy_cost=3.5,
-            integrity=120.0,
+            integrity=140.0,
             heat_dissipation=15.0,
             power_output=60.0,
+            buoyancy_bias=6.0,
         )
     )
     material: str = "bio-alloy"
@@ -191,9 +194,15 @@ class CephalonHead(HeadModule):
     key: str = "head"
     name: str = "Cephalon"
     description: str = "Primary sensory organ"
-    size: Tuple[float, float, float] = (0.8, 0.6, 0.9)
+    size: Tuple[float, float, float] = (1.6, 1.2, 4.2)
     stats: ModuleStats = field(
-        default_factory=lambda: ModuleStats(mass=10.0, energy_cost=1.2, integrity=60.0, heat_dissipation=6.0)
+        default_factory=lambda: ModuleStats(
+            mass=7.5,
+            energy_cost=1.2,
+            integrity=60.0,
+            heat_dissipation=6.0,
+            buoyancy_bias=2.0,
+        )
     )
     material: str = "bio-alloy"
     vision_bonus: float = 45.0
@@ -221,13 +230,20 @@ class HydroFin(LimbModule):
     key: str = "fin"
     name: str = "Hydro Fin"
     description: str = "Flexible fin for aquatic thrust"
-    size: Tuple[float, float, float] = (1.2, 0.2, 0.6)
+    size: Tuple[float, float, float] = (2.4, 0.6, 5.2)
     stats: ModuleStats = field(
-        default_factory=lambda: ModuleStats(mass=6.0, energy_cost=0.6, integrity=35.0, heat_dissipation=4.0)
+        default_factory=lambda: ModuleStats(
+            mass=4.2,
+            energy_cost=0.6,
+            integrity=38.0,
+            heat_dissipation=4.0,
+            buoyancy_bias=5.0,
+        )
     )
     material: str = "flex-polymer"
     thrust: float = 45.0
     grip_strength: float = 5.0
+    lift_coefficient: float = 36.0
 
 
 @dataclass
@@ -237,14 +253,15 @@ class TailThruster(PropulsionModule):
     key: str = "thruster"
     name: str = "Tail Thruster"
     description: str = "Powerful axial thruster"
-    size: Tuple[float, float, float] = (1.5, 0.5, 0.5)
+    size: Tuple[float, float, float] = (2.1, 1.2, 6.0)
     stats: ModuleStats = field(
         default_factory=lambda: ModuleStats(
-            mass=12.0,
-            energy_cost=2.5,
-            integrity=50.0,
+            mass=16.0,
+            energy_cost=2.8,
+            integrity=55.0,
             heat_dissipation=10.0,
             power_output=30.0,
+            buoyancy_bias=-4.0,
         )
     )
     material: str = "titanium"
@@ -273,9 +290,15 @@ class SensorPod(SensoryModule):
     key: str = "sensor"
     name: str = "Sensor Pod"
     description: str = "Specialised detection apparatus"
-    size: Tuple[float, float, float] = (0.5, 0.4, 0.4)
+    size: Tuple[float, float, float] = (0.9, 0.8, 2.5)
     stats: ModuleStats = field(
-        default_factory=lambda: ModuleStats(mass=2.5, energy_cost=0.4, integrity=20.0, heat_dissipation=2.5)
+        default_factory=lambda: ModuleStats(
+            mass=1.4,
+            energy_cost=0.4,
+            integrity=22.0,
+            heat_dissipation=2.5,
+            buoyancy_bias=1.0,
+        )
     )
     material: str = "ceramic"
     detection_range: float = 75.0

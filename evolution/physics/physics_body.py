@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Tuple
 
 from ..body.body_graph import BodyGraph
 
@@ -23,6 +24,8 @@ class PhysicsBody:
     grip_strength: float
     power_output: float
     energy_cost: float
+    lift_per_fin: float = 0.0
+    buoyancy_offsets: Tuple[float, float] = (0.0, 0.0)
 
     def propulsion_acceleration(self, effort: float) -> float:
         """Return longitudinal acceleration (m/s^2) for the provided effort."""
@@ -47,6 +50,10 @@ def build_physics_body(graph: BodyGraph) -> PhysicsBody:
     volume = max(1.0, aggregation.volume)
     density = mass / max(1.0, volume)
     drag_coefficient = _derive_drag_coefficient(aggregation)
+    lift_per_fin = 0.0
+    if aggregation.lift_modules > 0:
+        lift_per_fin = aggregation.lift_total / aggregation.lift_modules
+    buoyancy_offsets = (aggregation.buoyancy_positive, aggregation.buoyancy_negative)
     return PhysicsBody(
         mass=mass,
         volume=volume,
@@ -60,4 +67,6 @@ def build_physics_body(graph: BodyGraph) -> PhysicsBody:
         grip_strength=max(0.0, aggregation.total_grip),
         power_output=aggregation.power_output,
         energy_cost=aggregation.energy_cost,
+        lift_per_fin=lift_per_fin,
+        buoyancy_offsets=buoyancy_offsets,
     )
