@@ -72,6 +72,11 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     _cleanup_memory(lifeform, now)
     _remember(lifeform, "visited", (lifeform.x, lifeform.y), now, weight=1.0)
 
+    locomotion_cost = max(0.1, getattr(lifeform, "motion_energy_cost", 1.0))
+    energy_ratio = lifeform.energy_now / max(locomotion_cost, 0.1)
+    lifeform._energy_starved = lifeform.energy_now <= locomotion_cost
+    lifeform._pursuit_energy_scale = 1.0 if energy_ratio >= 1.0 else max(0.25, energy_ratio * 0.5)
+
     # Target detection (zit nog in Lifeform.update_targets)
     lifeform.update_targets()
     _record_current_observations(lifeform, now)
@@ -114,11 +119,13 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
         lifeform._escape_timer = 0
 
     # 7) Fallback naar wander / huidige richting
+    energy_forced_search = getattr(lifeform, "_energy_starved", False)
+
     if desired.length_squared() == 0:
         desired = _wander_vector(lifeform, now, dt)
         lifeform.search = True
     else:
-        lifeform.search = False
+        lifeform.search = energy_forced_search
 
     if lifeform.search and _search_mode_active(lifeform):
         _apply_speed_drift(lifeform, dt)
@@ -266,6 +273,12 @@ def _food_available_near(
 
 
 def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
+    sensor_ranges = getattr(lifeform, "_sensor_target_ranges", {})
+
+    def _range_boost(key: str) -> float:
+        base = max(1.0, float(lifeform.vision))
+        return max(0.5, min(2.0, sensor_ranges.get(key, base) / base))
+
     # Dreigingen
     if lifeform.closest_enemy and lifeform.closest_enemy.health_now > 0:
         _remember(
@@ -283,6 +296,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
         and lifeform.prefers_meat()
     ):
         weight = max(20.0, lifeform.attack_power_now + lifeform.hunger)
+        weight *= _range_boost("creatures")
         _remember(
             lifeform,
             "food",
@@ -299,6 +313,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
         and lifeform.prefers_plants()
     ):
         weight = lifeform.closest_plant.resource + max(0, lifeform.hunger - 50)
+        weight *= _range_boost("plants")
         _remember(
             lifeform,
             "food",
@@ -316,6 +331,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
         center = _carcass_center(lifeform)
         carrion_weight = getattr(lifeform.closest_carcass, "resource", 0.0)
         carrion_weight += max(0, lifeform.hunger - 40)
+        carrion_weight *= _range_boost("carrion")
         _remember(
             lifeform,
             "food",
@@ -328,6 +344,7 @@ def _record_current_observations(lifeform: "Lifeform", timestamp: int) -> None:
     # Partnerlocaties
     if lifeform.closest_partner and lifeform.closest_partner.health_now > 0:
         partner_weight = 1.0 + lifeform.social_tendency
+        partner_weight *= _range_boost("creatures")
         _remember(
             lifeform,
             "partner",
@@ -346,7 +363,8 @@ def _compute_threat_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
         direction, distance = lifeform._direction_to_lifeform(lifeform.closest_enemy)
         if distance > 0:
             strength = max(0.2, 1.0 - lifeform.risk_tolerance * 0.8)
-            return direction * -strength
+            base = direction * -strength
+            return _apply_locomotion_escape_bias(lifeform, base, direction)
 
     # Onthouden dreigingen
     remembered_threat = _recall(lifeform, "threats", timestamp)
@@ -354,22 +372,47 @@ def _compute_threat_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
         direction, distance = lifeform._direction_to_point(remembered_threat)
         if distance > 0:
             strength = max(0.1, 1.0 - lifeform.risk_tolerance)
-            return direction * -strength
+            base = direction * -strength
+            return _apply_locomotion_escape_bias(lifeform, base, direction)
 
     return Vector2()
 
 
+def _apply_locomotion_escape_bias(
+    lifeform: "Lifeform", base: Vector2, away_direction: Vector2
+) -> Vector2:
+    vector = Vector2(base)
+    locomotion = getattr(lifeform, "locomotion_profile", None)
+    burst_force = getattr(locomotion, "burst_force", 1.0) if locomotion else 1.0
+    vector *= 0.85 + max(0.0, burst_force) * 0.35
+
+    depth_bias = float(getattr(lifeform, "depth_bias", 0.0))
+    if abs(depth_bias) > 0.05:
+        vector += Vector2(0.0, math.copysign(abs(depth_bias) * 0.35, depth_bias))
+
+    drift_preference = max(0.0, float(getattr(lifeform, "drift_preference", 0.0)))
+    if drift_preference > 0.05 and away_direction.length_squared() > 0:
+        perpendicular = Vector2(-away_direction.y, away_direction.x)
+        vector += perpendicular * drift_preference * 0.25
+
+    if vector.length_squared() > 1.0:
+        vector = vector.normalize()
+    return vector
+
+
 def _compute_pursuit_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
     desired = Vector2()
+    sensor_ranges = getattr(lifeform, "_sensor_target_ranges", {})
+    plant_range = sensor_ranges.get("plants", lifeform.vision)
+    creature_range = sensor_ranges.get("creatures", lifeform.vision)
+    carrion_range = sensor_ranges.get("carrion", plant_range)
 
     if lifeform.should_seek_food():
         food_vector = _immediate_food_vector(lifeform)
         if food_vector.length_squared() == 0:
-            preferred_tag = None
-            if lifeform.prefers_plants():
-                preferred_tag = "plant"
-            elif lifeform.prefers_meat():
-                preferred_tag = "meat"
+            preferred_tag = _preferred_food_tag(
+                lifeform, plant_range, creature_range, carrion_range
+            )
             remembered_food = _recall(
                 lifeform, "food", timestamp, preferred_tag=preferred_tag
             )
@@ -381,17 +424,91 @@ def _compute_pursuit_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
     else:
         desired += _opportunistic_food_vector(lifeform)
 
-    if desired.length_squared() == 0 and lifeform.can_reproduce():
+    energy_scale = float(getattr(lifeform, "_pursuit_energy_scale", 1.0))
+    partner_bias = max(0.5, min(1.5, creature_range / max(1.0, lifeform.vision)))
+
+    if desired.length_squared() == 0 and lifeform.can_reproduce() and energy_scale > 0.6:
         if lifeform.closest_partner and lifeform.closest_partner.health_now > 0:
             direction, _ = lifeform._direction_to_lifeform(lifeform.closest_partner)
-            desired += direction
+            desired += direction * partner_bias
         else:
             remembered_partner = _recall(lifeform, "partner", timestamp)
             if remembered_partner:
                 direction, _ = lifeform._direction_to_point(remembered_partner)
-                desired += direction
+                desired += direction * partner_bias
+
+    if energy_scale < 1.0:
+        desired *= energy_scale
+        fallback = _resource_scan_vector(lifeform)
+        if fallback.length_squared() > 0:
+            desired += fallback * (1.0 - energy_scale)
 
     return desired
+
+
+def _preferred_food_tag(
+    lifeform: "Lifeform", plant_range: float, creature_range: float, carrion_range: float
+) -> Optional[str]:
+    plant_bias = plant_range
+    meat_bias = max(creature_range, carrion_range)
+
+    prefers_plants = lifeform.prefers_plants()
+    prefers_meat = lifeform.prefers_meat()
+
+    if prefers_plants and not prefers_meat:
+        return "plant"
+    if prefers_meat and not prefers_plants:
+        return "meat"
+    if prefers_plants and prefers_meat:
+        if plant_bias > meat_bias * 1.05:
+            return "plant"
+        if meat_bias > plant_bias * 1.05:
+            return "meat"
+        return "plant" if lifeform.hunger >= settings.HUNGER_SEEK_THRESHOLD else "meat"
+    return None
+
+
+def _resource_scan_vector(lifeform: "Lifeform") -> Vector2:
+    if not getattr(lifeform, "_energy_starved", False):
+        return Vector2()
+
+    sensor_ranges = getattr(lifeform, "_sensor_target_ranges", {})
+    plant_range = sensor_ranges.get("plants", lifeform.vision)
+    carrion_range = sensor_ranges.get("carrion", plant_range)
+
+    best_vector = Vector2()
+    best_score = 0.0
+
+    def _consider(direction: Vector2, distance: float, max_range: float, bias: float) -> None:
+        nonlocal best_vector, best_score
+        if distance <= 0 or max_range <= 0 or direction.length_squared() == 0:
+            return
+        if distance > max_range:
+            return
+        score = (max_range - distance) / max_range
+        score *= bias
+        if score > best_score:
+            best_score = score
+            best_vector = direction
+
+    if (
+        lifeform.closest_plant
+        and getattr(lifeform.closest_plant, "resource", 0) > 0
+    ):
+        direction, distance = lifeform.direction_to_plant(lifeform.closest_plant)
+        plant_bias = 1.0 + max(0.0, lifeform.hunger - settings.HUNGER_SATIATED_THRESHOLD) / 200.0
+        _consider(direction, distance, plant_range, plant_bias)
+
+    if (
+        lifeform.closest_carcass
+        and getattr(lifeform.closest_carcass, "resource", 0) > 0
+        and lifeform.prefers_meat()
+    ):
+        direction, distance = lifeform.direction_to_carcass(lifeform.closest_carcass)
+        carrion_bias = 0.8 + max(0.0, lifeform.hunger - 30) / 150.0
+        _consider(direction, distance, carrion_range, carrion_bias)
+
+    return best_vector
 
 
 def _juvenile_family_vector(lifeform: "Lifeform") -> Vector2:
@@ -1043,6 +1160,17 @@ def _apply_speed_drift(lifeform: "Lifeform", dt: float) -> None:
     base = getattr(lifeform, "_dna_speed_reference", lifeform.speed)
     min_speed = base * 0.85
     max_speed = base * 1.15
+
+    burst_force = 1.0
+    locomotion = getattr(lifeform, "locomotion_profile", None)
+    if locomotion:
+        burst_force = max(0.5, locomotion.burst_force)
+    depth_bias = abs(float(getattr(lifeform, "depth_bias", 0.0)))
+    drift_preference = max(0.0, float(getattr(lifeform, "drift_preference", 0.0)))
+
+    min_speed *= 1.0 - min(0.25, drift_preference * 0.3)
+    min_speed *= 1.0 - min(0.2, depth_bias * 0.1)
+    max_speed *= 1.0 + min(0.4, (burst_force - 1.0) * 0.35)
 
     lifeform._speed_drift_timer += dt
     if lifeform._speed_drift_timer >= _SPEED_DRIFT_INTERVAL:

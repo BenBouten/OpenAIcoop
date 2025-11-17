@@ -80,7 +80,15 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
                 or lifeform.closest_prey
                 or lifeform.should_seek_food()
             )
-            if should_burst and lifeform.energy_now > 5.0:
+            energy_threshold = max(
+                5.0,
+                getattr(lifeform, "motion_energy_cost", 1.0)
+                * max(1.5, locomotion.burst_force),
+            )
+            has_energy = lifeform.energy_now > energy_threshold and not getattr(
+                lifeform, "_energy_starved", False
+            )
+            if should_burst and has_energy:
                 lifeform._burst_timer = max(4, locomotion.burst_duration)
                 lifeform._burst_cooldown = max(30, locomotion.burst_cooldown)
                 thrust_multiplier = locomotion.burst_force
