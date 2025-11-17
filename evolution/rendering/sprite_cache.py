@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import math
-from typing import Dict, Iterable, Tuple
+from typing import Dict, Iterable, Sequence, Tuple
 
 import pygame
+from pygame.math import Vector2
+
+from ..body.body_graph import BodyGraph
+from .modular_palette import BASE_MODULE_ALPHA, MODULE_RENDER_STYLES, tint_color
 
 Color = Tuple[int, int, int]
 MorphSignature = Tuple[int, int, int, int, int, int, int]
-BaseKey = Tuple[str, int, int, Color, MorphSignature]
-RotationKey = Tuple[str, int, int, Color, MorphSignature, int]
+ModuleSignature = Tuple[str, ...]
+BaseKey = Tuple[str, int, int, Color, MorphSignature, ModuleSignature]
+RotationKey = Tuple[str, int, int, Color, MorphSignature, ModuleSignature, int]
+
+CONNECTION_COLOR = (18, 42, 68)
 
 
 def _clamp_color(value: int) -> int:
@@ -58,17 +65,47 @@ class LifeformSpriteCache:
             int(round(float(getattr(morphology, "pigment", 0.0)) * 1000)),
         )
 
+    def _module_signature(self, lifeform) -> ModuleSignature:
+        names: Sequence[str] = getattr(lifeform, "body_module_names", ())
+        if names:
+            return tuple(names)
+        graph: BodyGraph | None = getattr(lifeform, "body_graph", None)
+        if graph is None:
+            return tuple()
+        collected: list[str] = []
+        for module in graph.iter_modules():
+            key = getattr(module, "key", None)
+            if not key:
+                key = getattr(module, "name", type(module).__name__)
+            collected.append(str(key))
+        return tuple(collected)
+
     def _base_key(self, lifeform) -> BaseKey:
         width = int(round(max(1.0, lifeform.width)))
         height = int(round(max(1.0, lifeform.height)))
         color = tuple(int(c) for c in getattr(lifeform, "body_color", lifeform.color))  # type: ignore[arg-type]
-        return (str(lifeform.dna_id), width, height, color, self._morph_signature(lifeform))
+        return (
+            str(lifeform.dna_id),
+            width,
+            height,
+            color,
+            self._morph_signature(lifeform),
+            self._module_signature(lifeform),
+        )
 
     def _rotation_key(self, lifeform, angle_bin: int) -> RotationKey:
         base_key = self._base_key(lifeform)
         return base_key + (angle_bin,)
 
     def _create_body_surface(self, lifeform, width: int, height: int, color: Color) -> pygame.Surface:
+        graph: BodyGraph | None = getattr(lifeform, "body_graph", None)
+        if graph is not None and getattr(graph, "nodes", None):
+            modular_surface = self._create_modular_surface(lifeform, graph, width, height, color)
+            if modular_surface is not None:
+                return modular_surface
+        return self._create_legacy_surface(lifeform, width, height, color)
+
+    def _create_legacy_surface(self, lifeform, width: int, height: int, color: Color) -> pygame.Surface:
         morphology = getattr(lifeform, "morphology", None)
 
         legs = int(getattr(morphology, "legs", 0)) if morphology else 0
@@ -205,6 +242,154 @@ class LifeformSpriteCache:
                 pygame.draw.line(surface, whisker_color, center_start, center_end, 1)
 
         return surface
+
+    def _create_modular_surface(
+        self,
+        lifeform,
+        graph: BodyGraph,
+        width: int,
+        height: int,
+        base_color: Color,
+    ) -> pygame.Surface | None:
+        layout = self._layout_body_graph(graph)
+        if not layout:
+            return None
+        margin = 12
+        sprite_width = max(20, width + margin * 2)
+        sprite_height = max(20, height + margin * 2)
+        positions = self._project_layout(layout, sprite_width, sprite_height, margin)
+        surface = pygame.Surface((sprite_width, sprite_height), pygame.SRCALPHA)
+        self._draw_connections(surface, graph, positions)
+        module_scale = max(12.0, max(width, height) * 0.45)
+        for node_id, node in graph.nodes.items():
+            if node_id not in positions:
+                continue
+            module_surface = self._build_module_surface(node.module, base_color, module_scale)
+            rect = module_surface.get_rect()
+            rect.center = (int(positions[node_id].x), int(positions[node_id].y))
+            surface.blit(module_surface, rect)
+        return surface
+
+    def _draw_connections(
+        self,
+        surface: pygame.Surface,
+        graph: BodyGraph,
+        positions: Dict[str, Vector2],
+    ) -> None:
+        if not positions:
+            return
+        connector = pygame.Surface(surface.get_size(), pygame.SRCALPHA)
+        for node_id, node in graph.nodes.items():
+            parent_id = node.parent
+            if not parent_id or parent_id not in positions or node_id not in positions:
+                continue
+            start = positions[parent_id]
+            end = positions[node_id]
+            width = 5 if getattr(node.module, "module_type", "") == "core" else 3
+            pygame.draw.line(
+                connector,
+                CONNECTION_COLOR,
+                (int(start.x), int(start.y)),
+                (int(end.x), int(end.y)),
+                width,
+            )
+            pygame.draw.circle(connector, CONNECTION_COLOR, (int(end.x), int(end.y)), max(2, width // 2))
+        connector.set_alpha(190)
+        surface.blit(connector, (0, 0))
+
+    def _layout_body_graph(self, graph: BodyGraph) -> Dict[str, Vector2]:
+        layout: Dict[str, Vector2] = {}
+        queue: list[Tuple[str, float, float]] = [(graph.root_id, 0.0, 0.0)]
+        visited: set[str] = set()
+        while queue:
+            node_id, offset_x, offset_y = queue.pop(0)
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            layout[node_id] = Vector2(offset_x, offset_y)
+            try:
+                children = list(graph.children_of(node_id).keys())
+            except KeyError:
+                continue
+            if not children:
+                continue
+            spread = max(1, len(children))
+            for idx, child_id in enumerate(children):
+                child_offset_x = offset_x + 1.0
+                child_offset_y = offset_y + (idx - (spread - 1) / 2.0) * 0.9
+                queue.append((child_id, child_offset_x, child_offset_y))
+        return layout
+
+    def _project_layout(
+        self,
+        layout: Dict[str, Vector2],
+        sprite_width: int,
+        sprite_height: int,
+        margin: int,
+    ) -> Dict[str, Vector2]:
+        if not layout:
+            return {}
+        xs = [pos.x for pos in layout.values()]
+        ys = [pos.y for pos in layout.values()]
+        min_x = min(xs)
+        max_x = max(xs)
+        min_y = min(ys)
+        max_y = max(ys)
+        span_x = max(1e-3, max_x - min_x)
+        span_y = max(1e-3, max_y - min_y)
+        draw_width = max(1.0, sprite_width - margin * 2)
+        draw_height = max(1.0, sprite_height - margin * 2)
+        positions: Dict[str, Vector2] = {}
+        for node_id, offset in layout.items():
+            norm_x = (offset.x - min_x) / span_x if span_x > 1e-3 else 0.5
+            norm_y = (offset.y - min_y) / span_y if span_y > 1e-3 else 0.5
+            positions[node_id] = Vector2(
+                margin + norm_x * draw_width,
+                margin + norm_y * draw_height,
+            )
+        return positions
+
+    def _build_module_surface(self, module, base_color: Color, scale: float) -> pygame.Surface:
+        module_type = getattr(module, "module_type", "default") or "default"
+        color, alpha = self._module_visuals(base_color, module_type)
+        size = getattr(module, "size", (1.0, 1.0, 1.0))
+        length = max(12, int(float(size[2]) * scale))
+        height = max(10, int(float(size[1]) * scale * 0.6))
+        surface = pygame.Surface((length, height), pygame.SRCALPHA)
+        ellipse_rect = pygame.Rect(0, 0, length, height)
+        pygame.draw.ellipse(surface, (*color, alpha), ellipse_rect)
+        pygame.draw.ellipse(surface, (25, 40, 60, max(120, alpha - 40)), ellipse_rect, 2)
+        if module_type == "propulsion":
+            flame_rect = ellipse_rect.inflate(-int(length * 0.35), -int(height * 0.25))
+            flame_rect.left = ellipse_rect.left + 2
+            pygame.draw.ellipse(
+                surface,
+                (255, 200, 150, max(120, alpha - 30)),
+                flame_rect,
+            )
+        elif module_type == "head":
+            eye_rect = pygame.Rect(0, 0, max(4, length // 5), max(4, height // 3))
+            eye_rect.center = (
+                ellipse_rect.centerx + ellipse_rect.width // 5,
+                ellipse_rect.centery - ellipse_rect.height // 4,
+            )
+            pygame.draw.ellipse(surface, (20, 30, 60, 220), eye_rect)
+        elif module_type == "sensor":
+            ping_rect = pygame.Rect(0, 0, max(3, length // 4), max(3, height // 2))
+            ping_rect.center = (
+                ellipse_rect.centerx + ellipse_rect.width // 3,
+                ellipse_rect.centery,
+            )
+            pygame.draw.ellipse(surface, (240, 255, 255, 140), ping_rect, 2)
+        return surface
+
+    def _module_visuals(self, base_color: Color, module_type: str) -> Tuple[Color, int]:
+        style = MODULE_RENDER_STYLES.get(module_type, MODULE_RENDER_STYLES["default"])
+        tint = style.get("tint", (1.0, 1.0, 1.0))
+        tinted = tint_color(base_color, tint)  # type: ignore[arg-type]
+        alpha_offset = int(style.get("alpha_offset", 0))
+        alpha = max(60, min(255, BASE_MODULE_ALPHA + alpha_offset))
+        return tinted, alpha
 
     def get_body(self, lifeform) -> pygame.Surface:
         """Return the rotated body sprite for ``lifeform``."""
