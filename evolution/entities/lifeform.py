@@ -149,6 +149,12 @@ class Lifeform:
         self.last_fluid_properties = None
         self.sensor_suite = self._derive_sensor_suite()
         self.body_module_breakdown = self._summarize_modules()
+        self._sensor_target_ranges = {
+            "creatures": self.vision,
+            "plants": self.vision,
+            "carrion": self.vision,
+            "spectra": dict(self.sensor_suite),
+        }
 
         self.locomotion_profile: LocomotionProfile = derive_locomotion_profile(
             dna_profile,
@@ -394,6 +400,11 @@ class Lifeform:
         if self._foraging_focus:
             return True
 
+        locomotion_cost = max(0.1, getattr(self, "motion_energy_cost", 1.0))
+        if self.energy_now <= locomotion_cost:
+            self._foraging_focus = True
+            return True
+
         if self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
             self._foraging_focus = True
             return True
@@ -546,8 +557,17 @@ class Lifeform:
         return True
 
     def update_targets(self) -> None:
-        self.sensory_range = max(0.0, float(self.vision))
-        vision_range = self.sensory_range
+        sensor_map = self._scan_sensor_modules()
+        target_ranges = self._compute_sensor_target_ranges(sensor_map)
+        self._active_sensor_suite = sensor_map
+        self._sensor_target_ranges = target_ranges
+
+        creature_range = target_ranges.get("creatures", max(0.0, float(self.vision)))
+        plant_range = target_ranges.get("plants", creature_range)
+        carrion_range = target_ranges.get("carrion", plant_range)
+
+        self.sensory_range = max(creature_range, plant_range, carrion_range)
+        vision_range = creature_range
         if vision_range <= 0:
             self.closest_enemy = None
             self.closest_prey = None
@@ -557,7 +577,11 @@ class Lifeform:
             return
 
         vision_sq = vision_range * vision_range
-        hearing_range = vision_range + max(0.0, self.hearing_range)
+        plant_sq = plant_range * plant_range
+        carrion_sq = carrion_range * carrion_range
+        hearing_range = max(
+            vision_range, vision_range + max(0.0, self.hearing_range)
+        )
         hearing_sq = max(vision_sq, hearing_range * hearing_range)
         close_range = self.reach + max(self.width, self.height) * 0.5
         close_range_sq = max(9.0, close_range * close_range)
@@ -579,8 +603,8 @@ class Lifeform:
         prey_distance = vision_sq
         partner_distance = vision_sq
         follower_distance = vision_sq
-        plant_distance = vision_sq
-        carcass_distance = vision_sq
+        plant_distance = plant_sq
+        carcass_distance = carrion_sq
         carcass_candidate = None
 
         for lifeform in self.state.lifeforms:
@@ -654,7 +678,7 @@ class Lifeform:
             dx = contact_x - self.rect.centerx
             dy = contact_y - self.rect.centery
             distance_sq = float(dx * dx + dy * dy)
-            if distance_sq > vision_sq:
+            if distance_sq > plant_sq:
                 continue
             in_close = distance_sq <= close_range_sq
             if not in_close:
@@ -676,7 +700,7 @@ class Lifeform:
             dx = carcass.rect.centerx - self.rect.centerx
             dy = carcass.rect.centery - self.rect.centery
             distance_sq = float(dx * dx + dy * dy)
-            if distance_sq > vision_sq:
+            if distance_sq > carrion_sq:
                 continue
             in_close = distance_sq <= close_range_sq
             if not in_close:
@@ -718,6 +742,9 @@ class Lifeform:
         self.physics_body: PhysicsBody = build_physics_body(graph)
 
     def _derive_sensor_suite(self) -> Dict[str, float]:
+        return self._scan_sensor_modules()
+
+    def _scan_sensor_modules(self) -> Dict[str, float]:
         sensors: Dict[str, float] = {}
         graph = getattr(self, "body_graph", None)
         if not graph:
@@ -730,6 +757,30 @@ class Lifeform:
                 key = str(spectrum)
                 sensors[key] = max(sensors.get(key, 0.0), detection_range)
         return sensors
+
+    def _compute_sensor_target_ranges(self, sensors: Dict[str, float]) -> Dict[str, float]:
+        base = max(0.0, float(self.vision))
+        creature_specs = ("light", "colour", "sonar", "bioelectric", "electro", "thermal")
+        plant_specs = ("light", "colour", "pheromone")
+        carrion_specs = ("pheromone", "bioelectric", "electro")
+
+        def _range(specs: Tuple[str, ...]) -> float:
+            values = [sensors.get(spec, 0.0) for spec in specs]
+            values.append(base)
+            return max(values)
+
+        creature_range = _range(creature_specs)
+        plant_range = _range(plant_specs)
+        carrion_range = max(
+            plant_range, max(sensors.get(spec, 0.0) for spec in carrion_specs)
+        )
+
+        return {
+            "creatures": creature_range,
+            "plants": plant_range,
+            "carrion": carrion_range,
+            "spectra": sensors,
+        }
 
     def _summarize_modules(self) -> Dict[str, int]:
         breakdown: Dict[str, int] = {}
