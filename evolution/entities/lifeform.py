@@ -96,7 +96,7 @@ class Lifeform:
         self.sensory_range = self.vision
         self.perception_rays = self.morph_stats.perception_rays
         self.hearing_range = self.morph_stats.hearing_range
-        physics = getattr(self, "body_physics", None)
+        physics = getattr(self, "physics_body", None)
         if physics is None:
             physics = PhysicsBody(
                 mass=max(1.0, self.morph_stats.mass * 10.0),
@@ -112,7 +112,7 @@ class Lifeform:
                 power_output=20.0,
                 energy_cost=self.morph_stats.maintenance_cost * 12.0,
             )
-            self.body_physics = physics
+            self.physics_body = physics
         self.body_module_count = len(getattr(self, "body_graph", []))
         self.body_mass = physics.mass
         self.body_volume = physics.volume
@@ -715,7 +715,7 @@ class Lifeform:
         self.genome: Genome = genome
         self.genome_blueprint = genome.to_dict()
         self.body_graph = graph
-        self.body_physics: PhysicsBody = build_physics_body(graph)
+        self.physics_body: PhysicsBody = build_physics_body(graph)
 
     def _derive_sensor_suite(self) -> Dict[str, float]:
         sensors: Dict[str, float] = {}
@@ -761,7 +761,7 @@ class Lifeform:
 
     def _refresh_inertial_properties(self) -> None:
         drag_scale = getattr(self, "_locomotion_drag_multiplier", 1.0)
-        physics = getattr(self, "body_physics", None)
+        physics = getattr(self, "physics_body", None)
         if physics is not None:
             self.volume = max(1.0, physics.volume)
             self.body_density = max(0.2, getattr(physics, "density", 1.0))
