@@ -4,7 +4,7 @@ from __future__ import annotations
 
 __all__ = [
     "world",
-    "map_generator",
+    "ocean_world",
     "biomes",
     "obstacles",
     "vegetation",

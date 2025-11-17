@@ -12,7 +12,7 @@ class SimulationState:
     plants: List = field(default_factory=list)
     carcasses: List = field(default_factory=list)
     world: 'World' = None
-    world_type: str = "Abyssal Ocean"
+    world_type: str = "Alien Ocean"
     camera: 'Camera' = None
     notifications: 'NotificationManager' = None
     notification_context: object = None
