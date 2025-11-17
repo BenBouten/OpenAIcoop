@@ -1445,6 +1445,7 @@ def run() -> None:
                             notification_manager,
                             effects_manager,
                         )
+                        _initialise_population()
                         inspector.clear()
                         start_time = datetime.datetime.now()
                         notification_manager.add("Alien Ocean simulatie gestart", settings.SEA)
@@ -1471,6 +1472,7 @@ def run() -> None:
                             notification_manager,
                             effects_manager,
                         )
+                        _initialise_population()
                         inspector.clear()
                         latest_stats = None
                         stats_window.clear()
