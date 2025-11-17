@@ -303,7 +303,14 @@ class LifeformInspector:
 
         stats_bottom = max(stats_y_left, stats_y_right)
 
-        env_top = stats_bottom + 12
+        body_top = stats_bottom + 12
+        body_top = self._render_section_heading(surface, "Modulaire anatomie", content_left, body_top)
+        for line in self._body_summary_lines(lifeform):
+            text_surface = self._body_font.render(line, True, (60, 60, 60))
+            surface.blit(text_surface, (content_left, body_top))
+            body_top += text_surface.get_height() + 2
+
+        env_top = body_top + 12
         env_top = self._render_section_heading(surface, "Omgeving & sociaal", content_left, env_top)
         for line in self._environment_lines(lifeform):
             text_surface = self._body_font.render(line, True, (60, 60, 60))
@@ -755,6 +762,40 @@ class LifeformInspector:
             lines.append("Geen groepsverband actief")
         if lifeform.is_leader:
             lines.append("Dit wezen fungeert als leider")
+        return lines
+
+    def _body_summary_lines(self, lifeform: "Lifeform") -> List[str]:
+        lines: List[str] = []
+        module_count = int(getattr(lifeform, "body_module_count", 0))
+        breakdown = getattr(lifeform, "body_module_breakdown", {}) or {}
+        if breakdown:
+            summary = ", ".join(f"{key}:{value}" for key, value in sorted(breakdown.items()))
+            lines.append(f"Modules: {module_count} ({summary})")
+        else:
+            lines.append(f"Modules: {module_count}")
+        body_mass = getattr(lifeform, "body_mass", getattr(lifeform, "mass", 0))
+        density = getattr(lifeform, "body_density", 0.0)
+        lines.append(f"Massa {body_mass:.1f} • Dichtheid {density:.2f}")
+        drag = getattr(lifeform, "drag_coefficient", 0.0)
+        thrust = getattr(lifeform, "max_thrust", 0.0)
+        lines.append(f"Drag {drag:.2f} • Thrust {thrust:.1f}")
+        grip = getattr(lifeform, "body_grip_strength", getattr(lifeform, "grip_strength", 0.0))
+        upkeep = getattr(lifeform, "body_energy_cost", getattr(lifeform, "maintenance_cost", 0.0))
+        lines.append(f"Grip {grip:.1f} • Upkeep {upkeep:.2f}/s")
+        sensors = getattr(lifeform, "sensor_suite", {}) or {}
+        if sensors:
+            sensor_text = ", ".join(
+                f"{name} {rng:.0f}m" for name, rng in sorted(sensors.items())
+            )
+        else:
+            sensor_text = "geen sensorpods"
+        lines.append(f"Sensoren: {sensor_text}")
+        names = list(getattr(lifeform, "body_module_names", ()))
+        if names:
+            preview = ", ".join(names[:5])
+            if len(names) > 5:
+                preview += ", …"
+            lines.append(f"Modulesamenstelling: {preview}")
         return lines
 
     def _render_memory(

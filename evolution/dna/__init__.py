@@ -8,4 +8,5 @@ __all__ = [
     "selection",
     "genes",
     "factory",
+    "blueprints",
 ]

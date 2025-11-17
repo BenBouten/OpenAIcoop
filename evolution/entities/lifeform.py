@@ -22,8 +22,12 @@ import pygame
 from pygame.math import Vector2
 
 from ..config import settings
+from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import describe_skin_stage, ensure_development_plan
+from ..dna.factory import build_body_graph
+from ..dna.genes import Genome, ensure_genome
 from ..morphology import MorphologyGenotype, MorphStats, compute_morph_stats
+from ..physics.physics_body import PhysicsBody, build_physics_body
 from ..simulation.state import SimulationState
 from ..world.carcass import SinkingCarcass
 from ..world.world import BiomeRegion
@@ -69,6 +73,7 @@ class Lifeform:
         self.morph_stats: MorphStats = compute_morph_stats(
             self.morphology, (self.base_width, self.base_height)
         )
+        self._initialise_body(dna_profile)
         self.development = ensure_development_plan(dna_profile.get("development"))
         self.skin_stage = int(self.development.get("skin_stage", 0))
         self.development_features: Tuple[str, ...] = tuple(
@@ -91,22 +96,59 @@ class Lifeform:
         self.sensory_range = self.vision
         self.perception_rays = self.morph_stats.perception_rays
         self.hearing_range = self.morph_stats.hearing_range
-        self.mass = self.morph_stats.mass
+        physics = getattr(self, "body_physics", None)
+        if physics is None:
+            physics = PhysicsBody(
+                mass=max(1.0, self.morph_stats.mass * 10.0),
+                volume=float(self.base_width * self.base_height),
+                density=1.0,
+                frontal_area=float(self.base_width),
+                lateral_area=float(self.base_height),
+                dorsal_area=float(self.base_width),
+                drag_coefficient=0.25,
+                buoyancy_volume=float(self.base_width * self.base_height),
+                max_thrust=80.0,
+                grip_strength=self.morph_stats.grip_strength * 8.0,
+                power_output=20.0,
+                energy_cost=self.morph_stats.maintenance_cost * 12.0,
+            )
+            self.body_physics = physics
+        self.body_module_count = len(getattr(self, "body_graph", []))
+        self.body_mass = physics.mass
+        self.body_volume = physics.volume
+        self.body_density = physics.density
+        self.body_drag = physics.drag_coefficient
+        self.max_thrust = physics.max_thrust
+        self.body_energy_cost = physics.energy_cost
+        self.body_power_output = physics.power_output
+        self.body_grip_strength = physics.grip_strength
+        self.buoyancy_volume = physics.buoyancy_volume
+        self.mass = self._scaled_mass(self.body_mass)
         self.reach = self.morph_stats.reach
-        self.maintenance_cost = self.morph_stats.maintenance_cost
+        morph_maintenance = self.morph_stats.maintenance_cost
+        self.maintenance_cost = max(
+            morph_maintenance, 0.12 + self.body_energy_cost * 0.05
+        )
         self.speed_multiplier = self.morph_stats.swim_speed_multiplier
         self.grip_strength = self.morph_stats.grip_strength
         self.turn_rate = max(0.05, self.morph_stats.turn_rate)
         self.fov_threshold = self.morph_stats.fov_cosine_threshold
         fins = getattr(self.morphology, "fins", 0)
         legs = getattr(self.morphology, "legs", 0)
-        self.propulsion_efficiency = max(0.4, min(1.6, 0.75 + fins * 0.12 - legs * 0.04))
+        base_propulsion = max(0.4, min(1.6, 0.75 + fins * 0.12 - legs * 0.04))
+        thrust_ratio = self.max_thrust / max(8.0, self.body_mass)
+        self.propulsion_efficiency = max(0.4, min(1.8, base_propulsion * (0.65 + thrust_ratio * 0.15)))
+        self.speed_multiplier = max(0.4, min(2.5, self.speed_multiplier * (0.7 + thrust_ratio * 0.2)))
+        scaled_grip = self._scaled_grip(self.body_grip_strength)
+        if scaled_grip > self.grip_strength:
+            self.grip_strength = scaled_grip
         self._locomotion_drag_multiplier = 1.0
-        self.volume = float(self.width * self.height)
-        self.body_density = max(0.2, self.mass / max(1.0, self.volume))
-        self.drag_coefficient = 0.25
-        self.max_swim_speed = 80.0
+        self.volume = max(1.0, self.body_volume)
+        self.drag_coefficient = max(0.05, self.body_drag)
+        self.max_swim_speed = max(45.0, thrust_ratio * 32.0)
         self.last_fluid_properties = None
+        self.sensor_suite = self._derive_sensor_suite()
+        self.body_module_breakdown = self._summarize_modules()
 
         self.locomotion_profile: LocomotionProfile = derive_locomotion_profile(
             dna_profile,
@@ -118,7 +160,7 @@ class Lifeform:
         self.locomotion_description = self.locomotion_profile.description
         self.depth_bias = self.locomotion_profile.depth_bias
         self.drift_preference = self.locomotion_profile.drift_preference
-        self.motion_energy_cost = self.locomotion_profile.energy_cost
+        self.motion_energy_cost = self.locomotion_profile.energy_cost + self.body_energy_cost * 0.02
         self.speed_multiplier *= self.locomotion_profile.speed_multiplier
         self.propulsion_efficiency *= self.locomotion_profile.thrust_efficiency
         self.grip_strength *= self.locomotion_profile.grip_bonus
@@ -141,6 +183,7 @@ class Lifeform:
             min(float(settings.VISION_MAX), self.vision),
         )
         self.hearing_range = max(0.0, self.hearing_range)
+        self._refresh_inertial_properties()
 
         self.parent_ids: Tuple[str, ...] = tuple(parents or ())
         self.family_signature: Tuple[str, ...] = (
@@ -656,6 +699,58 @@ class Lifeform:
         self.closest_plant = plant_candidate
         self.closest_carcass = carcass_candidate
 
+    def _initialise_body(self, dna_profile: dict) -> None:
+        diet = dna_profile.get("diet", "omnivore")
+        genome_data = dna_profile.get("genome") or generate_modular_blueprint(diet)
+        try:
+            genome = ensure_genome(genome_data)
+            graph = build_body_graph(genome)
+        except Exception as exc:  # pragma: no cover - defensive fallback
+            logger.exception(
+                "Failed to build body graph for dna %s: %s", dna_profile.get("dna_id"), exc
+            )
+            fallback = generate_modular_blueprint(diet)
+            genome = ensure_genome(fallback)
+            graph = build_body_graph(genome)
+        self.genome: Genome = genome
+        self.genome_blueprint = genome.to_dict()
+        self.body_graph = graph
+        self.body_physics: PhysicsBody = build_physics_body(graph)
+
+    def _derive_sensor_suite(self) -> Dict[str, float]:
+        sensors: Dict[str, float] = {}
+        graph = getattr(self, "body_graph", None)
+        if not graph:
+            return sensors
+        for module in graph.iter_modules():
+            if getattr(module, "module_type", "") != "sensor":
+                continue
+            detection_range = float(getattr(module, "detection_range", 0.0))
+            for spectrum in getattr(module, "spectrum", ()):
+                key = str(spectrum)
+                sensors[key] = max(sensors.get(key, 0.0), detection_range)
+        return sensors
+
+    def _summarize_modules(self) -> Dict[str, int]:
+        breakdown: Dict[str, int] = {}
+        names: List[str] = []
+        graph = getattr(self, "body_graph", None)
+        if not graph:
+            self.body_module_names = tuple()
+            return breakdown
+        for module in graph.iter_modules():
+            names.append(getattr(module, "name", getattr(module, "key", type(module).__name__)))
+            module_type = getattr(module, "module_type", type(module).__name__)
+            breakdown[module_type] = breakdown.get(module_type, 0) + 1
+        self.body_module_names = tuple(names)
+        return breakdown
+
+    def _scaled_mass(self, value: float) -> float:
+        return max(0.6, min(6.5, value / 15.0))
+
+    def _scaled_grip(self, value: float) -> float:
+        return max(0.35, min(2.5, value / 6.0))
+
     def set_size(self) -> None:
         self.size = self.width * self.height * max(0.5, self.mass)
         if self.width < 1:
@@ -665,11 +760,17 @@ class Lifeform:
         self._refresh_inertial_properties()
 
     def _refresh_inertial_properties(self) -> None:
-        area = max(1.0, self.width * self.height)
-        self.volume = area * 0.12
-        self.body_density = max(0.2, self.mass / max(1.0, self.volume))
-        base_drag = max(0.1, min(1.4, (self.width + self.height) / 220.0))
         drag_scale = getattr(self, "_locomotion_drag_multiplier", 1.0)
+        physics = getattr(self, "body_physics", None)
+        if physics is not None:
+            self.volume = max(1.0, physics.volume)
+            self.body_density = max(0.2, getattr(physics, "density", 1.0))
+            base_drag = max(0.05, getattr(physics, "drag_coefficient", 0.2))
+        else:
+            area = max(1.0, self.width * self.height)
+            self.volume = area * 0.12
+            self.body_density = max(0.2, self.mass / max(1.0, self.volume))
+            base_drag = max(0.1, min(1.4, (self.width + self.height) / 220.0))
         self.drag_coefficient = max(0.05, min(2.4, base_drag * drag_scale))
 
     def check_group(self) -> None:

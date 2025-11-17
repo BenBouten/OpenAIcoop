@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import random
 from dataclasses import dataclass
-from typing import Dict, Iterable, Mapping, Optional, Tuple, TYPE_CHECKING
+from typing import Dict, Iterable, List, Mapping, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
+from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import mix_development_plans, mutate_profile_development
+from ..dna.genes import Genome
+from ..dna.mutation import MutationError, mutate_genome
 from ..morphology.genotype import MorphologyGenotype, mutate_profile_morphology
 
 if TYPE_CHECKING:
@@ -98,6 +101,8 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
     morphology = MorphologyGenotype.mix(parent.morphology, partner.morphology)
     development = mix_development_plans(diet, parent.development, partner.development)
 
+    genome_blueprint = _mix_parent_genome(parent, partner)
+
     return {
         "dna_id": parent.dna_id,
         "width": int((parent.width + partner.width) // 2),
@@ -121,7 +126,26 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
         "restlessness": restlessness,
         "morphology": morphology.to_dict(),
         "development": development,
+        "genome": genome_blueprint,
     }
+
+
+def _mix_parent_genome(parent: "Lifeform", partner: "Lifeform") -> Dict[str, object]:
+    genomes: List[Genome] = []
+    for candidate in (getattr(parent, "genome", None), getattr(partner, "genome", None)):
+        if isinstance(candidate, Genome):
+            genomes.append(candidate)
+    if not genomes:
+        return generate_modular_blueprint(getattr(parent, "diet", "omnivore"))
+
+    base = random.choice(genomes)
+    genome = base
+    try:
+        if random.randint(0, 100) < settings.MUTATION_CHANCE:
+            genome = mutate_genome(genome)
+    except MutationError:
+        genome = base
+    return genome.to_dict()
 
 
 def _apply_mutations(profile: Dict[str, object]) -> None:
