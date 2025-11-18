@@ -1225,13 +1225,13 @@ def _buoyancy_compensation_vector(lifeform: "Lifeform") -> Vector2:
     if fin_count == 0 or lift_per_fin == 0.0:
         # No fins to compensate with, use weak vertical thrust
         compensation_strength = min(0.3, abs(relative_buoyancy) * 0.4)
-        return Vector2(0.0, -math.copysign(compensation_strength, relative_buoyancy))
+        return Vector2(0.0, math.copysign(compensation_strength, relative_buoyancy))
     
     # Use fins to actively counteract buoyancy
-    # Positive relative_buoyancy means floating up → swim down
-    # Negative relative_buoyancy means sinking → swim up
+    # Positive relative_buoyancy means floating up → swim down (positive Y)
+    # Negative relative_buoyancy means sinking → swim up (negative Y)
     compensation_strength = min(0.8, abs(relative_buoyancy) * 1.2)
-    return Vector2(0.0, -math.copysign(compensation_strength, relative_buoyancy))
+    return Vector2(0.0, math.copysign(compensation_strength, relative_buoyancy))
 
 
 def _depth_bias_vector(lifeform: "Lifeform") -> Vector2:
