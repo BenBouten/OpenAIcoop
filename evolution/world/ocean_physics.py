@@ -172,7 +172,9 @@ class OceanPhysics:
         volume_scale = min(2.5, max(0.3, buoyancy_volume / 220.0))
         buoyancy_ratio = fluid.density / body_density
         buoyant_bias = (positive_buoyancy - negative_buoyancy) / max(1.0, volume)
-        buoyancy_acc = (buoyancy_ratio - 1.0) * self.gravity * volume_scale
+        # upward buoyant acceleration per unit mass: (fluid_density / body_density) * g
+        buoyancy_acc = buoyancy_ratio * self.gravity * volume_scale
+        # apply small bias from buoyancy offsets (positive reduces net gravity)
         buoyancy_acc += buoyant_bias * self.gravity * 0.25
         locomotion_drag = getattr(lifeform, "_locomotion_drag_multiplier", 1.0)
         base_drag = float(
@@ -191,6 +193,7 @@ class OceanPhysics:
         buoyant_slip = positive_buoyancy / max(1.0, volume)
         grip_multiplier = 0.12 / max(0.5, grip_strength * (1.0 + ballast_grip * 0.6))
         current_adjust = (fluid.current - lifeform.velocity) * grip_multiplier
+        # net downward acceleration: gravity minus upward buoyant acceleration
         net_gravity = self.gravity - buoyancy_acc
         vertical = Vector2(0.0, net_gravity)
         if ballast_grip > 0.0:
