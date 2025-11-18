@@ -271,6 +271,13 @@ class LifeformInspector:
             f"{lifeform.age:.1f}",
             "age",
         )
+        stats_y_left = _render_stat(
+            stats_left_x,
+            stats_y_left,
+            "Net drijfvermogen",
+            f"{getattr(lifeform, 'relative_buoyancy', 0.0):+.1%}" if hasattr(lifeform, 'relative_buoyancy') else "n/a",
+            "buoyancy",
+        )
 
         stats_y_right = _render_stat(
             stats_right_x,
@@ -606,6 +613,25 @@ class LifeformInspector:
             ],
             "diet": self._diet_breakdown(lifeform),
         }
+        
+        # Add buoyancy diagnostics tooltip
+        tips['buoyancy'] = [
+            f"Net buoyancy (N): {getattr(lifeform, 'net_buoyancy', 0.0):.2f}",
+            f"Relative: {getattr(lifeform, 'relative_buoyancy', 0.0):+.2%}",
+            f"Near-floating: {'Yes' if getattr(lifeform, 'is_near_floating', False) else 'No'}",
+        ]
+        bd = getattr(lifeform, 'buoyancy_debug', None)
+        if bd:
+            tips['buoyancy'].extend([
+                f"Fluid density: {bd.get('fluid_density', 0.0):.3f}",
+                f"Buoyancy volume: {bd.get('buoyancy_volume', 0.0):.2f}",
+                f"Body volume: {bd.get('body_volume', 0.0):.2f}",
+                f"Body density: {bd.get('body_density', 0.0):.3f}",
+                f"Mass: {bd.get('mass', 0.0):.2f}",
+                f"Buoyant force (N): {bd.get('buoyant_force_N', 0.0):.2f}",
+                f"Weight (N): {bd.get('weight_N', 0.0):.2f}",
+            ])
+        
         return tips
 
     def _format_diet_value(self, lifeform: "Lifeform") -> str:
