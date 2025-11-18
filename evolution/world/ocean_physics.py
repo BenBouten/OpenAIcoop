@@ -169,11 +169,9 @@ class OceanPhysics:
             buoyancy_offsets = getattr(physics_body, "buoyancy_offsets", (0.0, 0.0))
         positive_buoyancy, negative_buoyancy = buoyancy_offsets
         propulsion = thrust
-        volume_scale = min(2.5, max(0.3, buoyancy_volume / 220.0))
-        buoyancy_ratio = fluid.density / body_density
         buoyant_bias = (positive_buoyancy - negative_buoyancy) / max(1.0, volume)
-        # upward buoyant acceleration per unit mass: (fluid_density / body_density) * g
-        buoyancy_acc = buoyancy_ratio * self.gravity * volume_scale
+        # upward buoyant acceleration: (fluid_density * buoyancy_volume * g) / mass
+        buoyancy_acc = (fluid.density * buoyancy_volume * self.gravity) / mass
         # apply small bias from buoyancy offsets (positive reduces net gravity)
         buoyancy_acc += buoyant_bias * self.gravity * 0.25
         locomotion_drag = getattr(lifeform, "_locomotion_drag_multiplier", 1.0)
