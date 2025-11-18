@@ -1031,7 +1031,6 @@ class Lifeform:
         base_speed = min(14.0, base_speed)
         base_speed = max(0.05, base_speed)
         self.speed = base_speed
-        self.max_swim_speed = max(48.0, self.speed * 28.0)
 
     def handle_death(self) -> bool:
         if self.health_now > 0:
