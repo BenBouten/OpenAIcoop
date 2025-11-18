@@ -103,6 +103,7 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     desired += _group_goal_vector(lifeform, now)
     desired += _group_behavior_vector(lifeform)
     desired += _avoid_recent_positions(lifeform, now)
+    desired += _buoyancy_compensation_vector(lifeform)  # Active buoyancy control
     desired += _depth_bias_vector(lifeform)
     desired += _boundary_repulsion_vector(lifeform)
 
@@ -1205,6 +1206,34 @@ def _reset_speed_to_base(lifeform: "Lifeform") -> None:
 # ---------------------------------------------------------
 # Obstacle & boundary
 # ---------------------------------------------------------
+def _buoyancy_compensation_vector(lifeform: "Lifeform") -> Vector2:
+    """Compute a vertical steering force to actively counteract net buoyancy.
+    
+    This makes lifeforms actively swim to maintain depth instead of passively drifting.
+    """
+    # Check if lifeform has buoyancy diagnostics computed
+    relative_buoyancy = getattr(lifeform, "relative_buoyancy", 0.0)
+    is_near_floating = getattr(lifeform, "is_near_floating", False)
+    
+    # If near neutral buoyancy, no compensation needed
+    if is_near_floating or abs(relative_buoyancy) < 0.02:
+        return Vector2()
+    
+    # Check if lifeform has fins to counteract buoyancy
+    fin_count = getattr(lifeform, "fin_count", 0)
+    lift_per_fin = getattr(lifeform, "lift_per_fin", 0.0)
+    if fin_count == 0 or lift_per_fin == 0.0:
+        # No fins to compensate with, use weak vertical thrust
+        compensation_strength = min(0.3, abs(relative_buoyancy) * 0.4)
+        return Vector2(0.0, math.copysign(compensation_strength, relative_buoyancy))
+    
+    # Use fins to actively counteract buoyancy
+    # Positive relative_buoyancy means floating up → swim down (positive Y)
+    # Negative relative_buoyancy means sinking → swim up (negative Y)
+    compensation_strength = min(0.8, abs(relative_buoyancy) * 1.2)
+    return Vector2(0.0, math.copysign(compensation_strength, relative_buoyancy))
+
+
 def _depth_bias_vector(lifeform: "Lifeform") -> Vector2:
     bias = float(getattr(lifeform, "depth_bias", 0.0))
     if abs(bias) < 0.01:

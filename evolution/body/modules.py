@@ -136,7 +136,7 @@ class TrunkCore(CoreModule):
             integrity=140.0,
             heat_dissipation=15.0,
             power_output=60.0,
-            buoyancy_bias=6.0,
+            buoyancy_bias=0.5,
         )
     )
     material: str = "bio-alloy"
@@ -201,7 +201,7 @@ class CephalonHead(HeadModule):
             energy_cost=1.2,
             integrity=60.0,
             heat_dissipation=6.0,
-            buoyancy_bias=2.0,
+            buoyancy_bias=0.2,
         )
     )
     material: str = "bio-alloy"
@@ -237,7 +237,7 @@ class HydroFin(LimbModule):
             energy_cost=0.6,
             integrity=38.0,
             heat_dissipation=4.0,
-            buoyancy_bias=5.0,
+            buoyancy_bias=0.3,
         )
     )
     material: str = "flex-polymer"
@@ -261,7 +261,7 @@ class TailThruster(PropulsionModule):
             integrity=55.0,
             heat_dissipation=10.0,
             power_output=30.0,
-            buoyancy_bias=-4.0,
+            buoyancy_bias=-0.3,
         )
     )
     material: str = "titanium"
@@ -297,7 +297,7 @@ class SensorPod(SensoryModule):
             energy_cost=0.4,
             integrity=22.0,
             heat_dissipation=2.5,
-            buoyancy_bias=1.0,
+            buoyancy_bias=0.1,
         )
     )
     material: str = "ceramic"
