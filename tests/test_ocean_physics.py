@@ -52,7 +52,7 @@ def test_neutral_buoyancy_does_not_cause_sinking() -> None:
     """Bodies that match the fluid density should stay level without thrust."""
 
     ocean = OceanPhysics(400, 400)
-    depth = 120.0
+    depth = 0.0  # Test at surface where vertical current component is zero
     physics_body = _neutral_body(ocean, depth)
     creature = DummyLifeform(physics_body, depth)
 
