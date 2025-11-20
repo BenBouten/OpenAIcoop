@@ -36,6 +36,8 @@ from .locomotion import LocomotionProfile, derive_locomotion_profile
 
 logger = logging.getLogger("evolution.simulation")
 
+_GRAVITY = 9.81  # m/s² - used for buoyancy diagnostics
+
 
 class Lifeform:
     def __init__(
@@ -320,6 +322,7 @@ class Lifeform:
         self._voluntary_pause = False
         self._next_wander_flip = 0
         self._refresh_inertial_properties()
+        self._compute_buoyancy_debug()
 
     # ------------------------------------------------------------------
     # Convenience: access to global notification context via state
@@ -747,6 +750,75 @@ class Lifeform:
         self.body_graph = graph
         self.physics_body: PhysicsBody = build_physics_body(graph)
 
+    def _compute_buoyancy_debug(self) -> None:
+        """Compute and store buoyancy diagnostics for debugging and inspection."""
+        pb = getattr(self, 'physics_body', None)
+        if pb is None:
+            self.net_buoyancy = 0.0
+            self.relative_buoyancy = 0.0
+            self.is_near_floating = False
+            self.buoyancy_debug = {}
+            return
+
+        # Try to get fluid density from the world/ocean
+        fluid_density = None
+        world = getattr(self, 'state', None)
+        if world is not None:
+            ocean = getattr(world, 'ocean_physics', None) or getattr(world, 'ocean', None)
+            if ocean and hasattr(ocean, 'properties_at'):
+                try:
+                    props = ocean.properties_at(getattr(self, 'y', 0.0))
+                    fluid_density = getattr(props, 'density', None)
+                except Exception:
+                    fluid_density = None
+
+        # Fallback to standard water density
+        if fluid_density is None:
+            fluid_density = 1.0
+
+        # Extract physics properties
+        buoyancy_volume = float(getattr(pb, 'buoyancy_volume', pb.volume))
+        body_volume = float(getattr(pb, 'volume', 0.0))
+        mass = float(getattr(pb, 'mass', 0.0))
+
+        # Compute forces
+        buoyant_force = float(fluid_density) * buoyancy_volume * _GRAVITY
+        weight = mass * _GRAVITY
+        net_buoyancy = buoyant_force - weight
+        relative_net = net_buoyancy / max(weight, 1e-6)
+
+        # Determine if near-floating using tolerance criteria
+        rel_tol = 0.05  # 5% relative tolerance
+        abs_tol = max(0.02 * weight, 0.5)  # Absolute tolerance
+        is_near = abs(relative_net) <= rel_tol or abs(net_buoyancy) <= abs_tol
+
+        # Store computed attributes
+        self.net_buoyancy = net_buoyancy
+        self.relative_buoyancy = relative_net
+        self.is_near_floating = is_near
+        self.buoyancy_debug = {
+            'fluid_density': float(fluid_density),
+            'buoyancy_volume': buoyancy_volume,
+            'body_volume': body_volume,
+            'body_density': float(getattr(pb, 'density', 0.0)),
+            'mass': mass,
+            'buoyant_force_N': buoyant_force,
+            'weight_N': weight,
+            'buoyancy_offsets': getattr(pb, 'buoyancy_offsets', None),
+            'drag_coefficient': getattr(pb, 'drag_coefficient', None),
+            'grip_strength': getattr(pb, 'grip_strength', None),
+        }
+
+        # Log diagnostics
+        logger.debug(
+            'Lifeform %s @y=%.2f net_buoyancy=%.3f N (rel: %.3f). breakdown: %s',
+            getattr(self, 'id', '<no-id>'),
+            getattr(self, 'y', 0.0),
+            self.net_buoyancy,
+            self.relative_buoyancy,
+            self.buoyancy_debug,
+        )
+
     def _derive_sensor_suite(self) -> Dict[str, float]:
         return self._scan_sensor_modules()
 
@@ -829,6 +901,9 @@ class Lifeform:
             self.body_density = max(0.2, self.mass / max(1.0, self.volume))
             base_drag = max(0.1, min(1.4, (self.width + self.height) / 220.0))
         self.drag_coefficient = max(0.05, min(2.4, base_drag * drag_scale))
+        # Update buoyancy diagnostics when inertial properties change
+        if hasattr(self, '_compute_buoyancy_debug'):
+            self._compute_buoyancy_debug()
 
     def check_group(self) -> None:
         relevant_radius = min(self.vision, settings.GROUP_MAX_RADIUS)
@@ -956,7 +1031,6 @@ class Lifeform:
         base_speed = min(14.0, base_speed)
         base_speed = max(0.05, base_speed)
         self.speed = base_speed
-        self.max_swim_speed = max(48.0, self.speed * 28.0)
 
     def handle_death(self) -> bool:
         if self.health_now > 0:

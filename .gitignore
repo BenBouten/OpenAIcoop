@@ -65,6 +65,9 @@ dmypy.json
 .Spotlight-V100
 .Trashes
 ehthumbs.db
+
+# OS
+.DS_Store
 Thumbs.db
 
 # Project specific

@@ -97,7 +97,9 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
 
     base_speed = getattr(lifeform, "speed", 0.0)
     max_speed = max(1.0, getattr(lifeform, "max_swim_speed", 120.0))
-    speed_ratio = max(0.0, min(1.0, base_speed / max_speed))
+    # Normalize speed against its typical range (0.05-14.0) to get effort
+    # instead of using it as a ratio with max_swim_speed which is in different units
+    speed_ratio = max(0.0, min(1.0, base_speed / 14.0))
     base_effort = speed_ratio * getattr(lifeform, "propulsion_efficiency", 1.0)
     effort = base_effort * thrust_multiplier
     clamped_effort = max(-1.0, min(1.0, effort))

@@ -32,15 +32,16 @@ class DummyLifeform:
 
 def _neutral_body(ocean: OceanPhysics, depth: float) -> PhysicsBody:
     fluid = ocean.properties_at(depth)
+    volume = 80.0
     return PhysicsBody(
-        mass=80.0,
-        volume=80.0,
+        mass=fluid.density * volume,
+        volume=volume,
         density=fluid.density,
         frontal_area=42.0,
         lateral_area=40.0,
         dorsal_area=38.0,
         drag_coefficient=0.25,
-        buoyancy_volume=220.0,
+        buoyancy_volume=volume,
         max_thrust=80.0,
         grip_strength=12.0,
         power_output=24.0,
@@ -52,7 +53,7 @@ def test_neutral_buoyancy_does_not_cause_sinking() -> None:
     """Bodies that match the fluid density should stay level without thrust."""
 
     ocean = OceanPhysics(400, 400)
-    depth = 120.0
+    depth = 0.0  # Test at surface where vertical current component is zero
     physics_body = _neutral_body(ocean, depth)
     creature = DummyLifeform(physics_body, depth)
 
