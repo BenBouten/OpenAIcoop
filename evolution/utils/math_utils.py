@@ -127,7 +127,8 @@ def fast_normalize(x: float, y: float) -> tuple[float, float]:
         Tuple of (normalized_x, normalized_y), or (0, 0) if zero vector
     """
     mag = fast_magnitude(x, y)
-    if mag == 0:
+    # Use epsilon for floating-point comparison
+    if mag < 1e-10:
         return (0.0, 0.0)
     return (x / mag, y / mag)
 

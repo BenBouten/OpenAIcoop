@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
-import pytest
+import time
 from dataclasses import dataclass
+
+import pytest
 
 from evolution.systems.spatial_hash import SpatialHashGrid, build_spatial_grid
 
@@ -192,19 +194,18 @@ class TestPerformance:
     def test_large_grid_performance(self):
         """Test that grid performs well with many entities."""
         grid = SpatialHashGrid(cell_size=200.0)
-        
+
         # Add 1000 lifeforms in a grid pattern
         for i in range(1000):
             x = (i % 32) * 50.0
             y = (i // 32) * 50.0
             grid.add_lifeform(MockLifeform(x=x, y=y, id=i))
-        
+
         # Query should be fast even with many entities
-        import time
         start = time.time()
         results = grid.query_lifeforms(500.0, 500.0, radius=100.0)
         elapsed = time.time() - start
-        
+
         # Should complete in less than 10ms
         assert elapsed < 0.01
         # Should find some entities

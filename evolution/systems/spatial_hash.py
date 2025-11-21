@@ -94,10 +94,12 @@ class SpatialHashGrid:
 
         for cell in cells:
             for lifeform in self._lifeforms.get(cell, []):
-                # Skip duplicates (entity might be in multiple cells)
-                if id(lifeform) in seen:
+                # Use lifeform.id if available, fallback to id() for deduplication
+                # Note: Grid is rebuilt each frame so object identity is stable
+                entity_key = getattr(lifeform, 'id', id(lifeform))
+                if entity_key in seen:
                     continue
-                seen.add(id(lifeform))
+                seen.add(entity_key)
 
                 # Check actual distance (optional but recommended for accuracy)
                 dx = lifeform.x - x
@@ -126,7 +128,8 @@ class SpatialHashGrid:
 
         for cell in cells:
             for plant in self._plants.get(cell, []):
-                # Skip duplicates
+                # Plants don't have IDs, use object identity for deduplication
+                # Note: Grid is rebuilt each frame so object identity is stable
                 if id(plant) in seen:
                     continue
                 seen.add(id(plant))

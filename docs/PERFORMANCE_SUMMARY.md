@@ -166,14 +166,20 @@ This ensures:
 
 ### Actual Measurements:
 
-**Spatial Grid Performance:**
-- Build time: ~0.5-1ms for 200 entities
-- Query time: <0.01ms for typical radius (50-100 units)
-- Memory overhead: ~100 bytes per entity (acceptable)
+**Spatial Grid Performance (Measured in Tests):**
+- Build time: ~0.5-1ms estimated for 200 entities (based on test execution)
+- Query time: <10ms measured for 1000 entities (test_large_grid_performance)
+- Memory overhead: Minimal - ~100-200 bytes per entity estimate
 
-**Math Caching:**
-- Cache hit rate: ~60-80% in typical gameplay
-- Performance gain: 5-10% CPU time on math operations
+**Theoretical Performance Improvement:**
+- 100 entities: 10,000 checks → ~100 checks (estimated 100x speedup)
+- 200 entities: 40,000 checks → ~200 checks (estimated 200x speedup)
+- Actual speedup will vary based on entity density and query radius
+
+**Math Caching (Estimated):**
+- Cache hit rate: Expected 60-80% in typical gameplay
+- Performance gain: Estimated 5-10% CPU time on math operations
+- Note: Actual measurements require profiling in production environment
 
 ## Future Optimization Opportunities
 
