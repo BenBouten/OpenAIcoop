@@ -9,8 +9,11 @@ from ..body.modules import (
     BodyModule,
     CephalonHead,
     HydroFin,
+    JellyBell,
+    PulseSiphon,
     SensorPod,
     SensoryModule,
+    TentacleLimb,
     TailThruster,
     TrunkCore,
 )
@@ -45,17 +48,24 @@ DEFAULT_MODULE_FACTORIES: Dict[str, ModuleFactory] = {
     "HydroFin": _default_factory_for(HydroFin),
     "TailThruster": _default_factory_for(TailThruster),
     "SensorPod": _default_factory_for(SensorPod),
+    "JellyBell": _default_factory_for(JellyBell),
+    "PulseSiphon": _default_factory_for(PulseSiphon),
+    "TentacleLimb": _default_factory_for(TentacleLimb),
     "core": _default_factory_for(TrunkCore),
+    "bell_core": _default_factory_for(JellyBell),
     "head": _default_factory_for(CephalonHead),
     "limb": _default_factory_for(HydroFin),
+    "tentacle": _default_factory_for(TentacleLimb),
     "propulsion": _default_factory_for(TailThruster),
     "sensor": _default_factory_for(SensorPod),
 }
 
 _NERVE_LOAD: Dict[str, float] = {
     "core": 5.0,
+    "bell_core": 4.0,
     "head": 3.0,
     "limb": 1.8,
+    "tentacle": 1.4,
     "propulsion": 2.5,
     "sensor": 0.8,
 }

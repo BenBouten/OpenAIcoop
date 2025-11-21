@@ -15,6 +15,8 @@ MODULE_COLORS: Dict[str, Color] = {
     "limb": (120, 200, 220),
     "propulsion": (255, 162, 120),
     "sensor": (214, 235, 255),
+    "tentacle": (144, 215, 182),
+    "bell_core": (188, 160, 255),
 }
 
 BASE_MODULE_ALPHA = 210
@@ -26,6 +28,8 @@ MODULE_RENDER_STYLES: Dict[str, Dict[str, Tint | int]] = {
     "limb": {"tint": (0.85, 1.05, 1.25), "alpha_offset": -30},
     "propulsion": {"tint": (1.3, 0.92, 0.78), "alpha_offset": -10},
     "sensor": {"tint": (1.1, 1.3, 1.4), "alpha_offset": -40},
+    "tentacle": {"tint": (0.8, 1.1, 1.25), "alpha_offset": -50},
+    "bell_core": {"tint": (1.05, 0.95, 1.3), "alpha_offset": 10},
 }
 
 JOINT_COLORS: Dict[JointType, Color] = {

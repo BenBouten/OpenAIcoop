@@ -25,13 +25,15 @@ class MutationError(RuntimeError):
 
 _MUTATION_TEMPLATES = {
     key: DEFAULT_MODULE_FACTORIES[key]
-    for key in ("head", "limb", "propulsion", "sensor")
+    for key in ("head", "limb", "propulsion", "sensor", "tentacle", "bell_core")
 }
 
 _MATERIAL_LIBRARY: Dict[str, Tuple[str, ...]] = {
     "core": ("bio-alloy", "chitin"),
+    "bell_core": ("mesoglea", "chitin"),
     "head": ("bio-alloy", "ceramic"),
     "limb": ("flex-polymer", "titanium"),
+    "tentacle": ("mesoglea", "flex-polymer"),
     "propulsion": ("titanium", "ceramic"),
     "sensor": ("ceramic", "bio-alloy"),
 }
