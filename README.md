@@ -268,6 +268,27 @@ Fitness determined by:
 
 ## 🛠️ Development
 
+### Module Viewer Tool
+
+Test and visualize lifeform body graphs interactively:
+
+```bash
+# Interactive mode - add/remove modules in real-time
+python tools/module_viewer.py
+
+# Screenshot mode - generate visualization without UI
+python tools/module_viewer.py --screenshot output.png
+```
+
+The module viewer allows you to:
+- Visualize body graph structures with all modules and connections
+- Interactively add/remove modules using keyboard controls
+- See real-time statistics (mass, thrust, energy cost, etc.)
+- Test module rendering before integrating into the simulation
+- Export screenshots of body configurations
+
+See `tools/README.md` for detailed usage instructions.
+
 ### Running Tests
 
 ```bash
