@@ -997,6 +997,20 @@ def run() -> None:
             140,
             30,
         )
+        
+        # UI window toggle buttons at the top of the screen
+        stats_toggle_button = pygame.Rect(
+            settings.WINDOW_WIDTH - 280,
+            10,
+            120,
+            32,
+        )
+        inspector_toggle_button = pygame.Rect(
+            settings.WINDOW_WIDTH - 150,
+            10,
+            130,
+            32,
+        )
         if tools_panel.selected_tool != EditorTool.DRAW_BARRIER:
             barrier_preview_rect = None
             barrier_drag_start = None
@@ -1281,6 +1295,37 @@ def run() -> None:
 
             tools_panel.draw(screen)
             stats_window.draw(screen)
+            
+            # Draw toggle buttons for stats window and inspector
+            stats_active = stats_window._stats is not None
+            inspector_active = inspector.selected is not None
+            
+            # Stats toggle button
+            stats_color = (120, 180, 240) if stats_active else (200, 200, 200)
+            pygame.draw.rect(screen, stats_color, stats_toggle_button, border_radius=6)
+            pygame.draw.rect(screen, (50, 50, 50), stats_toggle_button, 2, border_radius=6)
+            stats_label = font2.render("Stats", True, (20, 20, 20))
+            screen.blit(
+                stats_label,
+                (
+                    stats_toggle_button.centerx - stats_label.get_width() // 2,
+                    stats_toggle_button.centery - stats_label.get_height() // 2,
+                ),
+            )
+            
+            # Inspector toggle button
+            inspector_color = (120, 240, 180) if inspector_active else (200, 200, 200)
+            pygame.draw.rect(screen, inspector_color, inspector_toggle_button, border_radius=6)
+            pygame.draw.rect(screen, (50, 50, 50), inspector_toggle_button, 2, border_radius=6)
+            inspector_label = font2.render("Inspector", True, (20, 20, 20))
+            screen.blit(
+                inspector_label,
+                (
+                    inspector_toggle_button.centerx - inspector_label.get_width() // 2,
+                    inspector_toggle_button.centery - inspector_label.get_height() // 2,
+                ),
+            )
+            
             toggle_label = font2.render(
                 "UI verbergen" if legacy_ui_visible else "UI tonen",
                 True,
@@ -1410,6 +1455,33 @@ def run() -> None:
                     and legacy_toggle_rect.collidepoint(event.pos)
                 ):
                     legacy_ui_visible = not legacy_ui_visible
+                    continue
+                if (
+                    event.button == 1
+                    and not starting_screen
+                    and stats_toggle_button.collidepoint(event.pos)
+                ):
+                    # Toggle stats window
+                    if stats_window._stats is not None:
+                        stats_window.clear()
+                    else:
+                        if latest_stats:
+                            stats_window.update_stats(latest_stats)
+                    continue
+                if (
+                    event.button == 1
+                    and not starting_screen
+                    and inspector_toggle_button.collidepoint(event.pos)
+                ):
+                    # Toggle inspector - if no selection, notify user
+                    if inspector.selected is not None:
+                        inspector.clear()
+                    else:
+                        notification_manager.add(
+                            "Klik op een lifeform om te inspecteren",
+                            settings.BLUE,
+                            2000,
+                        )
                     continue
                 if starting_screen:
                     if start_button.collidepoint(event.pos):

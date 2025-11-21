@@ -37,6 +37,10 @@ def collect_population_stats(
         "average_drag": 0.0,
         "average_max_thrust": 0.0,
         "average_body_energy_cost": 0.0,
+        "average_body_volume": 0.0,
+        "average_body_density": 0.0,
+        "average_body_power_output": 0.0,
+        "average_body_grip_strength": 0.0,
         "death_age_avg": sum(death_ages) / len(death_ages) if death_ages else 0.0,
         "dna_count": {},
         "dna_attribute_averages": {},
@@ -64,6 +68,10 @@ def collect_population_stats(
             "thrust": 0.0,
             "body_mass": 0.0,
             "body_energy": 0.0,
+            "body_volume": 0.0,
+            "body_density": 0.0,
+            "body_power": 0.0,
+            "body_grip": 0.0,
         }
         dna_attributes = [
             "health",
@@ -103,6 +111,10 @@ def collect_population_stats(
             totals["thrust"] += float(getattr(lifeform, "max_thrust", 0.0))
             totals["body_mass"] += float(getattr(lifeform, "body_mass", getattr(lifeform, "mass", 0.0)))
             totals["body_energy"] += float(getattr(lifeform, "body_energy_cost", getattr(lifeform, "maintenance_cost", 0.0)))
+            totals["body_volume"] += float(getattr(lifeform, "body_volume", 0.0))
+            totals["body_density"] += float(getattr(lifeform, "body_density", 0.0))
+            totals["body_power"] += float(getattr(lifeform, "body_power_output", 0.0))
+            totals["body_grip"] += float(getattr(lifeform, "body_grip_strength", 0.0))
 
             dna_entry = dna_totals.setdefault(
                 lifeform.dna_id,
@@ -131,6 +143,10 @@ def collect_population_stats(
         stats["average_max_thrust"] = totals["thrust"] / count
         stats["average_body_mass"] = totals["body_mass"] / count
         stats["average_body_energy_cost"] = totals["body_energy"] / count
+        stats["average_body_volume"] = totals["body_volume"] / count
+        stats["average_body_density"] = totals["body_density"] / count
+        stats["average_body_power_output"] = totals["body_power"] / count
+        stats["average_body_grip_strength"] = totals["body_grip"] / count
         stats["dna_count"] = {
             _normalize_dna_id(dna_id): int(data["count"])
             for dna_id, data in dna_totals.items()
