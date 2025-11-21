@@ -12,7 +12,7 @@ Usage:
     python tools/module_viewer.py --screenshot output.png
 
 Controls:
-    1-7: Add different module types
+    1-5: Add different module types
     D: Remove last module
     R: Reset to default creature
     Q/ESC: Quit
@@ -23,6 +23,7 @@ Controls:
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from pathlib import Path
 
@@ -109,7 +110,6 @@ class ModuleViewer:
         start_angle = -angle_step * (child_count - 1) / 2.0
 
         for i, child_id in enumerate(children):
-            import math
             angle = math.radians(start_angle + i * angle_step)
             child_direction = Vector2(
                 direction.x * math.cos(angle) - direction.y * math.sin(angle),
@@ -137,8 +137,6 @@ class ModuleViewer:
 
     def _render_body_graph(self, center_x: int, center_y: int):
         """Render the modular body graph with connections."""
-        import math
-
         graph = self.creature.graph
 
         # Compute animated positions
@@ -171,7 +169,9 @@ class ModuleViewer:
             normal = Vector2(-direction.y, direction.x)
             if normal.length_squared() > 1e-3:
                 normal = normal.normalize()
-                bend = math.sin(self.elapsed * 2.4 + offset.x * 0.8) if self.animate else 0
+                # Use layout offset for consistent bend animation
+                node_offset = self.layout.get(node_id, Vector2(0, 0))
+                bend = math.sin(self.elapsed * 2.4 + node_offset.x * 0.8) if self.animate else 0
                 normal *= bend * min(20.0, direction.length() * 0.3)
             control += normal
 
