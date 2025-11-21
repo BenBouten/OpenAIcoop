@@ -7,8 +7,11 @@ import random
 from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
+from ..body.body_graph import BodyGraph
+from ..body.modules import catalogue_jellyfish_modules
 from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import generate_development_plan
+from ..dna.factory import serialize_body_graph
 from ..entities.lifeform import Lifeform
 from ..morphology.genotype import MorphologyGenotype
 from ..world.vegetation import MossCluster, create_initial_clusters
@@ -180,6 +183,15 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             home = None
         state.dna_home_biome[dna_profile["dna_id"]] = home
 
+    jelly_profile = _build_jellyfish_profile(len(state.dna_profiles))
+    state.dna_profiles.append(jelly_profile)
+
+    if world.biomes:
+        jelly_home = determine_home_biome(jelly_profile, world.biomes)
+    else:
+        jelly_home = None
+    state.dna_home_biome[jelly_profile["dna_id"]] = jelly_home
+
 
 def spawn_lifeforms(state: SimulationState, world: World) -> None:
     """Spawn the configured number of lifeforms using the DNA catalogue."""
@@ -231,6 +243,8 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
         lifeform.current_biome = biome
         state.lifeforms.append(lifeform)
 
+    guaranteed_profiles = [p for p in state.dna_profiles if p.get("guaranteed_spawn")]
+
     # Ensure that the alien ocean always starts with a small, diverse roster.
     guaranteed_species = 0
     if state.world_type == "Alien Ocean":
@@ -240,12 +254,18 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
             settings.N_LIFEFORMS,
         )
 
-    guaranteed_profiles = (
-        random.sample(state.dna_profiles, guaranteed_species)
-        if guaranteed_species
+    guaranteed_ids = {profile["dna_id"] for profile in guaranteed_profiles}
+    pool = [p for p in state.dna_profiles if p["dna_id"] not in guaranteed_ids]
+    sample_count = max(0, guaranteed_species - len(guaranteed_profiles))
+    sampled_profiles = (
+        random.sample(pool, sample_count)
+        if sample_count and pool
         else []
     )
-    for profile in guaranteed_profiles:
+
+    for profile in guaranteed_profiles + sampled_profiles:
+        if len(state.lifeforms) >= settings.N_LIFEFORMS:
+            break
         _spawn_from_profile(profile)
 
     remaining_spawns = max(0, settings.N_LIFEFORMS - len(state.lifeforms))
@@ -359,3 +379,46 @@ def _normalize(value: float, minimum: float, maximum: float) -> float:
     if maximum == minimum:
         return 0.5
     return max(0.0, min(1.0, (value - minimum) / (maximum - minimum)))
+
+
+def _build_jellyfish_profile(dna_id: int) -> dict:
+    """Seed a bell-and-tentacle drifter that always spawns at startup."""
+
+    rng = random.Random()
+    modules = catalogue_jellyfish_modules()
+    graph = BodyGraph("bell_core", modules["bell_core"])
+    graph.add_module("bell_siphon", modules["bell_siphon"], "bell_core", "siphon_nozzle")
+    graph.add_module("bell_sensor", modules["bell_sensor"], "bell_core", "umbrella_sensor")
+    graph.add_module("tentacle_front", modules["tentacle_front"], "bell_core", "tentacle_socket_front")
+    graph.add_module("tentacle_left", modules["tentacle_left"], "bell_core", "tentacle_socket_left")
+    graph.add_module("tentacle_right", modules["tentacle_right"], "bell_core", "tentacle_socket_right")
+    graph.add_module("tentacle_rear", modules["tentacle_rear"], "bell_core", "tentacle_socket_rear")
+
+    genome = serialize_body_graph(graph).to_dict()
+
+    return {
+        "dna_id": dna_id,
+        "width": rng.randint(settings.MIN_WIDTH + 1, settings.MAX_WIDTH - 2),
+        "height": rng.randint(settings.MIN_HEIGHT + 1, settings.MAX_HEIGHT - 1),
+        "color": (
+            rng.randint(120, 220),
+            rng.randint(160, 255),
+            rng.randint(180, 255),
+        ),
+        "health": rng.randint(70, 130),
+        "maturity": rng.randint(settings.MIN_MATURITY + 40, settings.MAX_MATURITY - 30),
+        "vision": rng.randint(settings.VISION_MIN + 10, settings.VISION_MAX - 6),
+        "defence_power": rng.randint(22, 60),
+        "attack_power": rng.randint(12, 40),
+        "energy": rng.randint(90, 120),
+        "longevity": rng.randint(2200, 5200),
+        "diet": "omnivore",
+        "social": rng.uniform(0.35, 0.8),
+        "boid_tendency": rng.uniform(0.35, 0.85),
+        "risk_tolerance": rng.uniform(0.35, 0.75),
+        "restlessness": rng.uniform(0.28, 0.62),
+        "morphology": MorphologyGenotype.random().to_dict(),
+        "development": generate_development_plan("omnivore"),
+        "genome": genome,
+        "guaranteed_spawn": True,
+    }
