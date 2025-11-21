@@ -20,7 +20,8 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
         return (entity.x + entity.width / 2, entity.y - 10)
 
     enemy = lifeform.closest_enemy
-    enemy_reach = max(2.5, lifeform.reach)
+    base_size = max(lifeform.width, lifeform.height)
+    enemy_reach = max(3.5, lifeform.reach + base_size * 0.25)
     if enemy and enemy.health_now > 0 and lifeform.distance_to(enemy) < enemy_reach:
         damage = max(1, lifeform.attack_power_now - enemy.defence_power_now / 2)
         enemy.health_now -= damage
@@ -69,7 +70,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                 )
 
     prey = lifeform.closest_prey
-    prey_reach = max(3.0, lifeform.reach)
+    prey_reach = max(4.0, lifeform.reach + base_size * 0.35)
     if (
         prey
         and prey.health_now > 0
@@ -127,7 +128,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                 )
 
     carcass = getattr(lifeform, "closest_carcass", None)
-    carrion_range = max(4.0, lifeform.reach * 0.6)
+    carrion_range = max(5.0, lifeform.reach * 0.8 + base_size * 0.4)
     if (
         carcass
         and lifeform.prefers_meat()
@@ -164,7 +165,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
             effects.spawn_woohoo((midpoint_x, midpoint_y))
 
     plant = lifeform.closest_plant
-    plant_range = max(3.0, lifeform.reach * 0.5)
+    plant_range = max(4.5, lifeform.reach * 0.7 + base_size * 0.4)
     if (
         plant
         and lifeform.closest_enemy is None
