@@ -247,28 +247,51 @@ def _food_available_near(
     lifeform: "Lifeform", point: Tuple[float, float], tag: Optional[str]
 ) -> bool:
     px, py = point
-    radius_sq = _MEMORY_VALIDATION_RADIUS * _MEMORY_VALIDATION_RADIUS
+    radius = _MEMORY_VALIDATION_RADIUS
+    radius_sq = radius * radius
 
+    # Use spatial grid if available for better performance
+    spatial_grid = getattr(lifeform.state, 'spatial_grid', None)
+    
     if tag != "meat" and lifeform.prefers_plants():
-        for plant in lifeform.state.plants:
-            if getattr(plant, "resource", 0) <= 0:
-                continue
-            center = (plant.x + plant.width / 2, plant.y + plant.height / 2)
-            dx = center[0] - px
-            dy = center[1] - py
-            if dx * dx + dy * dy <= radius_sq:
-                return True
+        if spatial_grid:
+            # Use spatial grid for efficient query
+            nearby_plants = spatial_grid.query_plants(px, py, radius)
+            for plant in nearby_plants:
+                if getattr(plant, "resource", 0) > 0:
+                    return True
+        else:
+            # Fallback to full iteration
+            for plant in lifeform.state.plants:
+                if getattr(plant, "resource", 0) <= 0:
+                    continue
+                center = (plant.x + plant.width / 2, plant.y + plant.height / 2)
+                dx = center[0] - px
+                dy = center[1] - py
+                if dx * dx + dy * dy <= radius_sq:
+                    return True
 
     if tag != "plant" and lifeform.prefers_meat():
-        for other in lifeform.state.lifeforms:
-            if other is lifeform or other.health_now <= 0:
-                continue
-            if other.dna_id == lifeform.dna_id:
-                continue
-            dx = other.rect.centerx - px
-            dy = other.rect.centery - py
-            if dx * dx + dy * dy <= radius_sq:
+        if spatial_grid:
+            # Use spatial grid for efficient query
+            nearby_lifeforms = spatial_grid.query_lifeforms(px, py, radius)
+            for other in nearby_lifeforms:
+                if other is lifeform or other.health_now <= 0:
+                    continue
+                if other.dna_id == lifeform.dna_id:
+                    continue
                 return True
+        else:
+            # Fallback to full iteration
+            for other in lifeform.state.lifeforms:
+                if other is lifeform or other.health_now <= 0:
+                    continue
+                if other.dna_id == lifeform.dna_id:
+                    continue
+                dx = other.rect.centerx - px
+                dy = other.rect.centery - py
+                if dx * dx + dy * dy <= radius_sq:
+                    return True
 
     return False
 
@@ -528,11 +551,24 @@ def _juvenile_family_vector(lifeform: "Lifeform") -> Vector2:
 
     separation_radius = max(1.0, settings.JUVENILE_SEPARATION_RADIUS)
 
+    # Use spatial grid if available for better performance
+    spatial_grid = getattr(lifeform.state, 'spatial_grid', None)
+    sibling_radius = max(
+        settings.JUVENILE_SIBLING_COMFORT_RADIUS + 1,
+        settings.JUVENILE_SIBLING_ATTRACTION_RADIUS,
+    )
+    search_radius = max(parent_radius, sibling_radius) * 1.5  # Slightly larger to be safe
+
+    if spatial_grid:
+        nearby_lifeforms = spatial_grid.query_lifeforms(lifeform.x, lifeform.y, search_radius)
+    else:
+        nearby_lifeforms = lifeform.state.lifeforms
+
     for parent_id in getattr(lifeform, "parent_ids", tuple()):
         parent = next(
             (
                 candidate
-                for candidate in lifeform.state.lifeforms
+                for candidate in nearby_lifeforms
                 if candidate.id == parent_id and candidate.health_now > 0
             ),
             None,
@@ -571,7 +607,8 @@ def _juvenile_family_vector(lifeform: "Lifeform") -> Vector2:
     )
 
     if family_signature:
-        for other in lifeform.state.lifeforms:
+        # nearby_lifeforms already computed above with spatial grid if available
+        for other in nearby_lifeforms:
             if other is lifeform or other.health_now <= 0:
                 continue
             if getattr(other, "family_signature", tuple()) != family_signature:
