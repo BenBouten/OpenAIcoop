@@ -102,6 +102,143 @@ class SensoryModule(BodyModule):
     module_type: str = "sensor"
 
 
+@dataclass
+class TentacleLimb(LimbModule):
+    """Elongated limb specialised for grasping and pulsed swimming."""
+
+    key: str = "tentacle"
+    name: str = "Ribbon Tentacle"
+    description: str = "Flexible tentacle capable of stinging and steering"
+    size: Tuple[float, float, float] = (0.8, 0.6, 6.0)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=2.4,
+            energy_cost=0.45,
+            integrity=22.0,
+            heat_dissipation=2.0,
+            buoyancy_bias=0.9,
+        )
+    )
+    material: str = "mesoglea"
+    thrust: float = 18.0
+    grip_strength: float = 16.0
+    lift_coefficient: float = 14.0
+
+    module_type: str = "tentacle"
+
+    venom_intensity: float = 0.35
+    pulse_resonance: float = 0.65
+
+
+@dataclass
+class JellyBell(CoreModule):
+    """Gelatinous bell that anchors tentacles and pulse propulsion."""
+
+    key: str = "bell_core"
+    name: str = "Jelly Bell"
+    description: str = "Buoyant bell with radial tentacle ring"
+    size: Tuple[float, float, float] = (3.6, 3.6, 3.0)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=12.0,
+            energy_cost=0.9,
+            integrity=32.0,
+            heat_dissipation=3.0,
+            power_output=24.0,
+            buoyancy_bias=1.35,
+        )
+    )
+    material: str = "mesoglea"
+    energy_capacity: float = 120.0
+    cargo_slots: int = 0
+
+    module_type: str = "bell_core"
+
+    pulse_rate: float = 0.85
+    bioluminescence: float = 0.55
+
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="siphon_nozzle",
+            joint=Joint(JointType.BALL, swing_limits=(-25.0, 25.0)),
+            allowed_modules=(PropulsionModule,),
+            description="Central jet for pulse propulsion",
+            max_child_mass=10.0,
+            allowed_materials=("mesoglea", "flex-polymer"),
+        ),
+        AttachmentPoint(
+            name="umbrella_sensor",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(SensoryModule,),
+            description="Dome tip sensor cluster",
+            max_child_mass=3.0,
+            allowed_materials=("ceramic", "mesoglea"),
+        ),
+        AttachmentPoint(
+            name="tentacle_socket_front",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-65.0, 65.0), torque_limit=45.0),
+            allowed_modules=(LimbModule,),
+            description="Front-facing tentacle socket",
+            max_child_mass=4.0,
+            allowed_materials=("mesoglea", "flex-polymer"),
+        ),
+        AttachmentPoint(
+            name="tentacle_socket_left",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-70.0, 55.0), torque_limit=45.0),
+            allowed_modules=(LimbModule,),
+            description="Left rim tentacle socket",
+            max_child_mass=4.0,
+            allowed_materials=("mesoglea", "flex-polymer"),
+        ),
+        AttachmentPoint(
+            name="tentacle_socket_right",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-70.0, 55.0), torque_limit=45.0),
+            allowed_modules=(LimbModule,),
+            description="Right rim tentacle socket",
+            max_child_mass=4.0,
+            allowed_materials=("mesoglea", "flex-polymer"),
+        ),
+        AttachmentPoint(
+            name="tentacle_socket_rear",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-45.0, 70.0), torque_limit=55.0),
+            allowed_modules=(LimbModule,),
+            description="Trailing tentacle socket",
+            max_child_mass=4.5,
+            allowed_materials=("mesoglea", "flex-polymer"),
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+
+
+@dataclass
+class PulseSiphon(PropulsionModule):
+    """Low-profile jet that rhythmically expands/contracts."""
+
+    key: str = "pulse_siphon"
+    name: str = "Pulse Siphon"
+    description: str = "Radial jet for bell compression thrust"
+    size: Tuple[float, float, float] = (1.2, 1.0, 2.4)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=6.0,
+            energy_cost=1.0,
+            integrity=20.0,
+            heat_dissipation=2.5,
+            power_output=16.0,
+            buoyancy_bias=0.35,
+        )
+    )
+    material: str = "mesoglea"
+    thrust_power: float = 55.0
+    fuel_efficiency: float = 1.2
+
+    module_type: str = "propulsion"
+    pulse_frequency: float = 0.95
+
+
 # Concrete module implementations -------------------------------------------
 
 
@@ -345,6 +482,24 @@ def build_default_sensor(key: str, spectrum: Sequence[str]) -> SensoryModule:
     return SensorPod(key=key, spectrum=tuple(spectrum))
 
 
+def build_jelly_bell_core(key: str = "bell_core") -> JellyBell:
+    """Return a buoyant bell core with tentacle sockets."""
+
+    return JellyBell(key=key)
+
+
+def build_tentacle(key: str) -> TentacleLimb:
+    """Return a grasping ribbon tentacle."""
+
+    return TentacleLimb(key=key)
+
+
+def build_pulse_siphon(key: str = "pulse_siphon") -> PulseSiphon:
+    """Return a pulsing propulsion siphon sized for a bell core."""
+
+    return PulseSiphon(key=key)
+
+
 def catalogue_default_modules() -> Mapping[str, BodyModule]:
     """Return a mapping of simple module presets for prototypes/tests."""
 
@@ -360,3 +515,25 @@ def catalogue_default_modules() -> Mapping[str, BodyModule]:
         sonar.key: sonar,
     }
     return modules
+
+
+def catalogue_jellyfish_modules() -> Mapping[str, BodyModule]:
+    """Return modules suited for gelatinous drifters and deep-sea jellies."""
+
+    bell = build_jelly_bell_core("bell_core")
+    siphon = build_pulse_siphon("bell_siphon")
+    tentacle_front = build_tentacle("tentacle_front")
+    tentacle_left = build_tentacle("tentacle_left")
+    tentacle_right = build_tentacle("tentacle_right")
+    tentacle_rear = build_tentacle("tentacle_rear")
+    sensor = SensorPod(key="bell_sensor", spectrum=("light", "bioelectric"))
+
+    return {
+        bell.key: bell,
+        siphon.key: siphon,
+        tentacle_front.key: tentacle_front,
+        tentacle_left.key: tentacle_left,
+        tentacle_right.key: tentacle_right,
+        tentacle_rear.key: tentacle_rear,
+        sensor.key: sensor,
+    }

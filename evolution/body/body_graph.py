@@ -141,10 +141,14 @@ class BodyGraph:
             base = 0.85
         elif module.module_type == "limb":
             base = 1.2
+        elif module.module_type == "tentacle":
+            base = 1.35
         elif module.module_type == "sensor":
             base = 0.95
         elif module.module_type == "core":
             base = 0.9
+        elif module.module_type == "bell_core":
+            base = 0.82
         return base
 
     def add_module(

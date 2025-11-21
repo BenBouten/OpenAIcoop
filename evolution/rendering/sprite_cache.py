@@ -381,6 +381,36 @@ class LifeformSpriteCache:
                 ellipse_rect.centery,
             )
             pygame.draw.ellipse(surface, (240, 255, 255, 140), ping_rect, 2)
+        elif module_type == "tentacle":
+            spine = [
+                (ellipse_rect.left + int(length * 0.1), ellipse_rect.centery - height // 6),
+                (ellipse_rect.centerx, ellipse_rect.bottom - height // 5),
+                (ellipse_rect.right - int(length * 0.15), ellipse_rect.bottom - 2),
+            ]
+            pygame.draw.lines(
+                surface,
+                (25, 60, 50, max(100, alpha - 60)),
+                False,
+                spine,
+                3,
+            )
+            tip_radius = max(2, height // 6)
+            pygame.draw.circle(
+                surface,
+                (255, 210, 160, max(140, alpha - 40)),
+                (spine[-1][0], spine[-1][1]),
+                tip_radius,
+            )
+        elif module_type == "bell_core":
+            crown_rect = ellipse_rect.inflate(-int(length * 0.2), -int(height * 0.3))
+            crown_rect.centery = ellipse_rect.centery - max(2, height // 10)
+            pygame.draw.ellipse(surface, (255, 255, 255, max(100, alpha - 80)), crown_rect)
+            ring_rect = pygame.Rect(0, 0, max(8, length // 2), max(6, height // 3))
+            ring_rect.center = (
+                ellipse_rect.centerx,
+                ellipse_rect.bottom - ring_rect.height // 2,
+            )
+            pygame.draw.ellipse(surface, (35, 55, 90, max(140, alpha - 50)), ring_rect, 2)
         return surface
 
     def _module_visuals(self, base_color: Color, module_type: str) -> Tuple[Color, int]:
