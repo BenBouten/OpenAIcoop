@@ -19,6 +19,7 @@ class StatsWindow:
         self._chrome = WindowChrome(self.rect, min_size=(320, 320))
         self._header_height = 60
         self._stats: Optional[Dict[str, object]] = None
+        self._close_button = pygame.Rect(0, 0, 20, 20)
 
     def update_stats(self, stats: Dict[str, object]) -> None:
         self._stats = stats
@@ -30,6 +31,10 @@ class StatsWindow:
         if not self._stats:
             return False
         consumed = False
+        if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            if self._close_button.collidepoint(event.pos):
+                self.clear()
+                return True
         if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
             chrome_consumed, _ = self._chrome.handle_event(event, self._header_rect())
             consumed = chrome_consumed
@@ -52,6 +57,24 @@ class StatsWindow:
             (
                 self.rect.centerx - heading.get_width() // 2,
                 self.rect.top + 16,
+            ),
+        )
+
+        # Draw close button
+        self._close_button = pygame.Rect(
+            self.rect.right - 36,
+            self.rect.top + 16,
+            20,
+            20,
+        )
+        pygame.draw.rect(surface, (180, 70, 70), self._close_button, border_radius=4)
+        pygame.draw.rect(surface, (60, 30, 30), self._close_button, 1, border_radius=4)
+        close_label = self.font.render("X", True, (255, 255, 255))
+        surface.blit(
+            close_label,
+            (
+                self._close_button.x + (self._close_button.width - close_label.get_width()) // 2,
+                self._close_button.y + (self._close_button.height - close_label.get_height()) // 2,
             ),
         )
 
