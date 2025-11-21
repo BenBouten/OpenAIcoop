@@ -126,7 +126,7 @@ class StatsWindow:
             f"Gem. reikwijdte: {self._format_float(stats.get('average_reach', 0), 2)}",
             f"Gem. onderhoud: {self._format_float(stats.get('average_maintenance_cost', 0), 3)}",
             f"Gem. sensoren: {self._format_float(stats.get('average_perception_rays', 0), 1)}",
-            f"Gem. geheur: {self._format_float(stats.get('average_hearing_range', 0), 1)}",
+            f"Gem. gehoor: {self._format_float(stats.get('average_hearing_range', 0), 1)}",
             f"Gem. modules: {self._format_float(stats.get('average_module_count', 0), 1)}",
             f"Gem. drag: {self._format_float(stats.get('average_drag', 0), 2)}",
             f"Gem. thrust: {self._format_float(stats.get('average_max_thrust', 0), 1)}",
