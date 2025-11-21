@@ -53,6 +53,7 @@ from ..systems import stats as stats_system
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
 from ..systems.player import PlayerController
+from ..systems.spatial_hash import build_spatial_grid
 from ..world.types import Barrier
 from ..world.vegetation import create_cluster_from_brush
 from ..world.world import World
@@ -1138,6 +1139,9 @@ def run() -> None:
                     if lifeform_snapshot
                     else None
                 )
+
+                # Rebuild spatial grid for efficient proximity queries
+                state.spatial_grid = build_spatial_grid(lifeform_snapshot, plants, cell_size=200.0)
 
                 for lifeform in lifeform_snapshot:
                     # 1) DNA-afhankelijke eigenschappen & omgeving

@@ -4,6 +4,7 @@ from typing import Dict, List, Optional, TYPE_CHECKING
 if TYPE_CHECKING:  # pragma: no cover - imported for type hints only
     from ..rendering.effects import EffectManager
     from ..entities.lifeform import Lifeform
+    from ..systems.spatial_hash import SpatialHashGrid
 
 
 @dataclass
@@ -38,3 +39,4 @@ class SimulationState:
     lifeform_id_counter: int = 0
     selected_lifeform: Optional['Lifeform'] = None
     last_debug_log_path: Optional[str] = None
+    spatial_grid: Optional['SpatialHashGrid'] = None  # Spatial hash for performance
