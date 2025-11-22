@@ -777,13 +777,24 @@ def run() -> None:
     def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
         if not lifeforms:
             return None
+
         world_x, world_y = camera.screen_to_world(position)
+        click_radius = max(8.0, 18.0 / max(0.75, camera.zoom))
+
+        # Prefer the spatial grid for responsiveness on dense populations
+        grid = getattr(state, "spatial_grid", None)
+        candidates = (
+            grid.query_lifeforms(world_x, world_y, click_radius * 1.5)
+            if grid is not None
+            else lifeforms
+        )
+
         best: Optional[Lifeform] = None
         best_distance = float("inf")
-        for lifeform in lifeforms:
+        for lifeform in candidates:
             if lifeform.health_now <= 0:
                 continue
-            rect = lifeform.rect.inflate(6, 6)
+            rect = lifeform.rect.inflate(int(click_radius), int(click_radius))
             if not rect.collidepoint(world_x, world_y):
                 continue
             centerx, centery = lifeform.rect.center
@@ -917,7 +928,11 @@ def run() -> None:
 
     def _draw_world(target: pygame.Surface) -> None:
         view = world_surface.subsurface(camera.viewport)
-        pygame.transform.smoothscale(view, target.get_size(), target)
+        # Fast path avoids expensive filtering when no scaling is needed
+        if camera.zoom == 1.0 and view.get_size() == target.get_size():
+            target.blit(view, (0, 0))
+        else:
+            pygame.transform.scale(view, target.get_size(), target)
 
     def _begin_tool_action(position: Tuple[int, int]) -> None:
         nonlocal painting_tool, barrier_drag_start, barrier_preview_rect
