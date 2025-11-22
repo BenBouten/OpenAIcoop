@@ -103,14 +103,24 @@ class OceanPhysics:
         return self.layers[-1]
 
     def properties_at(self, depth: float) -> FluidProperties:
-        layer = self.layer_at(depth)
-        local_depth = max(layer.depth_start, min(layer.depth_end, depth))
+        """Sample the fluid properties for a given depth.
+
+        Depth values outside the simulated column are clamped to ensure
+        physically plausible outputs (e.g., no negative pressure or light
+        gain above the surface).
+        """
+
+        clamped_depth = max(0.0, min(self.depth, depth))
+        layer = self.layer_at(clamped_depth)
+        local_depth = max(layer.depth_start, min(layer.depth_end, clamped_depth))
         layer_fraction = (local_depth - layer.depth_start) / max(
             1.0, layer.depth_end - layer.depth_start
         )
         density = layer.density * (1.0 + layer_fraction * 0.08)
-        pressure = self.surface_pressure + density * self.gravity * (depth / self.depth)
-        light = math.exp(-depth * layer.light_absorption)
+        pressure = self.surface_pressure + density * self.gravity * (
+            clamped_depth / self.depth
+        )
+        light = math.exp(-clamped_depth * layer.light_absorption)
         sway = math.sin(self._time * 0.12 + layer_fraction) * 14.0
         current = layer.current.rotate(sway)
         current *= 0.4 + 0.6 * (1.0 - layer_fraction)

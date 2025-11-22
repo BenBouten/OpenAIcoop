@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from types import SimpleNamespace
 
 import pytest
@@ -67,3 +68,25 @@ def test_neutral_buoyancy_does_not_cause_sinking() -> None:
     assert abs(creature.velocity.y) < 1e-6
     assert abs(next_position.y - creature.y) < 1e-6
     assert creature.last_fluid_properties == fluid
+
+
+def test_properties_at_clamps_negative_depth() -> None:
+    ocean = OceanPhysics(400, 500)
+
+    fluid = ocean.properties_at(-200.0)
+
+    assert fluid.layer.name == "Sunlit"
+    assert fluid.pressure == pytest.approx(ocean.surface_pressure)
+    assert fluid.light == pytest.approx(1.0)
+
+
+def test_properties_at_clamps_below_ocean_floor() -> None:
+    ocean = OceanPhysics(600, 800)
+
+    fluid = ocean.properties_at(10_000.0)
+
+    assert fluid.layer.name == "Abyss"
+    expected_pressure = ocean.surface_pressure + fluid.density * ocean.gravity
+    expected_light = math.exp(-ocean.depth * fluid.layer.light_absorption)
+    assert fluid.pressure == pytest.approx(expected_pressure)
+    assert fluid.light == pytest.approx(expected_light)
