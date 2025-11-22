@@ -23,7 +23,9 @@ class BaseForm:
 ```
 
 A registry named `BASE_FORMS` exposes the five archetypes, and `EVOLUTION_MATRIX`
-encodes their specialisation notes.
+encodes their specialisation notes. Registry helpers `get_base_form(key)` and
+`base_form_keys()` provide a stable interface for callers that should not be
+coupled to the internal dict layout.
 
 ## 2. Example DNA Profiles
 

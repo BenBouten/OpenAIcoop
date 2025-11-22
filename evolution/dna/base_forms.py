@@ -4,12 +4,27 @@ This module encodes a structured description of the five marine archetypes
 requested for the new evolution layer.  It provides deterministic, repeatable
 values for DNA, behaviour, mutation tendencies, and integration hooks without
 changing runtime selection logic yet.
+
+The helpers at the bottom of the file expose a small registry interface so the
+rest of the codebase does not need to know about the internal dict structure.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Dict, Mapping, Tuple
+
+__all__ = [
+    "DNAProfile",
+    "BehaviourIdentity",
+    "EvolutionRules",
+    "SystemInterfaces",
+    "BaseForm",
+    "BASE_FORMS",
+    "EVOLUTION_MATRIX",
+    "get_base_form",
+    "base_form_keys",
+]
 
 
 @dataclass(frozen=True)
@@ -270,3 +285,23 @@ EVOLUTION_MATRIX: Dict[str, Mapping[str, str]] = {
         "slow_grazer": "Metabolism minimisation, broaden detritus diet",
     },
 }
+
+
+def get_base_form(key: str) -> BaseForm:
+    """Return a base form by key, raising ``KeyError`` when unknown.
+
+    This helper provides a narrow interface for callers so that any future
+    refactors of ``BASE_FORMS`` do not require touching call sites.
+    """
+
+    return BASE_FORMS[key]
+
+
+def base_form_keys() -> Tuple[str, ...]:
+    """Expose the available base form keys as an immutable tuple.
+
+    The tuple is safe to reuse in validation logic or UI selection lists
+    without risking accidental mutation of the underlying registry.
+    """
+
+    return tuple(BASE_FORMS.keys())

@@ -9,4 +9,5 @@ __all__ = [
     "genes",
     "factory",
     "blueprints",
+    "base_forms",
 ]
