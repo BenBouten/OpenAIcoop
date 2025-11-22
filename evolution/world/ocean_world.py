@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import List, Sequence, Tuple
 
 import pygame
+from pygame.math import Vector2
 
 from .types import Barrier, BiomeRegion, WaterBody, WeatherPattern
 
@@ -53,6 +54,60 @@ class OceanBlueprint:
     water_bodies: List[WaterBody]
     vegetation_masks: List[pygame.Rect]
     vents: List[RadVentField]
+    bubble_columns: List["BubbleColumn"]
+
+
+@dataclass
+class BubbleColumn:
+    """Gentle stream of bubbles that drifts upward as decoration."""
+
+    base: Tuple[int, int]
+    width: int
+    height: int
+    spawn_interval: float
+    rise_speed: float
+    max_radius: int
+    drift: float
+    color: Color = (195, 225, 255)
+    bubbles: List[Tuple[Vector2, float, float]] = field(default_factory=list)
+    _time_accumulator: float = 0.0
+
+    def update(self, dt: float, rng: random.Random) -> None:
+        if dt <= 0:
+            return
+        self._time_accumulator += dt
+        while self._time_accumulator >= self.spawn_interval:
+            self._time_accumulator -= self.spawn_interval
+            self._spawn_bubble(rng)
+
+        target_top = self.base[1] - self.height
+        alive: List[Tuple[Vector2, float, float]] = []
+        for position, velocity, radius in self.bubbles:
+            position.y -= velocity * dt
+            position.x += math.sin(position.y * 0.02) * self.drift * dt
+            velocity *= 0.995
+            if position.y + radius > target_top:
+                alive.append((position, velocity, radius))
+        self.bubbles = alive[-80:]
+
+    def draw(self, surface: pygame.Surface) -> None:
+        if not self.bubbles:
+            return
+        for position, _, radius in self.bubbles:
+            pygame.draw.circle(
+                surface,
+                self.color,
+                (int(position.x), int(position.y)),
+                max(1, int(radius)),
+                width=1,
+            )
+
+    def _spawn_bubble(self, rng: random.Random) -> None:
+        radius = rng.uniform(1.5, float(self.max_radius))
+        x = rng.uniform(self.base[0] - self.width / 2, self.base[0] + self.width / 2)
+        y = float(self.base[1])
+        rise = rng.uniform(self.rise_speed * 0.5, self.rise_speed * 1.35)
+        self.bubbles.append((Vector2(x, y), rise, radius))
 
 
 def build_ocean_blueprint(width: int, height: int) -> OceanBlueprint:
@@ -87,8 +142,11 @@ def build_ocean_blueprint(width: int, height: int) -> OceanBlueprint:
         y_cursor += rect.height
 
     barriers = _build_side_cliffs(width, height, rng)
+    barriers += _build_seafloor_ridges(width, height, rng)
+    barriers += _build_cave_systems(width, height, rng)
     vents = _build_rad_vents(layers, width, rng)
     vegetation_masks = _build_vegetation_masks(layers, width, rng)
+    bubble_columns = _build_bubble_columns(width, height, rng)
     background_color = layers[0].top_color if layers else (6, 18, 42)
 
     return OceanBlueprint(
@@ -98,6 +156,7 @@ def build_ocean_blueprint(width: int, height: int) -> OceanBlueprint:
         water_bodies=[],
         vegetation_masks=vegetation_masks,
         vents=vents,
+        bubble_columns=bubble_columns,
     )
 
 
@@ -257,14 +316,88 @@ def _build_side_cliffs(width: int, height: int, rng: random.Random) -> List[Barr
         while y < height:
             seg_height = min(height - y, rng.randint(step_height - 80, step_height + 140))
             seg_width = rng.randint(120, 220)
+            ledge_height = rng.randint(30, 90)
             if side == -1:
                 left = 0
             else:
                 left = width - seg_width
-            rect = pygame.Rect(left, y, seg_width, seg_height)
-            cliffs.append(Barrier(rect, color, "basalt cliff"))
+            pocket_top = y + rng.randint(40, max(50, seg_height - 120))
+            # Split the cliff into an upper and lower piece to leave a recessed alcove.
+            upper_height = max(0, pocket_top - y)
+            lower_height = max(0, seg_height - upper_height - ledge_height)
+            if upper_height > 0:
+                cliffs.append(Barrier(pygame.Rect(left, y, seg_width, upper_height), color, "basalt cliff"))
+            if lower_height > 0:
+                lower_top = pocket_top + ledge_height
+                cliffs.append(
+                    Barrier(
+                        pygame.Rect(left, lower_top, seg_width, lower_height),
+                        color,
+                        "basalt cliff",
+                    )
+                )
             y += seg_height
     return cliffs
+
+
+def _build_seafloor_ridges(width: int, height: int, rng: random.Random) -> List[Barrier]:
+    ridges: List[Barrier] = []
+    baseline = height - rng.randint(140, 220)
+    x = 0
+    while x < width:
+        ridge_width = rng.randint(180, 360)
+        ridge_height = rng.randint(180, 420)
+        ridge_height += int(math.sin(x * 0.02) * 40)
+        ridge_left = max(0, min(width - ridge_width, x + rng.randint(-60, 90)))
+        ridge_top = max(0, baseline - ridge_height + rng.randint(-40, 40))
+        ridge_rect = pygame.Rect(ridge_left, ridge_top, ridge_width, height - ridge_top)
+        ridges.append(Barrier(ridge_rect, (20, 30, 48), "volcanic ridge"))
+        x += ridge_width - rng.randint(-40, 120)
+    return ridges
+
+
+def _build_cave_systems(width: int, height: int, rng: random.Random) -> List[Barrier]:
+    caves: List[Barrier] = []
+    band_top = int(height * 0.55)
+    band_bottom = height - 40
+    attempts = 5
+    for _ in range(attempts):
+        span = rng.randint(220, 360)
+        center = rng.randint(int(width * 0.15), int(width * 0.85))
+        roof_height = rng.randint(90, 140)
+        throat = rng.randint(60, 100)
+        roof_top = rng.randint(band_top, band_bottom - roof_height - 40)
+        roof_rect = pygame.Rect(center - span // 2, roof_top, span, roof_height)
+        caves.append(Barrier(roof_rect, (22, 28, 54), "cave ceiling"))
+
+        left_pillar_width = rng.randint(40, 80)
+        right_pillar_width = rng.randint(40, 80)
+        pillar_height = rng.randint(roof_height - 30, roof_height + 80)
+        left_pillar = pygame.Rect(roof_rect.left - left_pillar_width, roof_top + throat, left_pillar_width, pillar_height)
+        right_pillar = pygame.Rect(roof_rect.right, roof_top + throat, right_pillar_width, pillar_height)
+        caves.append(Barrier(left_pillar, (16, 22, 46), "cave buttress"))
+        caves.append(Barrier(right_pillar, (16, 22, 46), "cave buttress"))
+    return caves
+
+
+def _build_bubble_columns(width: int, height: int, rng: random.Random) -> List[BubbleColumn]:
+    columns: List[BubbleColumn] = []
+    count = rng.randint(5, 8)
+    for _ in range(count):
+        base_x = rng.randint(int(width * 0.08), int(width * 0.92))
+        base_y = rng.randint(int(height * 0.55), height - 30)
+        columns.append(
+            BubbleColumn(
+                base=(base_x, base_y),
+                width=rng.randint(24, 48),
+                height=rng.randint(320, 520),
+                spawn_interval=rng.uniform(0.35, 0.85),
+                rise_speed=rng.uniform(24.0, 40.0),
+                max_radius=rng.randint(3, 6),
+                drift=rng.uniform(4.0, 12.0),
+            )
+        )
+    return columns
 
 
 def _build_rad_vents(layers: Sequence[DepthLayer], width: int, rng: random.Random) -> List[RadVentField]:
@@ -312,5 +445,6 @@ __all__ = [
     "DepthLayer",
     "OceanBlueprint",
     "RadVentField",
+    "BubbleColumn",
     "build_ocean_blueprint",
 ]

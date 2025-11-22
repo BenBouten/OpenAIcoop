@@ -227,10 +227,7 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     # 4. Positie & rect bijwerken
     # --------------------------------------------------
     if getattr(lifeform, "locomotion_strategy", "") == "benthic_crawler":
-        seafloor = state.world.height - lifeform.height - 2
-        if seafloor >= 0:
-            anchor = min(0.9, lifeform.grip_strength * 0.35)
-            resolved_y = resolved_y * (1.0 - anchor) + seafloor * anchor
+        resolved_x, resolved_y = _anchor_benthic_crawler(lifeform, state, resolved_x, resolved_y)
     lifeform.x = resolved_x
     lifeform.y = resolved_y
     lifeform.rect.update(
@@ -278,3 +275,68 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
 
     # FASE 7: korte-afstand interacties
     combat.resolve_close_interactions(lifeform)
+
+
+def _anchor_benthic_crawler(
+    lifeform: "Lifeform", state: "SimulationState", resolved_x: float, resolved_y: float
+) -> tuple[float, float]:
+    """Let benthic crawlers stick to nearby rock faces and the seafloor."""
+
+    world = state.world
+    anchor_range = max(18, int(lifeform.height * 0.8))
+    candidate_rect = lifeform.rect.copy()
+    candidate_rect.update(int(resolved_x), int(resolved_y), lifeform.width, lifeform.height)
+
+    best_gap = anchor_range + 1
+    best_axis: str | None = None
+    best_target = 0.0
+
+    seafloor = world.height - lifeform.height - 2
+    floor_gap = abs(seafloor - resolved_y)
+    if floor_gap < best_gap:
+        best_gap = floor_gap
+        best_axis = "floor"
+        best_target = float(seafloor)
+
+    for barrier in world.barriers:
+        vertical_overlap = not (
+            candidate_rect.bottom < barrier.rect.top - anchor_range
+            or candidate_rect.top > barrier.rect.bottom + anchor_range
+        )
+        horizontal_overlap = not (
+            candidate_rect.right < barrier.rect.left - anchor_range
+            or candidate_rect.left > barrier.rect.right + anchor_range
+        )
+
+        if vertical_overlap:
+            if candidate_rect.left >= barrier.rect.right:
+                gap = candidate_rect.left - barrier.rect.right
+                if gap < best_gap:
+                    best_gap = gap
+                    best_axis = "left"
+                    best_target = float(barrier.rect.right + 1)
+            if candidate_rect.right <= barrier.rect.left:
+                gap = barrier.rect.left - candidate_rect.right
+                if gap < best_gap:
+                    best_gap = gap
+                    best_axis = "right"
+                    best_target = float(barrier.rect.left - lifeform.width - 1)
+
+        if horizontal_overlap and candidate_rect.top >= barrier.rect.bottom:
+            gap = candidate_rect.top - barrier.rect.bottom
+            if gap < best_gap:
+                best_gap = gap
+                best_axis = "ceiling"
+                best_target = float(barrier.rect.bottom + 1)
+
+    anchor = min(0.92, lifeform.grip_strength * 0.35)
+    if best_axis == "floor":
+        resolved_y = resolved_y * (1.0 - anchor) + best_target * anchor
+    elif best_axis == "left":
+        resolved_x = resolved_x * (1.0 - anchor) + best_target * anchor
+    elif best_axis == "right":
+        resolved_x = resolved_x * (1.0 - anchor) + best_target * anchor
+    elif best_axis == "ceiling":
+        resolved_y = resolved_y * (1.0 - anchor * 0.8) + best_target * anchor * 0.8
+
+    return resolved_x, resolved_y
