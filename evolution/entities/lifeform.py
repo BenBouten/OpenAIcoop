@@ -594,13 +594,21 @@ class Lifeform:
         hearing_sq = max(vision_sq, hearing_range * hearing_range)
         close_range = self.reach + max(self.width, self.height) * 0.5
         close_range_sq = max(9.0, close_range * close_range)
-        forward = Vector2(self.x_direction, self.y_direction)
+        forward = Vector2(self.velocity)
+        if forward.length_squared() < 1e-4:
+            forward = Vector2(self.x_direction, self.y_direction)
         if forward.length_squared() == 0:
             forward = Vector2(1, 0)
         else:
             forward = forward.normalize()
         threshold = max(0.05, min(0.95, self.fov_threshold))
-        threshold_sq = threshold * threshold
+        if getattr(self, "_energy_starved", False) or self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
+            threshold = max(0.05, threshold * 0.8)
+        focused_threshold_sq = threshold * threshold
+        peripheral_threshold = max(0.05, threshold * 0.65)
+        peripheral_threshold_sq = peripheral_threshold * peripheral_threshold
+        peripheral_range = max(close_range * 1.5, vision_range * 0.7)
+        peripheral_sq = peripheral_range * peripheral_range
 
         enemy_candidate = None
         prey_candidate = None
@@ -640,7 +648,13 @@ class Lifeform:
                     fov_ok = True
                 else:
                     cos_angle = dot / max(1e-6, distance_sq**0.5)
-                    if dot > 0 and dot * dot >= threshold_sq * distance_sq:
+                    if dot > 0 and dot * dot >= focused_threshold_sq * distance_sq:
+                        fov_ok = True
+                    elif (
+                        dot > 0
+                        and distance_sq <= peripheral_sq
+                        and dot * dot >= peripheral_threshold_sq * distance_sq
+                    ):
                         fov_ok = True
                     elif self.uses_signal_cones and cos_angle >= self.signal_cone_threshold:
                         fov_ok = True
@@ -697,7 +711,12 @@ class Lifeform:
                     dot = forward.x * dx + forward.y * dy
                     cos_angle = dot / max(1e-6, distance_sq**0.5)
                     within_cone = self.uses_signal_cones and cos_angle >= self.signal_cone_threshold
-                    if not (dot > 0 and dot * dot >= threshold_sq * distance_sq) and not within_cone:
+                    within_periphery = (
+                        dot > 0
+                        and distance_sq <= peripheral_sq
+                        and dot * dot >= peripheral_threshold_sq * distance_sq
+                    )
+                    if not (dot > 0 and dot * dot >= focused_threshold_sq * distance_sq) and not within_cone and not within_periphery:
                         continue
             if distance_sq < plant_distance:
                 plant_candidate = plant
@@ -719,7 +738,12 @@ class Lifeform:
                     dot = forward.x * dx + forward.y * dy
                     cos_angle = dot / max(1e-6, distance_sq**0.5)
                     within_cone = self.uses_signal_cones and cos_angle >= self.signal_cone_threshold
-                    if not (dot > 0 and dot * dot >= threshold_sq * distance_sq) and not within_cone:
+                    within_periphery = (
+                        dot > 0
+                        and distance_sq <= peripheral_sq
+                        and dot * dot >= peripheral_threshold_sq * distance_sq
+                    )
+                    if not (dot > 0 and dot * dot >= focused_threshold_sq * distance_sq) and not within_cone and not within_periphery:
                         continue
             if distance_sq < carcass_distance:
                 carcass_candidate = carcass
