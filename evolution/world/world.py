@@ -12,7 +12,7 @@ from ..config import settings
 
 
 from .ocean_physics import OceanPhysics
-from .ocean_world import DepthLayer, OceanBlueprint, RadVentField, build_ocean_blueprint
+from .ocean_world import BubbleColumn, DepthLayer, OceanBlueprint, RadVentField, build_ocean_blueprint
 from .types import Barrier, BiomeRegion, WaterBody, WeatherPattern
 
 
@@ -32,6 +32,7 @@ class World:
         self.biomes: List[BiomeRegion] = []
         self.layers: List[DepthLayer] = []
         self.rad_vents: List[RadVentField] = []
+        self.bubble_columns: List[BubbleColumn] = []
         self.vegetation_masks: List[pygame.Rect] = []
         self.environment_modifiers = environment_modifiers
         self.world_type = "Alien Ocean"
@@ -39,6 +40,8 @@ class World:
         self._background_surface: Optional[pygame.Surface] = None
         self._label_font: Optional[pygame.font.Font] = None
         self._time_seconds: float = 0.0
+        self._last_update_ms: Optional[int] = None
+        self._bubble_rng = random.Random(4242)
         self._generate()
 
     def set_environment_modifiers(self, modifiers: Dict[str, float]) -> None:
@@ -60,8 +63,10 @@ class World:
         self.biomes = [layer.biome for layer in self.layers]
         self.vegetation_masks = list(blueprint.vegetation_masks)
         self.rad_vents = list(blueprint.vents)
+        self.bubble_columns = list(blueprint.bubble_columns)
         self.ocean = OceanPhysics(self.width, self.height)
         self._background_surface = self._render_background()
+        self._last_update_ms = None
 
     def regenerate(self) -> None:
         self._generate()
@@ -160,9 +165,15 @@ class World:
 
     def update(self, now_ms: int) -> None:
         self._time_seconds = now_ms / 1000.0
+        delta_seconds = 0.0
+        if self._last_update_ms is not None:
+            delta_seconds = max(0.0, (now_ms - self._last_update_ms) / 1000.0)
+        self._last_update_ms = now_ms
         self.ocean.update(now_ms)
         for vent in self.rad_vents:
             vent.update(self._time_seconds)
+        for column in self.bubble_columns:
+            column.update(delta_seconds, self._bubble_rng)
         for biome in self.biomes:
             biome.update_weather(now_ms)
 
@@ -178,6 +189,9 @@ class World:
 
         for vent in self.rad_vents:
             self._draw_rad_vent(surface, vent)
+
+        for column in self.bubble_columns:
+            column.draw(surface)
 
         for water in self.water_bodies:
             for segment in water.segments:
