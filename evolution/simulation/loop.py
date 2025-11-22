@@ -1180,7 +1180,7 @@ def run() -> None:
                         continue
 
                     # 6) Rendering
-                    draw_lifeform(world_surface, lifeform, settings)
+                    draw_lifeform(world_surface, lifeform, settings, world.height)
                     if show_vision:
                         draw_lifeform_vision(world_surface, lifeform, settings)
 
