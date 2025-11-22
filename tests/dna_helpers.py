@@ -46,6 +46,13 @@ def sample_genes() -> Dict[str, ModuleGene]:
             parent="head",
             slot="cranial_sensor",
         ),
+        "fin_segment": ModuleGene(
+            "fin_segment",
+            "limb",
+            {},
+            parent="fin_left",
+            slot="proximal_joint",
+        ),
     }
 
 
@@ -54,8 +61,7 @@ def build_genome(**overrides: object) -> Genome:
 
     constraints = overrides.get(
         "constraints",
-        GenomeConstraints(max_mass=200.0, nerve_capacity=20.0),
+        GenomeConstraints(max_mass=200.0, nerve_capacity=24.0),
     )
     genes = overrides.get("genes", sample_genes())
     return Genome(genes=genes, constraints=constraints)
-

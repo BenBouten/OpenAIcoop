@@ -9,20 +9,19 @@ import pygame
 from pygame.math import Vector2
 
 from ..config import settings
-from ..rendering.ocean_renderer import OceanRenderer  # ⬅️ NIEUW
 
 from .ocean_physics import OceanPhysics
-from .ocean_world import BubbleColumn, DepthLayer, OceanBlueprint, RadVentField, build_ocean_blueprint
+from .ocean_world import DepthLayer, OceanBlueprint, RadVentField, build_ocean_blueprint
 from .types import Barrier, BiomeRegion, WaterBody, WeatherPattern
 
 
 class World:
     def __init__(
-        self,
-        width: int,
-        height: int,
-        world_type: Optional[str] = None,
-        environment_modifiers: Optional[Dict[str, float]] = None,
+            self,
+            width: int,
+            height: int,
+            world_type: Optional[str] = None,
+            environment_modifiers: Optional[Dict[str, float]] = None,
     ):
         self.width = width
         self.height = height
@@ -32,7 +31,6 @@ class World:
         self.biomes: List[BiomeRegion] = []
         self.layers: List[DepthLayer] = []
         self.rad_vents: List[RadVentField] = []
-        self.bubble_columns: List[BubbleColumn] = []
         self.vegetation_masks: List[pygame.Rect] = []
         self.environment_modifiers = environment_modifiers
         self.world_type = "Alien Ocean"
@@ -40,12 +38,6 @@ class World:
         self._background_surface: Optional[pygame.Surface] = None
         self._label_font: Optional[pygame.font.Font] = None
         self._time_seconds: float = 0.0
-
-        # 🌊 Nieuwe renderer voor de volledige oceaanachtergrond
-        self._renderer = OceanRenderer(self.width, self.height)
-
-        self._last_update_ms: Optional[int] = None
-        self._bubble_rng = random.Random(4242)
         self._generate()
 
     def set_environment_modifiers(self, modifiers: Dict[str, float]) -> None:
@@ -67,10 +59,8 @@ class World:
         self.biomes = [layer.biome for layer in self.layers]
         self.vegetation_masks = list(blueprint.vegetation_masks)
         self.rad_vents = list(blueprint.vents)
-        self.bubble_columns = list(blueprint.bubble_columns)
         self.ocean = OceanPhysics(self.width, self.height)
         self._background_surface = self._render_background()
-        self._last_update_ms = None
 
     def regenerate(self) -> None:
         self._generate()
@@ -87,7 +77,8 @@ class World:
         return background
 
     @staticmethod
-    def _draw_gradient(surface: pygame.Surface, top_color: Tuple[int, int, int], bottom_color: Tuple[int, int, int]) -> None:
+    def _draw_gradient(surface: pygame.Surface, top_color: Tuple[int, int, int],
+                       bottom_color: Tuple[int, int, int]) -> None:
         height = surface.get_height()
         width = surface.get_width()
         if height <= 0 or width <= 0:
@@ -169,51 +160,31 @@ class World:
 
     def update(self, now_ms: int) -> None:
         self._time_seconds = now_ms / 1000.0
-        delta_seconds = 0.0
-        if self._last_update_ms is not None:
-            delta_seconds = max(0.0, (now_ms - self._last_update_ms) / 1000.0)
-        self._last_update_ms = now_ms
         self.ocean.update(now_ms)
         for vent in self.rad_vents:
             vent.update(self._time_seconds)
-        for column in self.bubble_columns:
-            column.update(delta_seconds, self._bubble_rng)
         for biome in self.biomes:
             biome.update_weather(now_ms)
 
     def draw(self, surface: pygame.Surface) -> None:
-        """
-        Teken de volledige wereld op de meegegeven surface (world_surface).
-        De camera knipt later een deel uit deze surface.
-        """
-        # 1) Nieuwe oceaanachtergrond
-        self._renderer.draw_background(surface, self._time_seconds)
+        if self._background_surface is not None:
+            surface.blit(self._background_surface, (0, 0))
+        else:
+            surface.fill(self.background_color)
 
-        # 2) Biome labels (zoals voorheen)
+        self._draw_layer_overlays(surface)
+        self._draw_light_shafts(surface)
         self._draw_layer_labels(surface)
 
-        # 3) Rad vents met mooie glow
         for vent in self.rad_vents:
-            self._renderer.draw_rad_vent(
-                surface,
-                vent.center,
-                radius=max(20, vent.radius),
-                color=vent.color,
-                intensity=vent.intensity,
-            )
-
-        for column in self.bubble_columns:
-            column.draw(surface)
+            self._draw_rad_vent(surface, vent)
 
         for water in self.water_bodies:
             for segment in water.segments:
                 pygame.draw.rect(surface, water.color, segment)
 
-        # 5) Barriers
         for barrier in self.barriers:
             pygame.draw.rect(surface, barrier.color, barrier.rect)
-
-
 
     def draw_weather_overview(self, surface: pygame.Surface, font: pygame.font.Font) -> None:
         panel_width = 320
@@ -232,21 +203,12 @@ class World:
                 biome.rect.centery,
             )
             text = font.render(
-                f"{biome.name}: {effects['weather_name']} "
-                f"({effects['temperature']}°C, {effects['precipitation']})",
+                f"{biome.name}: {effects['weather_name']} ({effects['temperature']}°C, {effects['precipitation']})",
                 True,
                 settings.BLACK,
             )
-            surface.blit(
-                text,
-                (surface.get_width() // 2 - panel_width // 2 + 10, y_offset),
-            )
+            surface.blit(text, (surface.get_width() // 2 - panel_width // 2 + 10, y_offset))
             y_offset += 20
-
-
-    # ------------------------------------------------------------------ #
-    #  ALLES HIERONDER: gameplay / logic (ONGEWIJZIGD)
-    # ------------------------------------------------------------------ #
 
     def get_biome_at(self, x: float, y: float) -> Optional[BiomeRegion]:
         point = (int(x), int(y))
@@ -291,7 +253,7 @@ class World:
         return biome, effects
 
     def apply_fluid_dynamics(
-        self, lifeform, thrust: Vector2, dt: float, *, max_speed: float
+            self, lifeform, thrust: Vector2, dt: float, *, max_speed: float
     ) -> Tuple[Vector2, Optional[object]]:
         if self.ocean:
             return self.ocean.integrate_body(lifeform, thrust, dt, max_speed=max_speed)
@@ -325,10 +287,10 @@ class World:
         return False
 
     def resolve_entity_movement(
-        self,
-        entity_rect: pygame.Rect,
-        previous_pos: Tuple[float, float],
-        attempted_pos: Tuple[float, float],
+            self,
+            entity_rect: pygame.Rect,
+            previous_pos: Tuple[float, float],
+            attempted_pos: Tuple[float, float],
     ) -> Tuple[float, float, bool, bool, bool]:
         attempt_x, attempt_y = attempted_pos
         max_x = self.width - entity_rect.width
@@ -349,14 +311,14 @@ class World:
         return clamped_x, clamped_y, hit_boundary_x, hit_boundary_y, collided
 
     def random_position(
-        self,
-        width: int,
-        height: int,
-        preferred_biome: Optional[BiomeRegion] = None,
-        avoid_water: bool = True,
-        avoid_positions: Optional[List[Tuple[float, float]]] = None,
-        min_distance: float = 0.0,
-        biome_padding: int = 0,
+            self,
+            width: int,
+            height: int,
+            preferred_biome: Optional[BiomeRegion] = None,
+            avoid_water: bool = True,
+            avoid_positions: Optional[List[Tuple[float, float]]] = None,
+            min_distance: float = 0.0,
+            biome_padding: int = 0,
     ) -> Tuple[float, float, Optional[BiomeRegion]]:
         attempts = 0
         x = random.randint(0, max(1, self.width - width))

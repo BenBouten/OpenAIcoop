@@ -1,5 +1,8 @@
 """Test that buoyancy offsets produce reasonable net buoyancy values."""
 
+import pytest
+
+from evolution.body.body_graph import BodyGraph
 from evolution.body.modules import (
     TrunkCore,
     CephalonHead,
@@ -7,6 +10,7 @@ from evolution.body.modules import (
     TailThruster,
     SensorPod,
 )
+from evolution.physics.physics_body import build_physics_body
 
 
 def test_module_buoyancy_bias_values():
@@ -81,7 +85,39 @@ def test_typical_lifeform_buoyancy():
     assert -3.0 <= max_total <= 3.0, f"Maximal total {max_total} should be more neutral"
 
 
+def test_buoyancy_offsets_propagate_into_physics_body():
+    """Ensure BodyGraph aggregation propagates buoyancy offsets correctly."""
+
+    core = TrunkCore(key="core_node")
+    head = CephalonHead(key="head_node")
+    fin_left = HydroFin(key="fin_left")
+    fin_right = HydroFin(key="fin_right")
+    thruster = TailThruster(key="thruster_node")
+    cranial_sensor = SensorPod(key="sensor_head")
+    tail_sensor = SensorPod(key="sensor_tail")
+
+    graph = BodyGraph("core_node", core)
+    graph.add_module("head_node", head, "core_node", "head_socket")
+    graph.add_module("fin_left", fin_left, "core_node", "lateral_mount_left")
+    graph.add_module("fin_right", fin_right, "core_node", "lateral_mount_right")
+    graph.add_module("thruster_node", thruster, "core_node", "ventral_core")
+    graph.add_module("sensor_head", cranial_sensor, "head_node", "cranial_sensor")
+    graph.add_module("sensor_tail", tail_sensor, "thruster_node", "tail_sensors")
+
+    stats = graph.aggregate_physics_stats()
+    physics_body = build_physics_body(graph)
+    positive, negative = physics_body.buoyancy_offsets
+
+    assert positive == pytest.approx(stats.buoyancy_positive, rel=1e-6)
+    assert negative == pytest.approx(stats.buoyancy_negative, rel=1e-6)
+
+    # sanity bounds for current modules
+    assert 1.0 < positive < 2.5
+    assert 0.1 < negative < 1.0
+
+
 if __name__ == "__main__":
     test_module_buoyancy_bias_values()
     test_typical_lifeform_buoyancy()
+    test_buoyancy_offsets_propagate_into_physics_body()
     print("All buoyancy tests passed!")

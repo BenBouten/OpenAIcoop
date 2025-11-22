@@ -4,14 +4,15 @@ from __future__ import annotations
 
 import math
 import random
-from typing import Dict, List, Optional, Tuple, TYPE_CHECKING
+import logging
+from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
 from ..body.body_graph import BodyGraph
 from ..body.modules import catalogue_jellyfish_modules
 from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import generate_development_plan
-from ..dna.factory import serialize_body_graph
+from ..dna.factory import build_body_graph, serialize_body_graph
 from ..entities.lifeform import Lifeform
 from ..morphology.genotype import MorphologyGenotype
 from ..world.vegetation import MossCluster, create_initial_clusters
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
 
 Vegetation = MossCluster
 
+logger = logging.getLogger(__name__)
+
 
 # ---------------------------------------------------------------------------
 # High level orchestration
@@ -40,6 +43,8 @@ def reset_simulation(
     player_controller: "PlayerController",
     notification_manager: "NotificationManager",
     effects_manager: "EffectManager",
+    *,
+    on_spawn: Optional[Callable[[object], None]] = None,
 ) -> None:
     """Reset all shared simulation state and regenerate the world."""
 
@@ -65,6 +70,7 @@ def reset_simulation(
     state.player = player_controller
     state.notifications = notification_manager
     state.effects = effects_manager
+    state.pending_template_callback = on_spawn
 
     notification_manager.clear()
     event_manager.reset()
@@ -175,6 +181,15 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "development": development,
             "genome": genome_blueprint,
         }
+        graph, geometry = build_body_graph(genome_blueprint, include_geometry=True)
+        dna_profile["geometry"] = geometry
+        dna_profile["collision_radius"] = geometry.get("collision_radius", 8.0)
+        geometry = dna_profile.get("geometry", {})
+        if settings.USE_BODYGRAPH_SIZE and geometry:
+            width_m = geometry.get("width", settings.MIN_WIDTH / settings.BODY_PIXEL_SCALE)
+            height_m = geometry.get("height", settings.MIN_HEIGHT / settings.BODY_PIXEL_SCALE)
+            dna_profile["width"] = int(round(width_m * settings.BODY_PIXEL_SCALE))
+            dna_profile["height"] = int(round(height_m * settings.BODY_PIXEL_SCALE))
         state.dna_profiles.append(dna_profile)
 
         if world.biomes:
@@ -213,13 +228,17 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
         ]
 
         spawn_attempts = 0
+        min_spacing = 160
+        radius = float(dna_profile.get("collision_radius") or 80.0)
+        if settings.USE_BODYGRAPH_SIZE:
+            min_spacing = max(min_spacing, radius * 2 + 80)
         while True:
             x, y, biome = world.random_position(
                 dna_profile["width"],
                 dna_profile["height"],
                 preferred_biome=preferred_biome,
                 avoid_positions=other_positions,
-                min_distance=320,
+                min_distance=min_spacing,
                 biome_padding=40,
             )
             center = (
@@ -238,6 +257,22 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
                 same_species_positions.append(center)
                 break
             spawn_attempts += 1
+            if settings.USE_BODYGRAPH_SIZE and spawn_attempts % 40 == 0:
+                logger.debug(
+                    "Spawn retry %s for DNA %s (radius=%.1f, spacing=%.1f)",
+                    spawn_attempts,
+                    dna_profile["dna_id"],
+                    radius,
+                    min_spacing,
+                )
+        if settings.USE_BODYGRAPH_SIZE and spawn_attempts:
+            logger.info(
+                "Spawned DNA %s after %s retries (radius=%.1f, size=%s)",
+                dna_profile["dna_id"],
+                spawn_attempts,
+                radius,
+                (dna_profile["width"], dna_profile["height"]),
+            )
 
         lifeform = Lifeform(state, x, y, dna_profile, generation=1)
         lifeform.current_biome = biome
@@ -273,6 +308,17 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
         dna_profile = random.choice(state.dna_profiles)
         _spawn_from_profile(dna_profile)
 
+    if settings.USE_BODYGRAPH_SIZE:
+        largest = max(state.dna_profiles, key=lambda p: p.get("collision_radius", 0))
+        largest_radius = float(largest.get("collision_radius") or 0.0)
+        logger.info(
+            "Largest spawn collision radius %.1f (dna %s, size=%sx%s)",
+            largest_radius,
+            largest.get("dna_id"),
+            largest.get("width"),
+            largest.get("height"),
+        )
+
 
 def seed_vegetation(state: SimulationState, world: World) -> None:
     """Populate the world with the initial vegetation clusters."""
@@ -299,8 +345,14 @@ def determine_home_biome(
         return None
 
     size = (dna_profile["width"] + dna_profile["height"]) / 2
-    min_size = (settings.MIN_WIDTH + settings.MIN_HEIGHT) / 2
-    max_size = (settings.MAX_WIDTH + settings.MAX_HEIGHT) / 2
+    if settings.USE_BODYGRAPH_SIZE:
+        geometry = dna_profile.get("geometry", {})
+        size = (geometry.get("width", size) + geometry.get("height", size)) / 2
+        min_size = min(settings.MIN_WIDTH, geometry.get("width", settings.MIN_WIDTH))
+        max_size = max(settings.MAX_WIDTH, geometry.get("width", settings.MAX_WIDTH))
+    else:
+        min_size = (settings.MIN_WIDTH + settings.MIN_HEIGHT) / 2
+        max_size = (settings.MAX_WIDTH + settings.MAX_HEIGHT) / 2
 
     size_norm = _normalize(size, min_size, max_size)
     heat_tolerance = _normalize(dna_profile["energy"], 60, 120)

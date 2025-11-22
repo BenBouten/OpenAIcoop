@@ -31,6 +31,7 @@ class BodyModule:
     stats: ModuleStats
     material: str = "biomass"
     attachment_points: Dict[str, AttachmentPoint] = field(default_factory=dict)
+    natural_orientation: float = 0.0
 
     module_type: str = "generic"
 
@@ -253,6 +254,10 @@ def _clone_attachment_points(points: Iterable[AttachmentPoint]) -> Iterable[Atta
             description=point.description,
             max_child_mass=point.max_child_mass,
             allowed_materials=point.allowed_materials,
+            offset=point.offset,
+            angle=point.angle,
+            clearance=point.clearance,
+            relative=point.relative,
         )
         for point in points
     ]
@@ -288,6 +293,10 @@ class TrunkCore(CoreModule):
             description="Connection for the head module",
             max_child_mass=18.0,
             allowed_materials=("bio-alloy", "chitin"),
+            offset=(0.0, 0.5),
+            angle=0.0,
+            clearance=1.0,
+            relative=True,
         ),
         AttachmentPoint(
             name="dorsal_mount",
@@ -295,6 +304,10 @@ class TrunkCore(CoreModule):
             allowed_modules=(SensoryModule,),
             max_child_mass=5.0,
             allowed_materials=("ceramic", "bio-alloy"),
+            offset=(0.0, 0.5),
+            angle=-90.0,
+            clearance=0.6,
+            relative=True,
         ),
         AttachmentPoint(
             name="ventral_core",
@@ -302,6 +315,10 @@ class TrunkCore(CoreModule):
             allowed_modules=(PropulsionModule, LimbModule),
             max_child_mass=25.0,
             allowed_materials=("flex-polymer", "titanium"),
+            offset=(-0.4, -0.5),
+            angle=180.0,
+            clearance=1.4,
+            relative=True,
         ),
         AttachmentPoint(
             name="lateral_mount_left",
@@ -309,6 +326,10 @@ class TrunkCore(CoreModule):
             allowed_modules=(LimbModule,),
             max_child_mass=12.0,
             allowed_materials=("flex-polymer",),
+            offset=(-0.35, 0.0),
+            angle=180.0,
+            clearance=0.8,
+            relative=True,
         ),
         AttachmentPoint(
             name="lateral_mount_right",
@@ -316,6 +337,10 @@ class TrunkCore(CoreModule):
             allowed_modules=(LimbModule,),
             max_child_mass=12.0,
             allowed_materials=("flex-polymer",),
+            offset=(-0.35, 0.0),
+            angle=0.0,
+            clearance=0.8,
+            relative=True,
         ),
     )
 
@@ -352,6 +377,10 @@ class CephalonHead(HeadModule):
             allowed_modules=(SensoryModule,),
             max_child_mass=4.0,
             allowed_materials=("ceramic",),
+            offset=(0.8, 0.0),
+            angle=0.0,
+            clearance=0.8,
+            relative=True,
         ),
     )
 
@@ -381,6 +410,25 @@ class HydroFin(LimbModule):
     thrust: float = 45.0
     grip_strength: float = 5.0
     lift_coefficient: float = 36.0
+
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="proximal_joint",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-80.0, 80.0), torque_limit=90.0),
+            allowed_modules=(LimbModule,),
+            description="Allows chaining fin segments",
+            max_child_mass=6.0,
+            allowed_materials=("flex-polymer",),
+            offset=(1.0, 0.0),
+            angle=0.0,
+            clearance=1.2,
+            relative=True,
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
 
 
 @dataclass
@@ -503,16 +551,13 @@ def build_pulse_siphon(key: str = "pulse_siphon") -> PulseSiphon:
 def catalogue_default_modules() -> Mapping[str, BodyModule]:
     """Return a mapping of simple module presets for prototypes/tests."""
 
-    sensor = build_default_sensor("sensor_light", ("light", "colour"))
-    sonar = build_default_sensor("sensor_sonar", ("sonar",))
     modules = {
         "core": build_default_core(),
         "head": build_default_head(),
         "fin_left": build_default_fin("fin_left"),
         "fin_right": build_default_fin("fin_right"),
         "thruster": build_default_thruster("thruster"),
-        sensor.key: sensor,
-        sonar.key: sonar,
+        "sensor": build_default_sensor("sensor", ("light", "colour")),
     }
     return modules
 

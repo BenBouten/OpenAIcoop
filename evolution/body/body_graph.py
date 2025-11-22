@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from math import prod
-from typing import Dict, Iterator, List, Optional
+from math import prod, cos, sin, radians
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from .modules import BodyModule
 
@@ -31,6 +31,8 @@ class BodyGraph:
         self.root_id = root_id
         self.nodes: Dict[str, BodyNode] = {root_id: BodyNode(module=root_module)}
         self._physics_cache: Optional["BodyGraph.PhysicsAggregation"] = None
+        self._transforms: Dict[str, Tuple[float, float, float]] = {}
+        self._recompute_transform(root_id)
 
     # ------------------------------------------------------------------
     # Aggregation helpers
@@ -175,6 +177,52 @@ class BodyGraph:
         parent_node.add_child(node_id, attachment_point)
         self.nodes[node_id] = BodyNode(module=module, parent=parent_id, attachment_point=attachment_point)
         self._physics_cache = None
+        self._recompute_transform(node_id)
+
+    @staticmethod
+    def _module_radius(module: BodyModule) -> float:
+        width, height, _ = module.size
+        return max(width, height) / 2.0
+
+    def _compute_single_transform(self, node_id: str) -> Tuple[float, float, float]:
+        node = self.nodes[node_id]
+        if node.parent is None:
+            angle = getattr(node.module, "natural_orientation", 0.0)
+            transform = (0.0, 0.0, angle)
+        else:
+            parent_id = node.parent
+            if parent_id not in self._transforms:
+                self._compute_single_transform(parent_id)
+            px, py, pa = self._transforms[parent_id]
+            parent_module = self.nodes[parent_id].module
+            point = parent_module.get_attachment_point(node.attachment_point or "")
+            ox, oy = getattr(point, "offset", (0.0, 0.0))
+            if getattr(point, "relative", False):
+                width, height, _ = parent_module.size
+                ox *= width
+                oy *= height
+            parent_angle = radians(pa)
+            attach_x = px + ox * cos(parent_angle) - oy * sin(parent_angle)
+            attach_y = py + ox * sin(parent_angle) + oy * cos(parent_angle)
+            direction = pa + getattr(point, "angle", 0.0)
+            direction_rad = radians(direction)
+            clearance = getattr(point, "clearance", 0.0)
+            radius = self._module_radius(node.module)
+            offset_distance = clearance + radius
+            attach_x += offset_distance * cos(direction_rad)
+            attach_y += offset_distance * sin(direction_rad)
+            angle = direction + getattr(node.module, "natural_orientation", 0.0)
+            transform = (attach_x, attach_y, angle)
+        self._transforms[node_id] = transform
+        return transform
+
+    def _recompute_transform(self, node_id: str) -> None:
+        self._compute_single_transform(node_id)
+        for child_id in self.nodes[node_id].children:
+            self._recompute_transform(child_id)
+
+    def node_transform(self, node_id: str) -> Tuple[float, float, float]:
+        return self._transforms.get(node_id, (0.0, 0.0, 0.0))
 
     def remove_module(self, node_id: str) -> None:
         """Remove ``node_id`` and detach its entire sub-tree."""
@@ -190,6 +238,7 @@ class BodyGraph:
         for child_id in list(node.children.keys()):
             self.remove_module(child_id)
         self._physics_cache = None
+        self._transforms.pop(node_id, None)
 
     def get_node(self, node_id: str) -> BodyNode:
         try:
@@ -354,3 +403,49 @@ class BodyGraph:
 
     def __len__(self) -> int:
         return len(self.nodes)
+
+    def compute_bounds(self) -> Tuple[float, float, float]:
+        """Calculate total width, height, and depth of the assembled body (meters)."""
+        min_x, max_x = 0.0, 0.0
+        min_y, max_y = 0.0, 0.0
+        min_z, max_z = 0.0, 0.0
+
+        for node_id, node in self.nodes.items():
+            tx, ty, ta = self.node_transform(node_id)
+            module = node.module
+            width, height, length = module.size
+            # Simple axis-aligned bounds: treat module as box centered at transform
+            half_w = width / 2.0
+            half_h = height / 2.0
+            half_l = length / 2.0
+
+            min_x = min(min_x, tx - half_w)
+            max_x = max(max_x, tx + half_w)
+            min_y = min(min_y, ty - half_h)
+            max_y = max(max_y, ty + half_h)
+            min_z = min(min_z, -half_l)
+            max_z = max(max_z, half_l)
+
+        width_total = max(0.1, max_x - min_x)
+        height_total = max(0.1, max_y - min_y)
+        depth_total = max(0.1, max_z - min_z)
+        return width_total, height_total, depth_total
+
+    def geometry_summary(self) -> Dict[str, float]:
+        """Return a cached geometry view for spawning/AI heuristics."""
+        if self._physics_cache is None:
+            _ = self.aggregate_physics_stats()
+        width, height, depth = self.compute_bounds()
+        frontal = width * height
+        lateral = height * depth
+        dorsal = width * depth
+        collision_radius = max(width, height, depth) / 2.0
+        return {
+            "width": width,
+            "height": height,
+            "depth": depth,
+            "frontal_area": frontal,
+            "lateral_area": lateral,
+            "dorsal_area": dorsal,
+            "collision_radius": collision_radius,
+        }

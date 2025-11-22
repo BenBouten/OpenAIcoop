@@ -15,6 +15,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Code analysis and improvement report
 - MIT License
 - .gitignore for Python projects
+- Module viewer upgrades: attachment-aware hull rendering, tapered fin outlines, headless screenshot mode, `--pose sketch`, debug overlay toggle, and limb attachment fixes
+- Simulation now reuses the modular renderer so viewer geometry matches in-game lifeforms
 
 ### Changed
 - Improved project structure documentation

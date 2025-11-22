@@ -100,12 +100,13 @@ evolution/
 
 ## 🔧 Configuration
 
-Edit `evolution/config/settings.py` for:
-- World size: `WORLD_WIDTH`, `WORLD_HEIGHT`
-- Population: `N_LIFEFORMS`, `MAX_LIFEFORMS`
-- Physics: FPS, energy rates, hunger rates
-- Evolution: Mutation rates, reproduction thresholds
+Runtime settings load in layers: defaults ← YAML config (`configs/*.yaml`) ← environment ← CLI.
 
+- Update `configs/default.yaml` or point to a custom file with `--config path/to/file`.
+- Env variables (`EVOLUTION_WORLD_WIDTH=6000`) override config values.
+- CLI flags like `--world-width 6400 --fps 45` override everything.
+- Invalid combinations (e.g., `n_lifeforms` > `max_lifeforms`, out-of-range FPS) raise early with helpful errors.
+ 
 ## 🎮 Controls
 
 | Key | Action |

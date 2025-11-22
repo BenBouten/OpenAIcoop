@@ -9,6 +9,7 @@ from typing import Dict, Iterable, List, Mapping, Optional, Tuple, TYPE_CHECKING
 from ..config import settings
 from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import mix_development_plans, mutate_profile_development
+from ..dna.factory import build_body_graph
 from ..dna.genes import Genome
 from ..dna.mutation import MutationError, mutate_genome
 from ..morphology.genotype import MorphologyGenotype, mutate_profile_morphology
@@ -48,6 +49,12 @@ def create_offspring_profile(
     is_new_profile = False
     source_profile_id: str = str(parent.dna_id)
 
+    graph = None
+    geometry = None
+    if settings.USE_BODYGRAPH_SIZE:
+        graph, geometry = _build_offspring_geometry(candidate)
+        _apply_geometry_dimensions(candidate, geometry)
+
     if (
         dna_change > settings.DNA_CHANGE_THRESHOLD
         or color_change > settings.COLOR_CHANGE_THRESHOLD
@@ -72,6 +79,10 @@ def create_offspring_profile(
             is_new_profile = True
     else:
         candidate["dna_id"] = parent.dna_id
+
+    if settings.USE_BODYGRAPH_SIZE and not geometry:
+        _, geometry = _build_offspring_geometry(candidate)
+        _apply_geometry_dimensions(candidate, geometry)
 
     metadata = OffspringMetadata(
         dna_change=dna_change,
@@ -192,13 +203,44 @@ def _apply_mutations(profile: Dict[str, object]) -> None:
     mutate_profile_development(profile)
 
 
+def _apply_geometry_dimensions(profile: Dict[str, object], geometry: Optional[Dict[str, float]]) -> None:
+    if not geometry:
+        return
+    width_m = geometry.get("width")
+    height_m = geometry.get("height")
+    if width_m is not None:
+        profile["width"] = max(1, int(round(width_m * settings.BODY_PIXEL_SCALE)))
+    if height_m is not None:
+        profile["height"] = max(1, int(round(height_m * settings.BODY_PIXEL_SCALE)))
+    profile["collision_radius"] = geometry.get(
+        "collision_radius",
+        profile.get("collision_radius", max(profile.get("width", 1), profile.get("height", 1)) / 2),
+    )
+    profile["geometry"] = geometry
+
+
+def _build_offspring_geometry(profile: Dict[str, object]) -> Tuple[Optional[object], Optional[Dict[str, float]]]:
+    try:
+        result = build_body_graph(profile.get("genome", {}), include_geometry=True)
+    except Exception:
+        return None, None
+    if isinstance(result, tuple):
+        graph, geometry = result
+    else:
+        graph, geometry = result, None
+    return graph, geometry
+
+
 def _clamp_profile(profile: Dict[str, object]) -> None:
-    profile["width"] = max(
-        settings.MIN_WIDTH, min(settings.MAX_WIDTH, int(profile["width"]))
-    )
-    profile["height"] = max(
-        settings.MIN_HEIGHT, min(settings.MAX_HEIGHT, int(profile["height"]))
-    )
+    if settings.USE_BODYGRAPH_SIZE and "geometry" in profile:
+        _apply_geometry_dimensions(profile, profile.get("geometry"))
+    else:
+        profile["width"] = max(
+            settings.MIN_WIDTH, min(settings.MAX_WIDTH, int(profile.get("width", settings.MIN_WIDTH)))
+        )
+        profile["height"] = max(
+            settings.MIN_HEIGHT, min(settings.MAX_HEIGHT, int(profile.get("height", settings.MIN_HEIGHT)))
+        )
 
     r, g, b = profile["color"]
     profile["color"] = (

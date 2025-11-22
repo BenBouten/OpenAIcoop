@@ -67,7 +67,8 @@ def mutate_add_module(genome: Genome, *, rng: Optional[random.Random] = None) ->
     if not slot_candidates:
         raise MutationError("Er zijn geen vrije bevestigingspunten")
 
-    parent_id, slot_name, attachment = rng.choice(slot_candidates)
+    slot_candidates.sort(key=lambda item: (item[0] != "core", item[1]))
+    parent_id, slot_name, attachment = slot_candidates[0]
     module_type = _select_module_for_attachment(attachment, rng=rng)
     if module_type is None:
         raise MutationError("Geen moduletype beschikbaar voor deze aansluiting")
@@ -265,4 +266,3 @@ def _validate_genome(genome: Genome) -> None:
         build_body_graph(genome)
     except ValueError as exc:  # pragma: no cover - re-raised for clarity
         raise MutationError(str(exc)) from exc
-

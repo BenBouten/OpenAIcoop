@@ -286,6 +286,13 @@ The module viewer allows you to:
 - See real-time statistics (mass, thrust, energy cost, etc.)
 - Test module rendering before integrating into the simulation
 - Export screenshots of body configurations
+- Latest updates:
+  - Convex-hull "skin" that keeps attachment points anchored to the core shape.
+  - Fin/tentacle outlines now use tapered shapes for better visual read.
+  - `--pose sketch` boots the viewer with the reference creature from the design brief.
+  - Press `J` to toggle debug overlays (joint markers, axes) when validating geometry.
+  - Screenshot mode works headless so CI or docs can capture renders automatically.
+  - The simulation now reuses this renderer so what you see in the viewer matches in-game creatures.
 
 See `tools/README.md` for detailed usage instructions.
 
@@ -355,6 +362,37 @@ class MyBiome(BiomeRegion):
 ```
 
 2. Integrate into world generation
+
+## Configuration Overrides
+
+Runtime options can now be defined in layered configuration files backed by environment variables and CLI flags.
+
+### Precedence Order
+
+Defaults ← **YAML config** ← Environment Variables ← CLI Flags
+
+### Config Files
+
+- Default file: `configs/default.yaml` (if present)
+- Custom file: `python main.py --config configs/performance.yaml`
+- Environment pointer: `EVOLUTION_CONFIG_FILE=/tmp/custom.yaml python main.py`
+
+Config keys match `SimulationSettings` fields (e.g., `world_width`, `debug_log_level`). Values are validated when loaded:
+- Numeric fields have sane ranges (`WORLD_WIDTH` 500–20k, `FPS` 1–360, etc.)
+- `N_LIFEFORMS` ≤ `MAX_LIFEFORMS`, `VISION_MIN` ≤ `VISION_MAX`, window sizes cannot exceed world sizes by more than 50%
+- `DEBUG_LOG_LEVEL` must be `DEBUG/INFO/WARNING/ERROR/CRITICAL`
+
+### Example
+
+```bash
+# Env variables override config
+env EVOLUTION_WORLD_WIDTH=5200 python main.py
+
+# CLI flags override everything
+python main.py --config configs/default.yaml --world-width 6400 --max-lifeforms 260 --fps 45
+```
+
+Supported keys mirror the fields in `evolution/config/settings.py` (e.g., `world_width`, `n_lifeforms`, `telemetry_enabled`).
 
 ## 📖 Documentation
 

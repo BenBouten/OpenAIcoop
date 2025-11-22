@@ -29,6 +29,7 @@ def test_build_body_graph_assembles_modules() -> None:
     }
     assert graph.nodes["head"].children == {"crown_sensor": "cranial_sensor"}
     assert graph.nodes["thruster"].children == {"tail_eye": "tail_sensors"}
+    assert graph.nodes["fin_left"].children == {"fin_segment": "proximal_joint"}
 
 
 def test_build_body_graph_validates_mass_limit() -> None:

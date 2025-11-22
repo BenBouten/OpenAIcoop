@@ -24,7 +24,7 @@ from .dna_helpers import build_genome
 
 
 def test_mutate_add_module_attaches_sensor_to_core() -> None:
-    genome = build_genome()
+    genome = build_genome(constraints=GenomeConstraints(max_mass=200.0, nerve_capacity=32.0))
 
     mutated = mutate_add_module(genome, rng=random.Random(0))
 
@@ -85,4 +85,3 @@ def test_mutate_adjust_material_respects_attachment_limits() -> None:
     assert material in ("bio-alloy", "chitin")
     assert material != build_body_graph(genome).get_node("head").module.material
     build_body_graph(mutated)  # Should not raise
-

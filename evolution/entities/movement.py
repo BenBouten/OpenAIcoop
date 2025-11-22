@@ -14,19 +14,173 @@ In latere fases kun je combat naar een aparte module verplaatsen.
 from __future__ import annotations
 
 import logging
+import math
+import random
 from typing import TYPE_CHECKING
 
+import pygame
 from pygame.math import Vector2
 
 from ..config import settings
 from ..physics.physics_body import PhysicsBody
+from ..systems import telemetry
+
 from . import ai, combat  # Gebruik aparte modules voor gedrag en interacties
 
 logger = logging.getLogger("evolution.movement")
 
-if TYPE_CHECKING:
-    from .lifeform import Lifeform
-    from evolution.simulation.state import SimulationState
+_MAX_THRUST_BEHAVIOUR_SPEED = 8.0
+_MAX_FREQUENCY_BEHAVIOUR_SPEED = 14.0
+
+
+def _ensure_search_vector(lifeform: "Lifeform") -> Vector2:
+    vector = getattr(lifeform, "_search_vector", None)
+    timer = getattr(lifeform, "_search_vector_timer", 0)
+    if not vector or timer <= 0:
+        angle = random.uniform(-math.pi, math.pi)
+        vector = Vector2(math.cos(angle), math.sin(angle)) or Vector2(1.0, 0.0)
+        vector = vector.normalize()
+        lifeform._search_vector = vector
+        lifeform._search_vector_timer = random.randint(45, 140)
+    else:
+        lifeform._search_vector_timer = timer - 1
+    return lifeform._search_vector
+
+
+def _apply_environment_bias(
+    lifeform: "Lifeform",
+    desired: Vector2,
+    state: "SimulationState",
+) -> Vector2:
+    world = getattr(state, "world", None)
+    if world is None:
+        return desired
+
+    vertical_adjust = 0.0
+    depth = float(lifeform.y)
+    world_height = float(getattr(world, "height", 0.0))
+    rel_buoyancy = float(getattr(lifeform, "relative_buoyancy", 0.0))
+
+    if rel_buoyancy > 0.08:
+        vertical_adjust += 0.35
+    elif rel_buoyancy < -0.08:
+        vertical_adjust -= 0.35
+
+    hunger = float(getattr(lifeform, "hunger", 0.0))
+    if hunger > settings.HUNGER_SEEK_THRESHOLD and not (
+        lifeform.closest_plant or lifeform.closest_prey
+    ):
+        vertical_adjust += 0.25
+    elif hunger < settings.HUNGER_RELAX_THRESHOLD:
+        vertical_adjust -= 0.15
+
+    margin = 150.0
+    if depth < margin:
+        vertical_adjust += 0.2
+    elif depth > world_height - lifeform.height - margin:
+        vertical_adjust -= 0.2
+
+    behavior = getattr(lifeform, "current_behavior_mode", "idle")
+    if behavior == "flee":
+        vertical_adjust -= 0.2
+    elif behavior == "hunt":
+        vertical_adjust += 0.2
+
+    if vertical_adjust:
+        adjusted = Vector2(desired.x, desired.y + vertical_adjust)
+        if adjusted.length_squared() > 0:
+            desired = adjusted.normalize()
+
+    return desired
+
+
+def _behavioral_thrust_ratio(lifeform: "Lifeform") -> float:
+    """Return how aggressively a lifeform wants to swim (0-1.2)."""
+    mode = getattr(lifeform, "current_behavior_mode", "idle")
+
+    if mode == "flee":
+        return 1.2
+    elif mode == "hunt":
+        return 1.0
+    elif mode == "search":
+        return 0.7
+    elif mode == "flock":
+        return 0.6
+    elif mode == "interact":
+        return 0.4
+
+    # Idle / Default
+    return 0.3
+
+
+def _behavioral_frequency_ratio(lifeform: "Lifeform") -> float:
+    mode = getattr(lifeform, "current_behavior_mode", "idle")
+    if mode == "flee":
+        return 1.0
+    elif mode == "hunt":
+        return 0.8
+    elif mode == "search":
+        return 0.6
+    elif mode == "flock":
+        return 0.5
+    elif mode == "interact":
+        return 0.3
+    return 0.2
+
+
+def _target_swim_speed(lifeform: "Lifeform", thrust_ratio: float) -> float:
+    max_swim_speed = max(10.0, float(getattr(lifeform, "max_swim_speed", 80.0)))
+    adrenaline_boost = 1.0 + getattr(lifeform, "adrenaline_factor", 0.0) * 0.4
+    desired = max_swim_speed * thrust_ratio * adrenaline_boost
+    return min(max_swim_speed * 1.2, desired)
+
+
+def _compute_thrust_effort(
+    lifeform: "Lifeform",
+    current_speed: float,
+    thrust_ratio: float,
+) -> float:
+    target_speed = _target_swim_speed(lifeform, thrust_ratio)
+    speed_error = target_speed - current_speed
+    response_band = max(4.0, float(getattr(lifeform, "max_swim_speed", 80.0)) * 0.35)
+    correction = speed_error / response_band
+    propulsion_eff = float(getattr(lifeform, "propulsion_efficiency", 1.0))
+    base_push = thrust_ratio * 0.2 * propulsion_eff
+    effort = correction * 0.7 + base_push
+    if speed_error < 0:
+        effort *= 0.65
+    else:
+        effort += thrust_ratio * 0.15 * propulsion_eff
+    return effort
+
+
+def _blend_desired_with_velocity(lifeform: "Lifeform", desired: Vector2) -> Vector2:
+    """Blend steering with current velocity to avoid abrupt turns."""
+    current_vel = lifeform.velocity
+    if desired.length_squared() == 0:
+        return desired
+    if current_vel.length_squared() < 0.25:
+        return desired
+
+    current_dir = current_vel.normalize()
+    fin_count = float(getattr(lifeform, "fin_count", 0.0))
+    control_authority = min(0.95, 0.2 + fin_count * 0.05)
+    if getattr(lifeform, "adrenaline_factor", 0.0) > 0.4:
+        control_authority = min(0.98, control_authority + 0.12)
+
+    blended = current_dir.lerp(desired, control_authority)
+    if blended.length_squared() == 0:
+        blended = desired
+    else:
+        blended = blended.normalize()
+
+    forward_mag = current_vel.dot(blended)
+    forward_component = blended * forward_mag
+    lateral_component = current_vel - forward_component
+    lateral_damping = min(0.85, 0.15 + control_authority * 0.5)
+    adjusted_velocity = forward_component + lateral_component * (1.0 - lateral_damping)
+    lifeform.velocity = adjusted_velocity
+    return blended
 
 
 def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -> None:
@@ -47,12 +201,44 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     ai.update_brain(lifeform, state, dt)
 
     previous_position = (lifeform.x, lifeform.y)
+    now_ms = pygame.time.get_ticks()
 
     desired = Vector2(lifeform.x_direction, lifeform.y_direction)
     if desired.length_squared() == 0:
         desired = Vector2(1.0, 0.0)
     else:
         desired = desired.normalize()
+
+    desired = _apply_environment_bias(lifeform, desired, state)
+
+    plant_viable = lifeform.closest_plant if lifeform.prefers_plants() else None
+    prey_viable = lifeform.closest_prey if lifeform.prefers_meat() else None
+    carrion_viable = (
+        getattr(lifeform, "closest_carcass", None)
+        if lifeform.prefers_meat()
+        else None
+    )
+
+    if lifeform.should_seek_food() and not (
+        plant_viable or prey_viable or carrion_viable
+    ):
+        search_vec = _ensure_search_vector(lifeform)
+        desired = desired.lerp(search_vec, 0.35)
+        if desired.length_squared() == 0:
+            desired = search_vec
+        desired = desired.normalize()
+    elif (
+        lifeform.should_seek_partner()
+        and not lifeform.closest_partner
+        and not getattr(lifeform, "_search_partner_vector", None)
+    ):
+        search_vec = _ensure_search_vector(lifeform)
+        desired = desired.lerp(search_vec, 0.3)
+        if desired.length_squared() == 0:
+            desired = search_vec
+        desired = desired.normalize()
+    else:
+        lifeform._search_vector_timer = 0
 
     locomotion = getattr(lifeform, "locomotion_profile", None)
 
@@ -61,16 +247,61 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         logger.warning("Lifeform %s missing physics_body; skipping movement", lifeform.id)
         return
 
+    max_swim_speed = max(1.0, getattr(lifeform, "max_swim_speed", 120.0))
+
     drift_bias = getattr(lifeform, "drift_preference", 0.0)
     if drift_bias > 0 and lifeform.last_fluid_properties is not None:
         current = lifeform.last_fluid_properties.current
         if current.length_squared() > 0:
             desired = desired.lerp(current.normalize(), min(0.95, drift_bias))
 
-    thrust_multiplier = 1.0
+    # --------------------------------------------------
+    # Physics & Thrust Calculation
+    # --------------------------------------------------
+
+    command_ratio = _behavioral_thrust_ratio(lifeform)
+    frequency_ratio = _behavioral_frequency_ratio(lifeform)
+    current_speed = lifeform.velocity.length()
+
+    # Update thrust phase for oscillation
+    # Frequency depends op gedragssnelheid
+    base_freq = 3.0
+    frequency = base_freq + frequency_ratio * 5.0
+
+    # Adrenaline boost (FLEE/HUNT)
+    target_adrenaline = 0.0
+    mode = getattr(lifeform, "current_behavior_mode", "idle")
+    if mode in ("flee", "hunt"):
+        target_adrenaline = 1.0
+        frequency *= 1.4
+
+    # Smoothly interpolate adrenaline
+    current_adrenaline = getattr(lifeform, "adrenaline_factor", 0.0)
+    lifeform.adrenaline_factor = current_adrenaline * 0.92 + target_adrenaline * 0.08
+
+    lifeform.thrust_phase += frequency * dt
+    if lifeform.thrust_phase > 6.28318:
+        lifeform.thrust_phase -= 6.28318
+
+    # Oscillating thrust:
+    # - Normal: varies between 0.6 and 1.4
+    # - Adrenaline: varies between 0.4 and 2.2 (explosive bursts)
+    oscillation = math.sin(lifeform.thrust_phase)
+    burst_intensity = 0.4 + lifeform.adrenaline_factor * 0.6
+    thrust_mod = 1.0 + oscillation * burst_intensity
+
+    # Fin damping (stability)
+    fin_count = getattr(lifeform, "fin_count", 0)
+    stability = 0.85 + min(0.14, fin_count * 0.02)
+
+    # Apply thrust
+    base_effort = _compute_thrust_effort(lifeform, current_speed, command_ratio)
+    effort = base_effort * thrust_mod
+
+    # Burst logic from locomotion profile (superimposed on oscillation)
     if locomotion and locomotion.burst_force > 1.0:
         if lifeform._burst_timer > 0:
-            thrust_multiplier = locomotion.burst_force
+            effort *= locomotion.burst_force
             lifeform._burst_timer -= 1
         elif lifeform._burst_cooldown > 0:
             lifeform._burst_cooldown -= 1
@@ -80,37 +311,31 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
                 or lifeform.closest_prey
                 or lifeform.should_seek_food()
             )
-            energy_threshold = max(
-                5.0,
-                getattr(lifeform, "motion_energy_cost", 1.0)
-                * max(1.5, locomotion.burst_force),
-            )
-            has_energy = lifeform.energy_now > energy_threshold and not getattr(
-                lifeform, "_energy_starved", False
-            )
-            if should_burst and has_energy:
-                lifeform._burst_timer = max(4, locomotion.burst_duration)
-                lifeform._burst_cooldown = max(30, locomotion.burst_cooldown)
-                thrust_multiplier = locomotion.burst_force
-    elif getattr(lifeform, "_burst_cooldown", 0) > 0:
-        lifeform._burst_cooldown -= 1
+            if should_burst and lifeform.energy_now > 20.0:
+                 # Only trigger burst if we are in the positive phase of oscillation
+                 if oscillation > 0.5:
+                    lifeform._burst_timer = max(4, locomotion.burst_duration)
+                    lifeform._burst_cooldown = max(30, locomotion.burst_cooldown)
+                    effort *= locomotion.burst_force
 
-    base_speed = getattr(lifeform, "speed", 0.0)
-    max_speed = max(1.0, getattr(lifeform, "max_swim_speed", 120.0))
-    # Normalize speed against its typical range (0.05-14.0) to get effort
-    # instead of using it as a ratio with max_swim_speed which is in different units
-    speed_ratio = max(0.0, min(1.0, base_speed / 14.0))
-    base_effort = speed_ratio * getattr(lifeform, "propulsion_efficiency", 1.0)
-    effort = base_effort * thrust_multiplier
-    clamped_effort = max(-1.0, min(1.0, effort))
+    clamped_effort = max(-1.0, min(2.0, effort)) # Allow bursting > 1.0
+    propulsion_acceleration = physics_body.propulsion_acceleration(min(1.0, clamped_effort)) * max(1.0, clamped_effort)
     propulsion_force = physics_body.max_thrust * clamped_effort
-    propulsion_acceleration = physics_body.propulsion_acceleration(clamped_effort)
-    thrust = desired * propulsion_acceleration
+
+    desired = _blend_desired_with_velocity(lifeform, desired)
+    thrust_vector = desired * propulsion_acceleration
+    telemetry.movement_sample(
+        tick=now_ms,
+        lifeform=lifeform,
+        desired=desired,
+        thrust=propulsion_acceleration,
+        effort=clamped_effort,
+    )
     attempted_position, fluid = state.world.apply_fluid_dynamics(
         lifeform,
-        thrust,
+        thrust_vector,
         dt,
-        max_speed=max_speed,
+        max_speed=max_swim_speed,
     )
     if fluid is not None:
         lifeform.last_fluid_properties = fluid
@@ -127,8 +352,8 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         * max(0.016, dt)
         + abs(propulsion_force) * 0.0004
     )
-    if thrust_multiplier > 1.0:
-        energy_spent *= thrust_multiplier * 1.1
+    if clamped_effort > 1.0:
+        energy_spent *= clamped_effort * 1.1
     if drift_bias > 0.5:
         energy_spent *= 0.6
     lifeform.energy_now = max(0.0, lifeform.energy_now - energy_spent)
@@ -158,47 +383,25 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         (attempted_x, attempted_y),
     )
 
-    collision_type = None
-    if collided:
-        collision_type = "world"
-
-    if not collided:
-        plant_rect = lifeform.rect.copy()
-        plant_rect.update(int(resolved_x), int(resolved_y), lifeform.width, lifeform.height)
-        for plant in state.plants:
-            if plant.blocks_rect(plant_rect):
-                collided = True
-                resolved_x, resolved_y = previous_position
-                collision_type = "plant"
-                break
-
     # --------------------------------------------------
     # 3. Collisions / boundaries / escape-logica
     # --------------------------------------------------
-    blocked_by_plant = collision_type == "plant"
-
     if collided:
         grip = max(0.5, getattr(lifeform, "grip_strength", 1.0))
         lifeform.velocity *= -0.2 / grip
-        if blocked_by_plant:
-            # Zacht tegen een plant botsen: blijf staan zodat eten mogelijk is,
-            # maar zie de plant wél als obstakel zodat we er niet doorheen lopen.
-            lifeform._stuck_frames = 0
-        else:
-            lifeform.x_direction = -lifeform.x_direction
-            lifeform.y_direction = -lifeform.y_direction
+        lifeform.x_direction = -lifeform.x_direction
+        lifeform.y_direction = -lifeform.y_direction
 
-            # ⬇️ NIEUW: alleen een nieuwe escape starten als we NIET al in escape-modus zitten
-            if lifeform._escape_timer == 0:
-                logger.warning(
-                    "Lifeform %s collided with obstacle at (%.1f, %.1f)",
-                    lifeform.id,
-                    resolved_x,
-                    resolved_y,
-                )
-                lifeform._trigger_escape_manoeuvre("collision")
-                lifeform._boundary_contact_frames = 0
-
+        # ⬇️ NIEUW: alleen een nieuwe escape starten als we NIET al in escape-modus zitten
+        if lifeform._escape_timer == 0:
+            logger.warning(
+                "Lifeform %s collided with obstacle at (%.1f, %.1f)",
+                lifeform.id,
+                resolved_x,
+                resolved_y,
+            )
+            lifeform._trigger_escape_manoeuvre("collision")
+            lifeform._boundary_contact_frames = 0
 
     else:
         grip = max(0.5, getattr(lifeform, "grip_strength", 1.0))
@@ -245,9 +448,9 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         lifeform.y - previous_position[1],
     )
 
-    if getattr(lifeform, "_voluntary_pause", False) or blocked_by_plant:
+    if getattr(lifeform, "_voluntary_pause", False):
         lifeform._stuck_frames = 0
-    elif displacement.length() < 0.25:
+    elif displacement.length() < 0.05:
         lifeform._stuck_frames += 1
         if lifeform._stuck_frames == settings.STUCK_FRAMES_THRESHOLD:
             logger.warning(

@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Callable, Deque, Dict, List, Optional, Tuple
 
 try:  # pragma: no cover - optional dependency
     import matplotlib
@@ -31,9 +31,12 @@ from pygame.math import Vector2
 
 from ..body.attachment import Joint, JointType
 from ..config import settings
+from ..config.settings import SimulationSettings
 from ..entities import movement
 from ..entities.lifeform import Lifeform
 from ..rendering.camera import Camera
+from ..creator import CreatureTemplate, spawn_template
+from ..rendering.creature_creator_overlay import CreatureCreatorOverlay, PaletteEntry
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.effects import EffectManager
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
@@ -50,6 +53,7 @@ from ..rendering.tools_panel import EditorTool, ToolsPanel
 from ..rendering.stats_window import StatsWindow
 from ..physics.test_creatures import TestCreature, build_fin_swimmer_prototype
 from ..systems import stats as stats_system
+from ..systems import telemetry
 from ..systems.events import EventManager
 from ..systems.notifications import NotificationManager
 from ..systems.player import PlayerController
@@ -115,6 +119,11 @@ notification_context = NotificationContext(NotificationManager())
 state.notification_context = notification_context
 state.notifications = notification_context.notification_manager
 
+if settings.TELEMETRY_ENABLED:
+    telemetry.enable_telemetry("all")
+    logger.info("Telemetry enabled; writing JSONL samples to %s", settings.LOG_DIRECTORY / "telemetry")
+else:
+    logger.info("Telemetry disabled; set EVOLUTION_TELEMETRY=1 to capture movement/combat data")
 
 class Graph:
     """Render a statistics bar chart using matplotlib when available."""
@@ -513,7 +522,7 @@ def _draw_modular_preview(
 
 
 # ---------------------------------------------------------------------------
-# Font helpers
+# UI toggles
 # ---------------------------------------------------------------------------
 
 @lru_cache(maxsize=None)
@@ -566,20 +575,27 @@ fps = settings.FPS
 # Hoofd-loop
 # ---------------------------------------------------------------------------
 
-def run() -> None:
+def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
     """Start de pygame-simulatie."""
     global world, camera, notification_manager, event_manager, player_controller
     global latest_stats, show_debug, show_leader, show_action, show_vision, show_dna_id, show_dna_info
     global start_time
 
+    # Interaction state placeholders
+    painting_tool: Optional[EditorTool] = None
+    barrier_preview_rect: Optional[pygame.Rect] = None
+    barrier_drag_start: Optional[Tuple[float, float]] = None
+
+    runtime = sim_settings or settings.current_settings()
+
     pygame.init()
     screen = pygame.display.set_mode(
-        (settings.WINDOW_WIDTH, settings.WINDOW_HEIGHT),
+        (runtime.WINDOW_WIDTH, runtime.WINDOW_HEIGHT),
     )
     pygame.display.set_caption("Evolution Sim")
 
     world_surface = pygame.Surface(
-        (settings.WORLD_WIDTH, settings.WORLD_HEIGHT),
+        (runtime.WORLD_WIDTH, runtime.WORLD_HEIGHT),
     )
 
     font1_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus8-Regular.ttf"
@@ -591,76 +607,61 @@ def run() -> None:
     panel_width = 260
     panel_margin = 16
     panel_rect = pygame.Rect(
-        settings.WINDOW_WIDTH - panel_width - panel_margin,
+        runtime.WINDOW_WIDTH - panel_width - panel_margin,
         20,
         panel_width,
-        settings.WINDOW_HEIGHT - 40,
+        runtime.WINDOW_HEIGHT - 40,
     )
 
-    def _run_modular_creature_test() -> Tuple[Dict[str, float], PrototypeSwimPreview]:
-        """Build and sample the first modular creature prototype."""
+    top_bar_buttons: List[Dict[str, object]] = []
+    top_bar_padding = 12
 
-        creature = build_fin_swimmer_prototype()
-        aggregation = creature.graph.aggregate_physics_stats()
-        dt = 1.0 / 60.0
-        samples = []
-        for _ in range(180):
-            thrust_vector = creature.step(dt)
-            samples.append(thrust_vector.length())
-        average_thrust = sum(samples) / len(samples) if samples else 0.0
-        peak_thrust = max(samples) if samples else 0.0
-        report = {
-            "name": creature.name,
-            "modules": float(len(creature.graph)),
-            "mass": creature.physics.mass,
-            "drag": creature.physics.drag_coefficient,
-            "avg_thrust": average_thrust,
-            "peak_thrust": peak_thrust,
-            "frontal_area": aggregation.frontal_area,
-        }
-        return report, PrototypeSwimPreview(creature)
+    def _register_top_button(key: str, label: str, toggle: Callable[[], None], *, width: int = 140) -> None:
+        x_offset = runtime.WINDOW_WIDTH - top_bar_padding - width
+        if top_bar_buttons:
+            x_offset = top_bar_buttons[-1]["rect"].left - 12 - width
+        rect = pygame.Rect(x_offset, top_bar_padding, width, 30)
+        top_bar_buttons.append(
+            {
+                "key": key,
+                "label": label,
+                "rect": rect,
+                "toggle": toggle,
+                "active": False,
+            }
+        )
+
+    def _set_button_state(key: str, active: bool) -> None:
+        for entry in top_bar_buttons:
+            if entry["key"] == key:
+                entry["active"] = active
+                break
 
     def _set_environment_modifier(key: str, value: float) -> None:
-        numeric_value = float(value)
-        environment_modifiers[key] = numeric_value
-        state.environment_modifiers[key] = numeric_value
-        if state.world is not None:
-            state.world.set_environment_modifiers(state.environment_modifiers)
-        if key == "plant_regrowth":
-            environment.sync_food_abundance(state)
-        elif key == "moss_growth_speed":
-            environment.sync_moss_growth_speed(state)
-
-    def _set_mutation_rate(value: float) -> None:
-        settings.MUTATION_CHANCE = int(round(value))
-
-    def _set_max_lifeforms(value: float) -> None:
-        settings.MAX_LIFEFORMS = int(round(value))
-
-    def _set_reproduction_cooldown(value: float) -> None:
-        cooldown = int(round(value))
-        settings.REPRODUCING_COOLDOWN_VALUE = cooldown
-        settings.POPULATION_CAP_RETRY_COOLDOWN = max(1, cooldown // 2)
-
-    def _set_energy_recovery(value: float) -> None:
-        settings.ENERGY_RECOVERY_PER_SECOND = float(value)
-
-    def _set_age_rate(value: float) -> None:
-        settings.AGE_RATE_PER_SECOND = float(value)
-
-    def _set_hunger_penalty(value: float) -> None:
-        settings.HUNGER_HEALTH_PENALTY_PER_SECOND = float(value)
-        settings.EXTREME_HUNGER_HEALTH_PENALTY_PER_SECOND = float(value) * 10
-
-    def _initialise_population() -> None:
-        global latest_stats
-        bootstrap.generate_dna_profiles(state, world)
-        bootstrap.spawn_lifeforms(state, world)
-        bootstrap.seed_vegetation(state, world)
+        environment_modifiers[key] = value
         environment.sync_food_abundance(state)
         environment.sync_moss_growth_speed(state)
-        latest_stats = None
-        stats_window.clear()
+
+    def _set_mutation_rate(value: float) -> None:
+        settings.MUTATION_CHANCE = int(value)
+
+    def _set_max_lifeforms(value: float) -> None:
+        settings.MAX_LIFEFORMS = int(value)
+
+    def _set_reproduction_cooldown(value: float) -> None:
+        settings.REPRODUCING_COOLDOWN_VALUE = int(value)
+
+    def _set_energy_recovery(value: float) -> None:
+        settings.ENERGY_RECOVERY_PER_SECOND = int(value)
+
+    def _set_age_rate(value: float) -> None:
+        settings.AGE_RATE_PER_SECOND = value
+
+    def _set_hunger_penalty(value: float) -> None:
+        settings.HUNGER_HEALTH_PENALTY_PER_SECOND = value
+
+    stats_window = StatsWindow(font2, font3)
+    inspector = LifeformInspector(state, font2, font3)
 
     def _build_slider_configs() -> List[SliderConfig]:
         return [
@@ -766,63 +767,78 @@ def run() -> None:
             ),
         ]
 
-    gameplay_panel = GameplaySettingsPanel(
-        panel_rect,
-        font2,
-        font3,
-        _build_slider_configs(),
-    )
-    stats_window = StatsWindow(font2, font3)
+    # Defer panel instantiation totdat de wereld is gecreëerd, zodat deze biomen kan lezen.
+    tools_panel: ToolsPanel
+    gameplay_panel: GameplaySettingsPanel
+    gameplay_panel_visible = True
 
-    def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
-        if not lifeforms:
-            return None
+    def _toggle_stats() -> None:
+        if stats_window.visible:
+            stats_window.hide()
+        else:
+            stats_window.show()
+            if latest_stats:
+                stats_window.update_stats(latest_stats)
 
-        world_x, world_y = camera.screen_to_world(position)
-        click_radius = max(8.0, 18.0 / max(0.75, camera.zoom))
+    def _toggle_gameplay() -> None:
+        nonlocal gameplay_panel_visible
+        gameplay_panel_visible = not gameplay_panel_visible
 
-        # Prefer the spatial grid for responsiveness on dense populations
-        grid = getattr(state, "spatial_grid", None)
-        candidates = (
-            grid.query_lifeforms(world_x, world_y, click_radius * 1.5)
-            if grid is not None
-            else lifeforms
-        )
+    def _toggle_tools() -> None:
+        tools_panel.visible = not tools_panel.visible
 
-        best: Optional[Lifeform] = None
-        best_distance = float("inf")
-        for lifeform in candidates:
-            if lifeform.health_now <= 0:
-                continue
-            rect = lifeform.rect.inflate(int(click_radius), int(click_radius))
-            if not rect.collidepoint(world_x, world_y):
-                continue
-            centerx, centery = lifeform.rect.center
-            distance = float((centerx - world_x) ** 2 + (centery - world_y) ** 2)
-            if distance < best_distance:
-                best_distance = distance
-                best = lifeform
-        return best
+    def _toggle_creator() -> None:
+        creature_creator.toggle()
+
+    def _inspector_info() -> None:
+        if inspector.visible:
+            inspector.clear()
+        else:
+            notification_manager.add(
+                "Klik op een lifeform om details te zien",
+                settings.BLUE,
+                2000,
+            )
+
+    # Register the top bar once; inspector button serves as a hint rather than a toggle.
+    for key, label, width, handler in (
+        ("stats", "Stats", 110, _toggle_stats),
+        ("gameplay", "Gameplay", 140, _toggle_gameplay),
+        ("tools", "Tools", 110, _toggle_tools),
+        ("creator", "Creator", 130, _toggle_creator),
+        ("inspector", "Inspector", 130, _inspector_info),
+    ):
+        _register_top_button(key, label, handler, width=width)
+
+    def _initialise_population() -> None:
+        global latest_stats
+        bootstrap.generate_dna_profiles(state, world)
+        bootstrap.spawn_lifeforms(state, world)
+        bootstrap.seed_vegetation(state, world)
+        environment.sync_food_abundance(state)
+        environment.sync_moss_growth_speed(state)
+        latest_stats = None
+        stats_window.clear()
 
     # Wereld & camera
     world = World(
-        settings.WORLD_WIDTH,
-        settings.WORLD_HEIGHT,
+        runtime.WORLD_WIDTH,
+        runtime.WORLD_HEIGHT,
         world_type=state.world_type,
         environment_modifiers=environment_modifiers,
     )
     camera = Camera(
-        settings.WINDOW_WIDTH,
-        settings.WINDOW_HEIGHT,
-        settings.WORLD_WIDTH,
-        settings.WORLD_HEIGHT,
+        runtime.WINDOW_WIDTH,
+        runtime.WINDOW_HEIGHT,
+        runtime.WORLD_WIDTH,
+        runtime.WORLD_HEIGHT,
     )
-    camera.center_on(settings.WORLD_WIDTH / 2, settings.WORLD_HEIGHT / 2)
+    camera.center_on(runtime.WORLD_WIDTH / 2, runtime.WORLD_HEIGHT / 2)
     logger.info(
         "Simulation run initialised with world size %sx%s and %s starting lifeforms",
-        settings.WORLD_WIDTH,
-        settings.WORLD_HEIGHT,
-        settings.N_LIFEFORMS,
+        runtime.WORLD_WIDTH,
+        runtime.WORLD_HEIGHT,
+        runtime.N_LIFEFORMS,
     )
 
     notification_manager = notification_context.notification_manager
@@ -830,130 +846,24 @@ def run() -> None:
     player_controller = PlayerController(notification_manager, dna_profiles, lifeforms)
     effects_manager = EffectManager()
     effects_manager.set_font(font2)
-    tools_panel = ToolsPanel(
-        font2,
-        font3,
-        topleft=(24, settings.WINDOW_HEIGHT - 360),
-        available_biomes=world.biomes,
-    )
 
-    def _screen_to_world(position: Tuple[int, int]) -> Tuple[float, float]:
-        return camera.screen_to_world(position)
+    palette_entries = [
+        PaletteEntry("core", "Core", "Hoofdtorso"),
+        PaletteEntry("head", "Head", "Sensor hub"),
+        PaletteEntry("fin", "Fin", "Zwemvin"),
+        PaletteEntry("thruster", "Thruster", "Stuwkracht"),
+        PaletteEntry("sensor", "Sensor", "Detectiemodule"),
+    ]
 
-    def _clamp_rect(rect: pygame.Rect) -> pygame.Rect:
-        left = max(0, rect.left)
-        top = max(0, rect.top)
-        right = min(world.width, rect.right)
-        bottom = min(world.height, rect.bottom)
-        rect.update(int(left), int(top), max(1, int(right - left)), max(1, int(bottom - top)))
-        return rect
-
-    def _world_rect_from_points(
-        start: Tuple[float, float], end: Tuple[float, float]
-    ) -> pygame.Rect:
-        left = min(start[0], end[0])
-        top = min(start[1], end[1])
-        width = abs(end[0] - start[0])
-        height = abs(end[1] - start[1])
-        rect = pygame.Rect(int(left), int(top), max(1, int(width)), max(1, int(height)))
-        return _clamp_rect(rect)
-
-    def _apply_modifiers_to_cluster(cluster: "MossCluster") -> None:
-        abundance = state.environment_modifiers.get("plant_regrowth", 1.0)
-        growth = state.environment_modifiers.get("moss_growth_speed", 1.0)
-        cluster.set_capacity_multiplier(abundance)
-        cluster.set_growth_speed_modifier(growth)
-
-    def _spawn_moss_cluster(
-        world_pos: Tuple[float, float], *, notify: bool = True
-    ) -> bool:
-        cluster = create_cluster_from_brush(
-            world,
-            world_pos,
-            int(tools_panel.brush_size),
-            rng=editor_rng,
-        )
-        if cluster is None:
-            if notify:
-                notification_manager.add(
-                    "Kan hier geen mos plaatsen; ruimte is geblokkeerd.",
-                    settings.RED,
-                )
-            return False
-        _apply_modifiers_to_cluster(cluster)
-        plants.append(cluster)
-        return True
-
-    def _stamp_wall_segment(world_pos: Tuple[float, float]) -> None:
-        size = max(8, int(tools_panel.brush_size))
-        left = int(world_pos[0]) - size // 2
-        top = int(world_pos[1]) - size // 2
-        rect = pygame.Rect(left, top, size, size)
-        rect = _clamp_rect(rect)
-        world.barriers.append(Barrier(rect, (80, 80, 120), "muur"))
-
-    def _paint_biome(world_pos: Tuple[float, float]) -> None:
-        template = tools_panel.get_selected_biome()
-        if template is None:
-            return
-        size = max(24, int(tools_panel.brush_size))
-        left = int(world_pos[0]) - size // 2
-        top = int(world_pos[1]) - size // 2
-        rect = pygame.Rect(left, top, size, size)
-        rect = _clamp_rect(rect)
-        new_biome = replace(
-            template,
-            rect=rect,
-            mask=None,
-            mask_offset=(0, 0),
-        )
-        new_biome.update_weather(pygame.time.get_ticks())
-        world.biomes.insert(0, new_biome)
-
-    def _draw_barrier_preview(surface: pygame.Surface, rect: pygame.Rect) -> None:
-        if not rect.colliderect(camera.viewport):
-            return
-        visible = rect.clip(camera.viewport)
-        scale_x = surface.get_width() / camera.viewport.width
-        scale_y = surface.get_height() / camera.viewport.height
-        left = int((visible.left - camera.viewport.left) * scale_x)
-        top = int((visible.top - camera.viewport.top) * scale_y)
-        width = max(1, int(visible.width * scale_x))
-        height = max(1, int(visible.height * scale_y))
-        preview = pygame.Rect(left, top, width, height)
-        shade = pygame.Surface((preview.width, preview.height), pygame.SRCALPHA)
-        shade.fill((220, 140, 90, 60))
-        surface.blit(shade, preview.topleft)
-        pygame.draw.rect(surface, (220, 140, 90), preview, 2)
-
-    def _draw_world(target: pygame.Surface) -> None:
-        view = world_surface.subsurface(camera.viewport)
-        # Fast path avoids expensive filtering when no scaling is needed
-        if camera.zoom == 1.0 and view.get_size() == target.get_size():
-            target.blit(view, (0, 0))
-        else:
-            pygame.transform.scale(view, target.get_size(), target)
-
-    def _begin_tool_action(position: Tuple[int, int]) -> None:
-        nonlocal painting_tool, barrier_drag_start, barrier_preview_rect
-        tool = tools_panel.selected_tool
-        if tool == EditorTool.INSPECT:
-            return
-        world_pos = _screen_to_world(position)
-        if tool == EditorTool.SPAWN_MOSS:
-            _spawn_moss_cluster(world_pos)
-        elif tool == EditorTool.PAINT_MOSS:
-            painting_tool = EditorTool.PAINT_MOSS
-            _spawn_moss_cluster(world_pos, notify=False)
-        elif tool == EditorTool.PAINT_WALL:
-            painting_tool = EditorTool.PAINT_WALL
-            _stamp_wall_segment(world_pos)
-        elif tool == EditorTool.PAINT_BIOME:
-            painting_tool = EditorTool.PAINT_BIOME
-            _paint_biome(world_pos)
-        elif tool == EditorTool.DRAW_BARRIER:
-            barrier_drag_start = world_pos
-            barrier_preview_rect = _world_rect_from_points(world_pos, world_pos)
+    def _spawn_creature_from_template(template: CreatureTemplate) -> None:
+        try:
+            spawn_template(state, template, world)
+            notification_manager.add(
+                f"Template '{template.name}' gespawned in oceaan",
+                settings.SEA,
+            )
+        except Exception as exc:
+            notification_manager.add(f"Spawn mislukt: {exc}", settings.RED)
 
     bootstrap.reset_simulation(
         state,
@@ -963,21 +873,43 @@ def run() -> None:
         player_controller,
         notification_manager,
         effects_manager,
+        on_spawn=_spawn_creature_from_template,
     )
-    graph = Graph()
-    inspector = LifeformInspector(state, font2, font3)
-    editor_rng = random.Random()
-    legacy_ui_visible = True
-    painting_tool: Optional[EditorTool] = None
-    barrier_drag_start: Optional[Tuple[float, float]] = None
-    barrier_preview_rect: Optional[pygame.Rect] = None
-    modular_test_report: Optional[Dict[str, float]] = None
-    test_preview: Optional[PrototypeSwimPreview] = None
+
+    creature_creator = CreatureCreatorOverlay(
+        font2,
+        font3,
+        palette_entries,
+        world,
+        on_spawn=_spawn_creature_from_template,
+    )
+
+    gameplay_panel = GameplaySettingsPanel(
+        panel_rect,
+        font2,
+        font3,
+        _build_slider_configs(),
+    )
+    tools_panel = ToolsPanel(
+        font2,
+        font3,
+        topleft=(24, runtime.WINDOW_HEIGHT - 360),
+        available_biomes=world.biomes,
+    )
 
     running = True
     starting_screen = True
     paused = True
     fullscreen = False
+    show_creator_overlay = False
+
+    modular_test_report: Optional[Dict[str, object]] = None
+    test_preview: Optional[PrototypeSwimPreview] = None
+
+    legacy_ui_visible = True
+
+    stats_toggle_button = pygame.Rect(0, 0, 0, 0)
+    inspector_toggle_button = pygame.Rect(0, 0, 0, 0)
 
     while running:
         delta_time = clock.tick(fps) / 1000.0
@@ -1006,26 +938,17 @@ def run() -> None:
             24,
             24,
         )
-        legacy_toggle_rect = pygame.Rect(
-            panel_rect.left - 150,
-            max(16, panel_rect.top - 40),
-            140,
-            30,
-        )
-        
-        # UI window toggle buttons at the top of the screen
-        stats_toggle_button = pygame.Rect(
-            settings.WINDOW_WIDTH - 280,
-            10,
-            120,
-            32,
-        )
-        inspector_toggle_button = pygame.Rect(
-            settings.WINDOW_WIDTH - 150,
-            10,
-            130,
-            32,
-        )
+
+        # Legacy UI toggle remains near the sidebar; other overlays are controlled by the top bar.
+
+        for entry in top_bar_buttons:
+            entry['active'] = False
+        _set_button_state("stats", stats_window.visible and stats_window._stats is not None)
+        _set_button_state("inspector", inspector.visible and inspector.selected is not None)
+        _set_button_state("tools", tools_panel.visible)
+        _set_button_state("gameplay", gameplay_panel_visible)
+        _set_button_state("creator", creature_creator.active)
+
         if tools_panel.selected_tool != EditorTool.DRAW_BARRIER:
             barrier_preview_rect = None
             barrier_drag_start = None
@@ -1107,7 +1030,7 @@ def run() -> None:
                 report_lines = [
                     f"Naam: {modular_test_report['name']}",
                     f"Modules: {int(modular_test_report['modules'])}",
-                    f"Massa: {modular_test_report['mass']:.1f}",
+                    f"Massa: modular_test_report['mass']:.1f",
                     f"Frontal area: {modular_test_report['frontal_area']:.1f}",
                     f"Drag-coëfficiënt: {modular_test_report['drag']:.2f}",
                     f"Gem. stuwkracht: {modular_test_report['avg_thrust']:.1f}",
@@ -1172,6 +1095,9 @@ def run() -> None:
                 # Rebuild spatial grid for efficient proximity queries
                 state.spatial_grid = build_spatial_grid(lifeform_snapshot, plants, cell_size=200.0)
 
+                bounds_cache = None
+                if camera is not None:
+                    bounds_cache = camera.render_bounds(padding=96)
                 for lifeform in lifeform_snapshot:
                     # 1) DNA-afhankelijke eigenschappen & omgeving
                     lifeform.set_speed(average_maturity)
@@ -1195,9 +1121,21 @@ def run() -> None:
                         continue
 
                     # 6) Rendering
-                    draw_lifeform(world_surface, lifeform, settings, world.height)
+                    draw_lifeform(
+                        world_surface,
+                        lifeform,
+                        settings,
+                        camera=camera,
+                        render_bounds=bounds_cache,
+                    )
                     if show_vision:
-                        draw_lifeform_vision(world_surface, lifeform, settings)
+                        draw_lifeform_vision(
+                            world_surface,
+                            lifeform,
+                            settings,
+                            camera=camera,
+                            render_bounds=bounds_cache,
+                        )
 
                     if show_debug:
                         text = font.render(
@@ -1266,7 +1204,7 @@ def run() -> None:
                 environment.sync_moss_growth_speed(state)
                 notification_manager.update()
 
-                _draw_world(screen)
+                _draw_world(screen, world_surface)
                 if legacy_ui_visible:
                     world.draw_weather_overview(screen, font2)
 
@@ -1299,67 +1237,32 @@ def run() -> None:
 
         if not starting_screen:
             if paused:
-                _draw_world(screen)
+                _draw_world(screen, world_surface)
             inspector.draw_highlight(screen, camera)
-            inspector.draw(screen)
+            if inspector.visible:
+                inspector.draw(screen)
+            if creature_creator.active:
+                creature_creator.draw(screen)
+                paused = True
 
-            if legacy_ui_visible:
+            if legacy_ui_visible and gameplay_panel_visible:
                 gameplay_panel.draw(screen)
             if barrier_preview_rect and tools_panel.selected_tool == EditorTool.DRAW_BARRIER:
                 _draw_barrier_preview(screen, barrier_preview_rect)
 
-            tools_panel.draw(screen)
-            stats_window.draw(screen)
-            
-            # Draw toggle buttons for stats window and inspector
-            stats_active = stats_window._stats is not None
-            inspector_active = inspector.selected is not None
-            
-            # Stats toggle button
-            stats_color = (120, 180, 240) if stats_active else (200, 200, 200)
-            pygame.draw.rect(screen, stats_color, stats_toggle_button, border_radius=6)
-            pygame.draw.rect(screen, (50, 50, 50), stats_toggle_button, 2, border_radius=6)
-            stats_label = font2.render("Stats", True, (20, 20, 20))
-            screen.blit(
-                stats_label,
-                (
-                    stats_toggle_button.centerx - stats_label.get_width() // 2,
-                    stats_toggle_button.centery - stats_label.get_height() // 2,
-                ),
-            )
-            
-            # Inspector toggle button
-            inspector_color = (120, 240, 180) if inspector_active else (200, 200, 200)
-            pygame.draw.rect(screen, inspector_color, inspector_toggle_button, border_radius=6)
-            pygame.draw.rect(screen, (50, 50, 50), inspector_toggle_button, 2, border_radius=6)
-            inspector_label = font2.render("Inspector", True, (20, 20, 20))
-            screen.blit(
-                inspector_label,
-                (
-                    inspector_toggle_button.centerx - inspector_label.get_width() // 2,
-                    inspector_toggle_button.centery - inspector_label.get_height() // 2,
-                ),
-            )
-            
-            toggle_label = font2.render(
-                "UI verbergen" if legacy_ui_visible else "UI tonen",
-                True,
-                settings.BLACK,
-            )
-            pygame.draw.rect(screen, (235, 235, 235), legacy_toggle_rect, border_radius=6)
-            pygame.draw.rect(screen, (70, 70, 70), legacy_toggle_rect, 1, border_radius=6)
-            screen.blit(
-                toggle_label,
-                (
-                    legacy_toggle_rect.centerx - toggle_label.get_width() // 2,
-                    legacy_toggle_rect.centery - toggle_label.get_height() // 2,
-                ),
-            )
+            if tools_panel.visible:
+                tools_panel.draw(screen)
+            if stats_window.visible:
+                stats_window.draw(screen)
+
+            _draw_top_bar(screen, font2, top_bar_buttons, latest_stats)
 
         pygame.display.flip()
 
         # Event handling
         for event in pygame.event.get():
+            if creature_creator.handle_event(event):
+                continue
             if live_simulation_active and inspector.handle_event(event):
                 continue
             if not starting_screen and tools_panel.handle_event(event):
@@ -1404,6 +1307,13 @@ def run() -> None:
                     tools_panel.selected_tool = previous_tool
                     tools_panel.brush_size = previous_brush
                     tools_panel.visible = tools_visible
+                    creature_creator = CreatureCreatorOverlay(
+                        font2,
+                        font3,
+                        palette_entries,
+                        world,
+                        on_spawn=_spawn_creature_from_template,
+                    )
                 elif event.key == pygame.K_p and live_simulation_active:
                     paused = not paused
                 elif event.key == pygame.K_n and live_simulation_active:
@@ -1430,6 +1340,13 @@ def run() -> None:
                     show_dna_id = not show_dna_id
                 elif event.key == pygame.K_m and live_simulation_active:
                     player_controller.toggle_management()
+                elif event.key == pygame.K_c and live_simulation_active:
+                    creature_creator.toggle()
+                    if not creature_creator.active:
+                        creature_creator._selected_node = None
+                        creature_creator._selected_module = None
+                    paused = creature_creator.active or paused
+                    continue
                 elif (
                     live_simulation_active
                     and event.key in (pygame.K_EQUALS, pygame.K_PLUS, pygame.K_KP_PLUS)
@@ -1463,13 +1380,6 @@ def run() -> None:
                     focus = camera.screen_to_world(mouse_pos)
                     delta = 1 if event.button == 4 else -1
                     camera.adjust_zoom(delta, focus, mouse_pos)
-                    continue
-                if (
-                    event.button == 1
-                    and not starting_screen
-                    and legacy_toggle_rect.collidepoint(event.pos)
-                ):
-                    legacy_ui_visible = not legacy_ui_visible
                     continue
                 if (
                     event.button == 1
@@ -1508,6 +1418,7 @@ def run() -> None:
                             player_controller,
                             notification_manager,
                             effects_manager,
+                            on_spawn=_spawn_creature_from_template,
                         )
                         _initialise_population()
                         inspector.clear()
@@ -1535,6 +1446,7 @@ def run() -> None:
                             player_controller,
                             notification_manager,
                             effects_manager,
+                            on_spawn=_spawn_creature_from_template,
                         )
                         _initialise_population()
                         inspector.clear()
@@ -1603,3 +1515,85 @@ def run() -> None:
                 camera.adjust_zoom(event.y, focus, mouse_pos)
 
     pygame.quit()
+    if settings.TELEMETRY_ENABLED:
+        telemetry.flush_all()
+        logger.info("Telemetry flushed to %s", settings.LOG_DIRECTORY / "telemetry")
+
+def _draw_top_bar(surface: pygame.Surface, font: pygame.font.Font, buttons: List[Dict[str, object]], stats: Optional[Dict[str, object]]) -> None:
+    if not buttons:
+        return
+    background = pygame.Surface((surface.get_width(), 48), pygame.SRCALPHA)
+    background.fill((5, 10, 30, 180))
+    surface.blit(background, (0, 0))
+
+    count_text = "Lifeforms: --"
+    dna_text = "DNA profielen: --"
+    if stats:
+        count_text = f"Lifeforms: {int(stats.get('lifeform_count', 0))}"
+        dna_total = stats.get('dna_count', {})
+        dna_text = f"DNA profielen: {len(dna_total) if isinstance(dna_total, dict) else 0}"
+    life_label = font.render(count_text, True, (245, 245, 245))
+    dna_label = font.render(dna_text, True, (230, 230, 230))
+    surface.blit(life_label, (16, 12))
+    surface.blit(dna_label, (16, 24))
+
+    for entry in buttons:
+        rect: pygame.Rect = entry['rect']
+        active = entry.get('active', False)
+        color = (60, 130, 210) if active else (200, 200, 200)
+        border = (20, 40, 80) if active else (80, 80, 80)
+        pygame.draw.rect(surface, color, rect, border_radius=6)
+        pygame.draw.rect(surface, border, rect, 1, border_radius=6)
+        label_surface = font.render(str(entry['label']), True, (15, 20, 35) if active else (25, 25, 25))
+        surface.blit(
+            label_surface,
+            (
+                rect.centerx - label_surface.get_width() // 2,
+                rect.centery - label_surface.get_height() // 2,
+            ),
+        )
+
+def _draw_world(screen: pygame.Surface, world_surface: pygame.Surface) -> None:
+    """Render the world surface using the active camera viewport."""
+    viewport = camera.view_rect()
+    window_size = (camera.window_width, camera.window_height)
+    if viewport.width == window_size[0] and viewport.height == window_size[1]:
+        screen.blit(world_surface, (0, 0), viewport)
+        return
+
+    try:
+        view_surface = world_surface.subsurface(viewport)
+    except ValueError:
+        view_surface = world_surface
+    scaled = pygame.transform.smoothscale(view_surface, window_size)
+    screen.blit(scaled, (0, 0))
+
+def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
+        if not lifeforms:
+            return None
+
+        world_x, world_y = camera.screen_to_world(position)
+        click_radius = max(8.0, 18.0 / max(0.75, camera.zoom))
+
+        grid = getattr(state, "spatial_grid", None)
+        candidates = (
+            grid.query_lifeforms(world_x, world_y, click_radius * 1.5)
+            if grid is not None
+            else lifeforms
+        )
+
+        best: Optional[Lifeform] = None
+        best_distance = float("inf")
+        for lifeform in candidates:
+            if lifeform.health_now <= 0:
+                continue
+            rect = lifeform.rect.inflate(int(click_radius), int(click_radius))
+            if not rect.collidepoint(world_x, world_y):
+                continue
+            centerx, centery = lifeform.rect.center
+            distance = float((centerx - world_x) ** 2 + (centery - world_y) ** 2)
+            if distance < best_distance:
+                best_distance = distance
+                best = lifeform
+        return best
+

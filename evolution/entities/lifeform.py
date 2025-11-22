@@ -16,7 +16,7 @@ import logging
 import math
 import random
 from collections import deque
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any, Deque, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import pygame
 from pygame.math import Vector2
@@ -28,15 +28,27 @@ from ..dna.factory import build_body_graph
 from ..dna.genes import Genome, ensure_genome
 from ..morphology import MorphologyGenotype, MorphStats, compute_morph_stats
 from ..physics.physics_body import PhysicsBody, build_physics_body
-from ..simulation.state import SimulationState
+from ..physics.physics_body import PhysicsBody, build_physics_body
 from ..world.carcass import SinkingCarcass
 from ..world.world import BiomeRegion
 from . import reproduction
 from .locomotion import LocomotionProfile, derive_locomotion_profile
 
+if TYPE_CHECKING:
+    from ..simulation.state import SimulationState
+
 logger = logging.getLogger("evolution.simulation")
 
 _GRAVITY = 9.81  # m/s² - used for buoyancy diagnostics
+
+
+class BehaviorMode:
+    IDLE = "idle"
+    SEARCH = "search"
+    FLEE = "flee"
+    HUNT = "hunt"
+    FLOCK = "flock"
+    INTERACT = "interact"
 
 
 class Lifeform:
@@ -58,15 +70,17 @@ class Lifeform:
         self.y_direction = 0.0
         self.velocity = Vector2()
 
+        # Movement / Physics state
+        self.thrust_phase = random.uniform(0, 6.28)  # Random start phase for oscillation
+        self.adrenaline_factor = 0.0
+        self.current_behavior_mode = BehaviorMode.IDLE
+        self.target_behavior_mode = BehaviorMode.IDLE
+
+
         # Core DNA / stats
         self.dna_id = dna_profile["dna_id"]
-        self.base_width = int(dna_profile["width"])
-        self.base_height = int(dna_profile["height"])
         base_color = tuple(int(c) for c in dna_profile["color"])
-        self.health = int(dna_profile["health"])
         self.maturity = int(dna_profile["maturity"])
-        self.vision = float(dna_profile["vision"])
-        self.energy = int(dna_profile["energy"])
         self.longevity = int(dna_profile["longevity"])
         self.generation = generation
         self.morphology: MorphologyGenotype = MorphologyGenotype.from_mapping(
@@ -74,17 +88,24 @@ class Lifeform:
         )
         self.fin_count = getattr(self.morphology, "fins", 0)
         self.morph_stats: MorphStats = compute_morph_stats(
-            self.morphology, (self.base_width, self.base_height)
+            self.morphology, (32, 32)  # Placeholder base size, will be overwritten
         )
+        raw_geometry = dna_profile.get("geometry")
+        self.profile_geometry: Dict[str, float] = dict(raw_geometry) if isinstance(raw_geometry, dict) else {}
         self._initialise_body(dna_profile)
         self.development = ensure_development_plan(dna_profile.get("development"))
         self.skin_stage = int(self.development.get("skin_stage", 0))
         self.development_features: Tuple[str, ...] = tuple(
             self.development.get("features", [])
         )
+        self.base_form: Optional[str] = dna_profile.get("base_form")
+        self.base_form_label: Optional[str] = dna_profile.get("base_form_label")
         tinted = self._apply_pigment(base_color, self.morph_stats.pigment_tint)
         self.body_color = self._apply_skin_development(tinted)
         self.color = self.body_color
+
+        # Derive physical stats from the body graph
+        self._derive_stats_from_body()
 
         scaled_width = int(round(self.base_width * self.morph_stats.collision_scale))
         scaled_height = int(round(self.base_height * self.morph_stats.collision_scale))
@@ -99,25 +120,7 @@ class Lifeform:
         self.sensory_range = self.vision
         self.perception_rays = self.morph_stats.perception_rays
         self.hearing_range = self.morph_stats.hearing_range
-        physics = getattr(self, "physics_body", None)
-        if physics is None:
-            physics = PhysicsBody(
-                mass=max(1.0, self.morph_stats.mass * 10.0),
-                volume=float(self.base_width * self.base_height),
-                density=1.0,
-                frontal_area=float(self.base_width),
-                lateral_area=float(self.base_height),
-                dorsal_area=float(self.base_width),
-                drag_coefficient=0.25,
-                buoyancy_volume=float(self.base_width * self.base_height),
-                max_thrust=80.0,
-                grip_strength=self.morph_stats.grip_strength * 8.0,
-                power_output=20.0,
-                energy_cost=self.morph_stats.maintenance_cost * 12.0,
-                lift_per_fin=0.0,
-                buoyancy_offsets=(0.0, 0.0),
-            )
-            self.physics_body = physics
+        physics = self.physics_body
         self.body_module_count = len(getattr(self, "body_graph", []))
         self.body_mass = physics.mass
         self.body_volume = physics.volume
@@ -155,13 +158,9 @@ class Lifeform:
         self.max_swim_speed = max(45.0, thrust_ratio * 32.0)
         self.last_fluid_properties = None
         self.sensor_suite = self._derive_sensor_suite()
+        self._apply_sensor_baselines(self.sensor_suite)
         self.body_module_breakdown = self._summarize_modules()
-        self._sensor_target_ranges = {
-            "creatures": self.vision,
-            "plants": self.vision,
-            "carrion": self.vision,
-            "spectra": dict(self.sensor_suite),
-        }
+        self._sensor_target_ranges = self._compute_sensor_target_ranges(self.sensor_suite)
 
         self.locomotion_profile: LocomotionProfile = derive_locomotion_profile(
             dna_profile,
@@ -221,8 +220,8 @@ class Lifeform:
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
         # Combat stats
-        self.defence_power = dna_profile["defence_power"]
-        self.attack_power = dna_profile["attack_power"]
+        # Combat stats
+        # self.defence_power and self.attack_power are now set in _derive_stats_from_body()
         self.attack_power_now = self.attack_power
         self.defence_power_now = self.defence_power
 
@@ -423,6 +422,16 @@ class Lifeform:
 
         return False
 
+    def should_seek_partner(self) -> bool:
+        if not self.can_reproduce():
+            return False
+        partner = self.closest_partner
+        if partner and getattr(partner, "health_now", 0) > 0:
+            return False
+        if getattr(self, "_escape_timer", 0) > 0:
+            return False
+        return True
+
     @property
     def is_foraging(self) -> bool:
         return self._foraging_focus
@@ -510,6 +519,16 @@ class Lifeform:
         _, distance = self.direction_to_plant(plant)
         return distance
 
+    def _plant_feeding_radius(self, plant) -> float:
+        if plant is None:
+            return 0.0
+        plant_width = float(getattr(plant, "width", 0.0))
+        plant_height = float(getattr(plant, "height", 0.0))
+        plant_radius = max(plant_width, plant_height) * 0.5
+        body_radius = max(float(self.width), float(self.height)) * 0.5
+        reach_allowance = max(8.0, float(self.reach) * 0.5)
+        return max(6.0, body_radius + plant_radius + reach_allowance)
+
     def distance_to_carcass(self, carcass: SinkingCarcass) -> float:
         _, distance = self.direction_to_carcass(carcass)
         return distance
@@ -566,11 +585,9 @@ class Lifeform:
         return True
 
     def update_targets(self) -> None:
-        sensor_map = self._scan_sensor_modules()
-        target_ranges = self._compute_sensor_target_ranges(sensor_map)
-        self._active_sensor_suite = sensor_map
-        self._sensor_target_ranges = target_ranges
-
+        # Use cached sensor ranges
+        target_ranges = self._sensor_target_ranges
+        
         creature_range = target_ranges.get("creatures", max(0.0, float(self.vision)))
         plant_range = target_ranges.get("plants", creature_range)
         carrion_range = target_ranges.get("carrion", plant_range)
@@ -624,7 +641,19 @@ class Lifeform:
         carcass_distance = carrion_sq
         carcass_candidate = None
 
-        for lifeform in self.state.lifeforms:
+        # --- Optimization: Use Spatial Grid if available ---
+        spatial_grid = getattr(self.state, "spatial_grid", None)
+        
+        if spatial_grid:
+            # Query candidates within the maximum sensory range
+            candidate_lifeforms = spatial_grid.query_lifeforms(self.x, self.y, self.sensory_range)
+            candidate_plants = spatial_grid.query_plants(self.x, self.y, self.sensory_range)
+        else:
+            # Fallback to full lists
+            candidate_lifeforms = self.state.lifeforms
+            candidate_plants = self.state.plants
+
+        for lifeform in candidate_lifeforms:
             if lifeform is self:
                 continue
             if lifeform.health_now <= 0:
@@ -693,7 +722,7 @@ class Lifeform:
                     prey_candidate = lifeform
                     prey_distance = distance_sq
 
-        for plant in self.state.plants:
+        for plant in candidate_plants:
             if plant.resource <= 0:
                 continue
 
@@ -761,18 +790,82 @@ class Lifeform:
         genome_data = dna_profile.get("genome") or generate_modular_blueprint(diet)
         try:
             genome = ensure_genome(genome_data)
-            graph = build_body_graph(genome)
+            graph, geometry = build_body_graph(genome, include_geometry=True)
         except Exception as exc:  # pragma: no cover - defensive fallback
             logger.exception(
                 "Failed to build body graph for dna %s: %s", dna_profile.get("dna_id"), exc
             )
             fallback = generate_modular_blueprint(diet)
             genome = ensure_genome(fallback)
-            graph = build_body_graph(genome)
+            graph, geometry = build_body_graph(genome, include_geometry=True)
         self.genome: Genome = genome
         self.genome_blueprint = genome.to_dict()
         self.body_graph = graph
+        self.body_geometry = geometry
         self.physics_body: PhysicsBody = build_physics_body(graph)
+
+    def _derive_stats_from_body(self) -> None:
+        """Calculate all gameplay stats from the assembled body graph."""
+        
+        # 1. Geometry
+        width, height, _ = self.body_graph.compute_bounds()
+        # Scale up slightly because modules are small (meters) and world is pixels
+        pixel_scale = settings.BODY_PIXEL_SCALE
+        if settings.USE_BODYGRAPH_SIZE:
+            if self.profile_geometry:
+                width = self.profile_geometry.get("width", width)
+                height = self.profile_geometry.get("height", height)
+            elif getattr(self, "body_geometry", None):
+                width = self.body_geometry.get("width", width)
+                height = self.body_geometry.get("height", height)
+        self.base_width = int(max(1.0, width * pixel_scale))
+        self.base_height = int(max(1.0, height * pixel_scale))
+
+        # 2-4. Collect stats in a single pass through modules (much faster!)
+        total_integrity = 0.0
+        module_capacity = 0.0
+        vision_bonus = 0.0
+        max_sensor_range = 0.0
+        
+        for module in self.body_graph.iter_modules():
+            # Health & Integrity
+            total_integrity += module.stats.integrity
+            
+            # Energy from Core modules
+            if module.module_type == "core":
+                module_capacity += getattr(module, "energy_capacity", 0.0)
+            
+            # Vision from Head modules
+            if module.module_type == "head":
+                vision_bonus += getattr(module, "vision_bonus", 0.0)
+            
+            # Sensor range from Sensor modules
+            if module.module_type == "sensor":
+                detection = getattr(module, "detection_range", 0.0)
+                if detection > max_sensor_range:
+                    max_sensor_range = detection
+        
+        self.health = max(10, int(total_integrity))
+        
+        base_energy = 100.0
+        mass_factor = self.physics_body.mass * 2.0
+        self.energy = int(base_energy + module_capacity + mass_factor)
+        
+        base_vision = 150.0
+        self.vision = base_vision + vision_bonus + max_sensor_range
+        
+        # 5. Combat Power
+        # Attack: Thrust (ramming) + Grip (grappling) + Mass (impact)
+        thrust_factor = self.physics_body.max_thrust * 0.2
+        grip_factor = self.physics_body.grip_strength * 0.5
+        mass_impact = self.physics_body.mass * 0.1
+        self.attack_power = max(1.0, thrust_factor + grip_factor + mass_impact)
+        
+        # Defence: Integrity (health) + Mass (bulk) + Density (armor)
+        integrity_factor = self.health * 0.1
+        bulk_factor = self.physics_body.mass * 0.2
+        armor_factor = self.physics_body.density * 5.0
+        self.defence_power = max(1.0, integrity_factor + bulk_factor + armor_factor)
 
     def _compute_buoyancy_debug(self) -> None:
         """Compute and store buoyancy diagnostics for debugging and inspection."""
@@ -845,6 +938,25 @@ class Lifeform:
 
     def _derive_sensor_suite(self) -> Dict[str, float]:
         return self._scan_sensor_modules()
+
+    def _apply_sensor_baselines(self, sensors: Dict[str, float]) -> None:
+        if not sensors:
+            return
+        spectral_count = len(sensors)
+        aggregate_range = sum(float(r) for r in sensors.values())
+        spectral_bonus = max(0, spectral_count * 2)
+        range_bonus = int(max(0.0, aggregate_range) / 60.0)
+        self.perception_rays = max(
+            self.morph_stats.perception_rays,
+            spectral_bonus + range_bonus + 4,
+        )
+        audio_specs = ("sonar", "bioelectric", "electro", "thermal")
+        best_audio = max((sensors.get(spec, 0.0) for spec in audio_specs), default=0.0)
+        if best_audio > 0:
+            self.hearing_range = max(
+                self.morph_stats.hearing_range,
+                min(420.0, best_audio * 1.6),
+            )
 
     def _scan_sensor_modules(self) -> Dict[str, float]:
         sensors: Dict[str, float] = {}
@@ -940,7 +1052,7 @@ class Lifeform:
             self.group_leader = None
             return
 
-        neighbors: List[Tuple[Lifeform, float]] = []
+        neighbors: List[Tuple["Lifeform", float]] = []
         total_distance = 0.0
         total_x = self.x
         total_y = self.y
@@ -1011,15 +1123,8 @@ class Lifeform:
     # Stats / combat / lifecycle
     # ------------------------------------------------------------------
     def set_speed(self, average_maturity: Optional[float] = None) -> None:
-        base_speed = (
-            6
-            - (self.hunger / 500)
-            - (self.age / 1000)
-            - (self.size / 250)
-            - (self.wounded / 20)
-        )
-        base_speed += self.health_now / 200
-        base_speed += self.energy / 100
+        def _clamp(value: float, low: float, high: float) -> float:
+            return max(low, min(high, value))
 
         biome, effects = self.state.world.get_environment_context(
             self.x + self.width / 2,
@@ -1027,34 +1132,70 @@ class Lifeform:
         )
         self.current_biome = biome
         self.environment_effects = effects
-        base_speed *= float(effects["movement"])
+        plant_modifier = 1.0
+        
+        # --- Optimization: Use Spatial Grid if available ---
+        spatial_grid = getattr(self.state, "spatial_grid", None)
+        if spatial_grid:
+            # Only check plants very close to us
+            check_radius = max(self.width, self.height) * 0.6
+            nearby_plants = spatial_grid.query_plants(self.rect.centerx, self.rect.centery, check_radius)
+        else:
+            nearby_plants = self.state.plants
 
-        for plant in self.state.plants:
+        for plant in nearby_plants:
             if plant.resource <= 0:
                 continue
             if plant.contains_point(self.rect.centerx, self.rect.centery):
-                base_speed *= plant.movement_modifier_for(self)
+                plant_modifier = plant.movement_modifier_for(self)
                 break
 
-        if self.age < self.maturity:
-            if average_maturity is None and self.state.lifeforms:
-                average_maturity = sum(l.maturity for l in self.state.lifeforms) / len(
-                    self.state.lifeforms
-                )
-            if average_maturity:
-                factor = self.maturity / average_maturity
-                base_speed *= factor / 10
+        body_mass = getattr(self, "body_mass", self.mass * 40.0)
+        thrust_ratio = self.max_thrust / max(18.0, body_mass * 1.2)
+        genetic_speed = 0.45 + min(3.4, thrust_ratio * 0.55)
+        locomotion_factor = _clamp(0.7 + self.speed_multiplier * 0.25, 0.65, 1.45)
+        propulsion_factor = _clamp(0.75 + getattr(self, "propulsion_efficiency", 1.0) * 0.2, 0.7, 1.35)
+        grip_factor = _clamp(0.7 + self.grip_strength * 0.2, 0.7, 1.3)
+        base_speed = genetic_speed * locomotion_factor * propulsion_factor * grip_factor
 
-        base_speed *= self.speed_multiplier
-        base_speed *= self.grip_strength
-        base_speed /= max(0.75, self.mass)
+        maturity_target = average_maturity or self.maturity or 1.0
+        maturity_target = max(1.0, maturity_target)
+        maturity_ratio = self.age / maturity_target
+        if maturity_ratio < 1.0:
+            age_factor = 0.4 + 0.6 * (maturity_ratio ** 0.8)
+        else:
+            elder_ratio = (self.age - maturity_target) / max(1.0, self.longevity - maturity_target)
+            age_factor = max(0.45, 1.0 - min(0.5, elder_ratio * 0.6))
 
-        base_speed = max(0.45, min(14.0, base_speed))
+        hunger_span = max(1.0, settings.HUNGER_CRITICAL_THRESHOLD - settings.HUNGER_RELAX_THRESHOLD)
+        hunger_norm = (self.hunger - settings.HUNGER_RELAX_THRESHOLD) / hunger_span
+        hunger_norm = _clamp(hunger_norm, 0.0, 1.5)
+        hunger_factor = _clamp(1.05 - 0.55 * (hunger_norm ** 1.1), 0.4, 1.05)
+
+        health_ratio = self.health_now / max(1.0, getattr(self, "health", 1.0))
+        energy_ratio = self.energy_now / max(1.0, getattr(self, "energy", 1.0))
+        vitality_factor = 0.5 + ((health_ratio * 0.7) + (energy_ratio * 0.3)) * 0.5
+        vitality_factor = _clamp(vitality_factor, 0.55, 1.2)
+
+        mass_drag = 1.0 - min(0.5, math.log1p(max(0.4, self.mass)) * 0.12)
+        adrenaline_boost = 1.0 + min(0.35, max(0.0, getattr(self, "adrenaline_factor", 0.0)) * 0.4)
+
+        base_speed *= age_factor
+        base_speed *= hunger_factor
+        base_speed *= vitality_factor
+        base_speed *= mass_drag
+        base_speed *= adrenaline_boost
+
+        movement_factor = float(effects.get("movement", 1.0))
+        base_speed *= movement_factor
+        base_speed *= plant_modifier
+
         pause_factor = getattr(self, "_wander_pause_speed_factor", 1.0)
         base_speed *= pause_factor
-        base_speed = min(14.0, base_speed)
-        base_speed = max(0.05, base_speed)
-        self.speed = base_speed
+
+        min_speed = 0.35 + 0.1 * self.speed_multiplier
+        max_speed = min(self.max_swim_speed * 0.12, 9.0 + self.speed_multiplier)
+        self.speed = _clamp(base_speed, min_speed, max_speed)
 
     def handle_death(self) -> bool:
         if self.health_now > 0:
@@ -1338,6 +1479,8 @@ class Lifeform:
             "dna_id": self.dna_id,
             "generation": self.generation,
             "diet": self.diet,
+            "base_form": self.base_form,
+            "base_form_label": self.base_form_label,
             "position": (self.x, self.y),
             "rect": (
                 self.rect.x,

@@ -28,6 +28,12 @@ Generate a screenshot of the current body graph without opening a window:
 python tools/module_viewer.py --screenshot output.png
 ```
 
+Headless mode uses SDL's dummy driver, so you can run screenshots in CI or when no display is attached. Combine with `--pose sketch` to export the reference creature:
+
+```bash
+python tools/module_viewer.py --pose sketch --screenshot docs/images/sketch.png
+```
+
 ### Custom Window Size
 
 Specify custom window dimensions:
@@ -65,6 +71,10 @@ The viewer displays:
    - Module types distinguished by color (based on `MODULE_RENDER_STYLES`)
    - Connections between modules shown as curved lines
    - Module labels beneath each component
+   - Attachment-aware polygons with tapered fin/tentacle outlines
+   - Convex hull "skin" drawn around the core body (limbs excluded)
+   - Bridges between attachment points so limbs visibly connect to the torso
+   - Optional debug overlay showing joints/axes (toggle with `J`)
 
 2. **Statistics Panel**:
    - Number of modules
@@ -90,18 +100,18 @@ The viewer supports adding these module types:
 
 ## Technical Details
 
-### Rendering
+#### Rendering
 The viewer reuses the same rendering code from the main simulation:
 - Module colors from `evolution.rendering.modular_palette`
+- Attachment-driven polygons and convex hull skin from `evolution.rendering.modular_renderer`
 - Physics aggregation from `evolution.body.body_graph`
 - Test creature builders from `evolution.physics.test_creatures`
+- Debug overlay toggle (`J`) to hide or show joint markers
 
-### Layout Algorithm
-Modules are positioned using a recursive tree layout algorithm:
-- Root module placed at center
-- Children arranged in a fan pattern
-- Dynamic spacing based on tree depth
-- Optional animation adds organic movement
+#### Layout & Animation
+- Modules inherit positions directly from the `BodyGraph` transforms so attachment points line up.
+- Limb outlines are custom tapered polygons; cores/head/torso use ellipse-derived outlines.
+- A lightweight spring solver (`_apply_physics`) simulates torque on joints, matching the planned sim behavior.
 
 ### Physics Integration
 When modules are added or removed:

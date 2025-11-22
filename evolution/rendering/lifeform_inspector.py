@@ -44,6 +44,8 @@ class LifeformInspector:
         self._hover_entries: List[Tuple[pygame.Rect, List[str]]] = []
         self._chrome = WindowChrome(self._panel_rect, min_size=(420, 360))
         self._header_height = 70
+        self._auto_resize_guard = False
+        self.visible = False
 
     # ------------------------------------------------------------------
     # Selection helpers
@@ -58,16 +60,19 @@ class LifeformInspector:
             lifeform = None
         self._selected = lifeform
         self._state.selected_lifeform = lifeform
+        self.visible = lifeform is not None
 
     def clear(self) -> None:
-        self.select(None)
+        self._selected = None
+        self._state.selected_lifeform = None
+        self.visible = False
 
     # ------------------------------------------------------------------
     # Event handling
     # ------------------------------------------------------------------
 
     def handle_event(self, event: pygame.event.Event) -> bool:
-        if self._selected is None:
+        if not self.visible or self._selected is None:
             return False
 
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
@@ -91,6 +96,8 @@ class LifeformInspector:
     # ------------------------------------------------------------------
 
     def draw_highlight(self, surface: pygame.Surface, camera: "Camera") -> None:
+        if not self.visible:
+            return
         lifeform = self._selected
         if lifeform is None:
             return
@@ -107,6 +114,8 @@ class LifeformInspector:
         pygame.draw.circle(surface, (30, 30, 30), center, radius + 2, 1)
 
     def draw(self, surface: pygame.Surface) -> None:
+        if not self.visible:
+            return
         lifeform = self._selected
         if lifeform is None:
             return
@@ -201,6 +210,14 @@ class LifeformInspector:
         _render_line("ID", lifeform.id)
         _render_line("DNA", str(lifeform.dna_id))
         _render_line("Generatie", str(lifeform.generation))
+        base_form_label = getattr(lifeform, "base_form_label", None)
+        base_form_key = getattr(lifeform, "base_form", None)
+        base_form_value = base_form_label or base_form_key
+        if base_form_value:
+            base_tooltip = None
+            if base_form_label and base_form_key and base_form_label != base_form_key:
+                base_tooltip = [f"Sleutel: {base_form_key}"]
+            _render_line("Basisvorm", str(base_form_value), base_tooltip)
         _render_line("Leeftijd", f"{lifeform.age:.1f} / {lifeform.longevity}", age_tooltip)
         _render_line("Positie", position)
         _render_line("Biome", biome_name, weather_tooltip)
@@ -350,6 +367,20 @@ class LifeformInspector:
         hint_text = "Laatste log: " + (Path(last_path).name if last_path else "geen")
         hint_surface = self._body_font.render(hint_text, True, (60, 60, 60))
         surface.blit(hint_surface, (self._panel_rect.left + 24, log_hint_y))
+
+        content_bottom = log_hint_y + hint_surface.get_height()
+        required_height = max(
+            self._chrome.min_size[1],
+            int(content_bottom - self._panel_rect.top + 32),
+        )
+        if required_height > self._panel_rect.height and not self._auto_resize_guard:
+            self._panel_rect.height = required_height
+            self._chrome.rect.height = required_height
+            self._chrome.mark_geometry_dirty()
+            self._auto_resize_guard = True
+            self.draw(surface)
+            self._auto_resize_guard = False
+            return
 
         draw_resize_grip(surface, self._chrome)
         self._draw_tooltip(surface)
@@ -580,13 +611,13 @@ class LifeformInspector:
         effects = lifeform.environment_effects
         tips: dict[str, List[str]] = {
             "health": [
-                f"Maximaal DNA: {lifeform.health}",
+                f"Anatomische waarde: {lifeform.health}",
                 f"Huidig: {lifeform.health_now:.1f}",
                 f"Wonden: {lifeform.wounded:.1f}",
                 f"Biome bonus: {effects.get('health', 0.0):+.2f}/s",
             ],
             "energy": [
-                f"Maximaal DNA: {lifeform.energy}",
+                f"Anatomische waarde: {lifeform.energy}",
                 f"Huidig: {lifeform.energy_now:.1f}",
                 f"Omgeving: x{float(effects.get('energy', 1.0)):.2f}",
                 f"Onderhoudskosten: {lifeform.maintenance_cost:.2f}/s",
@@ -606,7 +637,7 @@ class LifeformInspector:
             "defence": self._defence_breakdown(lifeform),
             "speed": self._speed_breakdown(lifeform),
             "vision": [
-                f"Basis DNA: {lifeform.vision - lifeform.morph_stats.vision_range_bonus:.1f}",
+                f"Anatomische waarde: {lifeform.vision - lifeform.morph_stats.vision_range_bonus:.1f}",
                 f"Morph bonus: +{lifeform.morph_stats.vision_range_bonus:.1f}",
                 f"Perceptiestralen: {lifeform.perception_rays}",
                 f"Hoorbereik: {lifeform.hearing_range:.1f}",
@@ -669,7 +700,7 @@ class LifeformInspector:
         return lines
 
     def _attack_breakdown(self, lifeform: "Lifeform") -> List[str]:
-        lines: List[str] = [f"Basis DNA: {lifeform.attack_power:.2f}"]
+        lines: List[str] = [f"Anatomische waarde: {lifeform.attack_power:.2f}"]
         energy_factor = lifeform.energy_now / 100.0
         lines.append(f"Energie ({lifeform.energy_now:.1f}) → x{energy_factor:.2f}")
         if lifeform.wounded > 0:
@@ -694,7 +725,7 @@ class LifeformInspector:
         return lines
 
     def _defence_breakdown(self, lifeform: "Lifeform") -> List[str]:
-        lines: List[str] = [f"Basis DNA: {lifeform.defence_power:.2f}"]
+        lines: List[str] = [f"Anatomische waarde: {lifeform.defence_power:.2f}"]
         energy_factor = lifeform.energy_now / 100.0
         lines.append(f"Energie ({lifeform.energy_now:.1f}) → x{energy_factor:.2f}")
         if lifeform.wounded > 0:

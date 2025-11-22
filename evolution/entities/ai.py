@@ -11,6 +11,7 @@ import pygame
 from pygame.math import Vector2
 
 from ..config import settings
+from . import movement_patterns
 
 if TYPE_CHECKING:
     from .lifeform import Lifeform
@@ -123,10 +124,35 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     energy_forced_search = getattr(lifeform, "_energy_starved", False)
 
     if desired.length_squared() == 0:
-        desired = _wander_vector(lifeform, now, dt)
+        # Use search patterns instead of simple wander
         lifeform.search = True
+        
+        # Pick a pattern based on species/intelligence
+        # For now, cycle based on time or random
+        t = now / 1000.0
+        
+        # Use spiral by default, or zigzag if we have a general direction
+        if lifeform.wander_direction.length_squared() > 0:
+             pattern_vec = movement_patterns.get_zigzag_vector(t, lifeform.wander_direction)
+        else:
+             pattern_vec = movement_patterns.get_spiral_vector(t)
+             
+        desired = pattern_vec
     else:
         lifeform.search = energy_forced_search
+
+    # Determine and set Behavior Mode
+    new_mode = "idle"
+    if threat_vector.length_squared() > 0:
+        new_mode = "flee"
+    elif pursuit_vector.length_squared() > 0:
+        new_mode = "hunt"
+    elif lifeform.in_group and getattr(lifeform, "boid_tendency", 0) > 0.4:
+        new_mode = "flock"
+    elif lifeform.search:
+        new_mode = "search"
+        
+    lifeform.current_behavior_mode = new_mode
 
     if lifeform.search and _search_mode_active(lifeform):
         _apply_speed_drift(lifeform, dt)
@@ -711,6 +737,11 @@ def _group_behavior_vector(lifeform: "Lifeform") -> Vector2:
         getattr(lifeform, "boid_tendency", getattr(lifeform, "social_tendency", 0.5))
     )
     boid_drive = max(0.0, min(1.0, boid_drive))
+    
+    # Non-linear boost for high boid tendency to make flocking very distinct
+    if boid_drive > 0.5:
+        boid_drive = min(1.0, boid_drive * 1.4)
+        
     if boid_drive <= 0.01:
         return Vector2()
 
@@ -1493,9 +1524,10 @@ def _close_to_food_target(lifeform: "Lifeform") -> bool:
         return False
 
     distance = lifeform.distance_to_plant(plant)
+    feeding_radius = lifeform._plant_feeding_radius(plant)
 
     # Buiten de “eet cirkel”? Dan gewoon normale navigatie.
-    if distance > CLOSE_FOOD_RADIUS:
+    if distance > feeding_radius:
         lifeform._feeding_frames = 0
         return False
 

@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
+import pygame
+
 from typing import TYPE_CHECKING
-
 from ..config import settings
+from ..systems import telemetry
 
-if TYPE_CHECKING:  # pragma: no cover - only for type checkers
+if TYPE_CHECKING:
     from .lifeform import Lifeform
 
 
 def resolve_close_interactions(lifeform: "Lifeform") -> None:
-    """Handle melee combat, feeding, and reproduction for a lifeform."""
+    """Handle melee combat, predation, plant-feeding, reproduction."""
 
     context = lifeform.notification_context
     effects = lifeform.effects_manager
@@ -25,6 +27,12 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
     if enemy and enemy.health_now > 0 and lifeform.distance_to(enemy) < enemy_reach:
         damage = max(1, lifeform.attack_power_now - enemy.defence_power_now / 2)
         enemy.health_now -= damage
+        telemetry.combat_sample(
+            tick=pygame.time.get_ticks(),
+            attacker=lifeform,
+            defender=enemy,
+            damage=damage,
+        )
         enemy.wounded += 2
         lifeform.record_activity(
             "Valt vijand aan",
@@ -80,6 +88,12 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
     ):
         damage = max(1, lifeform.attack_power_now - prey.defence_power_now / 2)
         prey.health_now -= damage
+        telemetry.combat_sample(
+            tick=pygame.time.get_ticks(),
+            attacker=lifeform,
+            defender=prey,
+            damage=damage,
+        )
         prey.wounded += 3
         lifeform.hunger = max(settings.HUNGER_MINIMUM, lifeform.hunger - 40)
         if context:

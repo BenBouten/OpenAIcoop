@@ -191,3 +191,9 @@ Met dit stappenplan krijgt elk discipline een duidelijk anker voor de retro gami
   worden doorgegeven.
 - Production kan deze blueprint gebruiken om de eerste POC van de sideways oceaanwereld te implementeren zonder later van stijl te hoeven
   wisselen.
+
+### Module Viewer & Rendering Pipeline
+- `tools/module_viewer.py` has evolved into a reference renderer for the modular bodies. It now draws polygons anchored to attachment points, builds a convex hull “skin” that excludes limbs, and renders fin/tentacle outlines with tapered geometry so attachments visually align with the underlying physics.
+- Headless screenshot mode (`--screenshot`) and the `--pose sketch` preset let designers capture consistent visuals and iterate on the reference creature from the design sketch.
+- Debug overlays (toggle with `J`) display joint markers and axes, enabling quick validation that the attachment math matches the physics body.
+- These rendering upgrades now power the simulation too, so the viewer and in-game lifeforms share identical attachment-aware visuals.

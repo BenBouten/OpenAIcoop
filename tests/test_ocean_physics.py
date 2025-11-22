@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 from types import SimpleNamespace
 
@@ -68,6 +69,55 @@ def test_neutral_buoyancy_does_not_cause_sinking() -> None:
     assert abs(creature.velocity.y) < 1e-6
     assert abs(next_position.y - creature.y) < 1e-6
     assert creature.last_fluid_properties == fluid
+
+
+def test_positive_buoyancy_pushes_creature_upward() -> None:
+    """Creatures lighter than the fluid should gain upward velocity."""
+
+    ocean = OceanPhysics(400, 400)
+    depth = ocean.depth * 0.25
+    base_body = _neutral_body(ocean, depth)
+    light_body = replace(
+        base_body,
+        mass=base_body.mass * 0.6,
+        density=base_body.density * 0.6,
+    )
+    creature = DummyLifeform(light_body, depth)
+
+    next_position, _ = ocean.integrate_body(
+        creature,
+        thrust=Vector2(),
+        dt=0.4,
+        max_speed=40.0,
+    )
+
+    assert next_position.y < creature.y
+    assert creature.velocity.y < 0.0
+
+
+def test_negative_buoyancy_causes_sinking() -> None:
+    """Creatures denser than the fluid should sink without thrust."""
+
+    ocean = OceanPhysics(400, 400)
+    depth = ocean.depth * 0.5
+    base_body = _neutral_body(ocean, depth)
+    heavy_body = replace(
+        base_body,
+        mass=base_body.mass * 1.5,
+        density=base_body.density * 1.5,
+    )
+    creature = DummyLifeform(heavy_body, depth)
+
+    next_position, _ = ocean.integrate_body(
+        creature,
+        thrust=Vector2(),
+        dt=0.4,
+        max_speed=40.0,
+    )
+
+    assert next_position.y > creature.y
+    assert creature.velocity.y > 0.0
+
 
 
 def test_properties_at_clamps_negative_depth() -> None:

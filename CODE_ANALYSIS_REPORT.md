@@ -775,3 +775,12 @@ def spawn_lifeform():
 **Total Recommendations**: 60+  
 **Estimated Effort**: 8-10 weeks for complete implementation  
 **Expected Impact**: 10x improvement in maintainability and reliability
+
+---
+
+## Recommendations
+
+### 1. Rendering & Tooling (NEW)
+- **Integrate modular renderer**: Reuse `evolution.rendering.modular_renderer` inside `draw_lifeform.py` so the sim shows the same attachment-aware hull used in `tools/module_viewer.py`.
+- **Attachment validation**: Keep the convex-hull skin and joint markers available behind a debug flag so QA can confirm modules sit flush during gameplay.
+- **Screenshot automation**: Use the viewer’s headless `--screenshot` mode in CI to produce documentation assets whenever module definitions change.

@@ -93,8 +93,12 @@ def build_body_graph(
     dna_data: Mapping[str, object] | Genome,
     *,
     module_factories: Optional[Mapping[str, ModuleFactory]] = None,
-) -> BodyGraph:
-    """Convert DNA data into a validated :class:`BodyGraph`."""
+    include_geometry: bool = False,
+) -> BodyGraph | tuple[BodyGraph, Dict[str, float]]:
+    """Convert DNA data into a validated :class:`BodyGraph`.
+
+    When ``include_geometry`` is true, returns ``(graph, geometry_summary)``.
+    """
 
     genome = dna_data if isinstance(dna_data, Genome) else ensure_genome(dna_data)
     factories = dict(DEFAULT_MODULE_FACTORIES)
@@ -120,6 +124,8 @@ def build_body_graph(
 
     graph.validate()
     _validate_graph_constraints(graph, genome.constraints)
+    if include_geometry:
+        return graph, graph.geometry_summary()
     return graph
 
 

@@ -9,6 +9,7 @@ import pygame
 from pygame.math import Vector2
 
 from ..body.body_graph import BodyGraph
+from ..config import settings
 from .modular_palette import BASE_MODULE_ALPHA, MODULE_RENDER_STYLES, tint_color
 
 Color = Tuple[int, int, int]
@@ -18,6 +19,15 @@ BaseKey = Tuple[str, int, int, Color, MorphSignature, ModuleSignature]
 RotationKey = Tuple[str, int, int, Color, MorphSignature, ModuleSignature, int]
 
 CONNECTION_COLOR = (18, 42, 68)
+
+MODULE_RENDER_PROFILES: Dict[str, Dict[str, float]] = {
+    "core": {"length_scale": 0.55, "height_scale": 1.05, "max_aspect": 1.35},
+    "head": {"length_scale": 0.75, "height_scale": 0.9, "max_aspect": 1.5},
+    "sensor": {"length_scale": 0.8, "height_scale": 0.8, "max_aspect": 1.6},
+    "propulsion": {"length_scale": 1.3, "height_scale": 0.55},
+    "limb": {"length_scale": 1.35, "height_scale": 0.5},
+    "default": {"length_scale": 1.0, "height_scale": 0.6},
+}
 
 
 def _clamp_color(value: int) -> int:
@@ -40,10 +50,49 @@ def _evenly_spaced_positions(count: int, start: float, end: float) -> Iterable[f
 class LifeformSpriteCache:
     """Cache rotated sprites per DNA profile and angle bin."""
 
-    def __init__(self, angle_bin_size: int = 15) -> None:
-        self._angle_bin_size = max(1, angle_bin_size)
-        self._base: Dict[BaseKey, pygame.Surface] = {}
+    def __init__(self) -> None:
+        self._lifeform_cache: Dict[str, pygame.Surface] = {}
+        self._faction_cache: Dict[str, pygame.Surface] = {}
         self._rotations: Dict[RotationKey, pygame.Surface] = {}
+        self._base: Dict[BaseKey, pygame.Surface] = {}
+        self._angle_bin_size = float(getattr(settings, "SPRITE_ANGLE_BIN_DEG", 5.0))
+        if self._angle_bin_size <= 0:
+            self._angle_bin_size = 5.0
+
+    def get_body(self, lifeform) -> pygame.Surface:
+        """Return the rotated body sprite for ``lifeform``."""
+
+        if settings.USE_BODYGRAPH_SIZE:
+            # Legacy path: still cache sprites for non-modular creatures.
+            cache_key = lifeform.dna_id
+            if cache_key not in self._lifeform_cache:
+                sprite = self._render_lifeform(lifeform)
+                self._lifeform_cache[cache_key] = sprite
+            return self._lifeform_cache[cache_key]
+        return self._render_lifeform(lifeform)
+
+    def _render_lifeform(self, lifeform) -> pygame.Surface:
+        angle_bin = self._angle_bin(getattr(lifeform, "angle", 0.0))
+        rotation_key = self._rotation_key(lifeform, angle_bin)
+        if rotation_key in self._rotations:
+            return self._rotations[rotation_key]
+
+        base_key = self._base_key(lifeform)
+        surface = self._base.get(base_key)
+        if surface is None:
+            width = int(round(max(1.0, lifeform.width)))
+            height = int(round(max(1.0, lifeform.height)))
+            if settings.USE_BODYGRAPH_SIZE:
+                width = int(round(max(1.0, self._sprite_width(lifeform))))
+                height = int(round(max(1.0, self._sprite_height(lifeform))))
+            color = base_key[3]
+            surface = self._create_body_surface(lifeform, width, height, color)
+            self._base[base_key] = surface
+
+        target_angle = angle_bin * self._angle_bin_size
+        rotated = pygame.transform.rotate(surface, target_angle)
+        self._rotations[rotation_key] = rotated
+        return rotated
 
     def _angle_bin(self, angle: float) -> int:
         normalized = angle % 360.0
@@ -81,8 +130,8 @@ class LifeformSpriteCache:
         return tuple(collected)
 
     def _base_key(self, lifeform) -> BaseKey:
-        width = int(round(max(1.0, lifeform.width)))
-        height = int(round(max(1.0, lifeform.height)))
+        width = int(round(max(1.0, self._sprite_width(lifeform))))
+        height = int(round(max(1.0, self._sprite_height(lifeform))))
         color = tuple(int(c) for c in getattr(lifeform, "body_color", lifeform.color))  # type: ignore[arg-type]
         return (
             str(lifeform.dna_id),
@@ -260,14 +309,17 @@ class LifeformSpriteCache:
         positions = self._project_layout(layout, sprite_width, sprite_height, margin)
         surface = pygame.Surface((sprite_width, sprite_height), pygame.SRCALPHA)
         self._draw_connections(surface, graph, positions)
-        module_scale = max(12.0, max(width, height) * 0.45)
+        module_scale = self._module_scale(max(width, height))
         for node_id, node in graph.nodes.items():
             if node_id not in positions:
                 continue
             module_surface = self._build_module_surface(node.module, base_color, module_scale)
             rect = module_surface.get_rect()
             rect.center = (int(positions[node_id].x), int(positions[node_id].y))
-            surface.blit(module_surface, rect)
+            angle = graph.node_transform(node_id)[2]
+            rotated = pygame.transform.rotate(module_surface, angle)
+            rect = rotated.get_rect(center=rect.center)
+            surface.blit(rotated, rect)
         return surface
 
     def _draw_connections(
@@ -299,25 +351,15 @@ class LifeformSpriteCache:
 
     def _layout_body_graph(self, graph: BodyGraph) -> Dict[str, Vector2]:
         layout: Dict[str, Vector2] = {}
-        queue: list[Tuple[str, float, float]] = [(graph.root_id, 0.0, 0.0)]
-        visited: set[str] = set()
-        while queue:
-            node_id, offset_x, offset_y = queue.pop(0)
-            if node_id in visited:
-                continue
-            visited.add(node_id)
-            layout[node_id] = Vector2(offset_x, offset_y)
-            try:
-                children = list(graph.children_of(node_id).keys())
-            except KeyError:
-                continue
-            if not children:
-                continue
-            spread = max(1, len(children))
-            for idx, child_id in enumerate(children):
-                child_offset_x = offset_x + 1.0
-                child_offset_y = offset_y + (idx - (spread - 1) / 2.0) * 0.9
-                queue.append((child_id, child_offset_x, child_offset_y))
+        for node_id in graph.nodes:
+            x, y, _ = graph.node_transform(node_id)
+            layout[node_id] = Vector2(x, y)
+        if not layout:
+            return layout
+        min_x = min(pos.x for pos in layout.values())
+        min_y = min(pos.y for pos in layout.values())
+        for node_id, pos in layout.items():
+            layout[node_id] = Vector2(pos.x - min_x, pos.y - min_y)
         return layout
 
     def _project_layout(
@@ -331,30 +373,42 @@ class LifeformSpriteCache:
             return {}
         xs = [pos.x for pos in layout.values()]
         ys = [pos.y for pos in layout.values()]
-        min_x = min(xs)
         max_x = max(xs)
-        min_y = min(ys)
         max_y = max(ys)
-        span_x = max(1e-3, max_x - min_x)
-        span_y = max(1e-3, max_y - min_y)
         draw_width = max(1.0, sprite_width - margin * 2)
         draw_height = max(1.0, sprite_height - margin * 2)
         positions: Dict[str, Vector2] = {}
         for node_id, offset in layout.items():
-            norm_x = (offset.x - min_x) / span_x if span_x > 1e-3 else 0.5
-            norm_y = (offset.y - min_y) / span_y if span_y > 1e-3 else 0.5
+            norm_x = offset.x / max(1e-3, max_x)
+            norm_y = offset.y / max(1e-3, max_y)
             positions[node_id] = Vector2(
                 margin + norm_x * draw_width,
                 margin + norm_y * draw_height,
             )
         return positions
 
+    def _module_scale(self, body_span: float) -> float:
+        return max(settings.MODULE_SPRITE_MIN_PX, body_span * settings.MODULE_SPRITE_SCALE)
+
     def _build_module_surface(self, module, base_color: Color, scale: float) -> pygame.Surface:
         module_type = getattr(module, "module_type", "default") or "default"
         color, alpha = self._module_visuals(base_color, module_type)
         size = getattr(module, "size", (1.0, 1.0, 1.0))
-        length = max(12, int(float(size[2]) * scale))
-        height = max(10, int(float(size[1]) * scale * 0.6))
+        profile = MODULE_RENDER_PROFILES.get(module_type, MODULE_RENDER_PROFILES["default"])
+        length_scale = profile.get("length_scale", 1.0)
+        height_scale = profile.get("height_scale", 0.6)
+        length = max(
+            int(settings.MODULE_SPRITE_MIN_LENGTH),
+            int(float(size[2]) * scale * length_scale),
+        )
+        height = max(
+            int(settings.MODULE_SPRITE_MIN_HEIGHT),
+            int(float(size[1]) * scale * height_scale),
+        )
+        max_aspect = profile.get("max_aspect")
+        if max_aspect:
+            max_length = max(int(settings.MODULE_SPRITE_MIN_LENGTH), int(height * max_aspect))
+            length = min(length, max_length)
         surface = pygame.Surface((length, height), pygame.SRCALPHA)
         ellipse_rect = pygame.Rect(0, 0, length, height)
         pygame.draw.ellipse(surface, (*color, alpha), ellipse_rect)
@@ -421,27 +475,19 @@ class LifeformSpriteCache:
         alpha = max(60, min(255, BASE_MODULE_ALPHA + alpha_offset))
         return tinted, alpha
 
-    def get_body(self, lifeform) -> pygame.Surface:
-        """Return the rotated body sprite for ``lifeform``."""
+    def _sprite_width(self, lifeform) -> float:
+        if settings.USE_BODYGRAPH_SIZE:
+            geom = getattr(lifeform, "profile_geometry", {}) or getattr(lifeform, "body_geometry", {})
+            width = float(geom.get("width", lifeform.width))
+            return width * settings.BODY_PIXEL_SCALE
+        return float(lifeform.width)
 
-        angle_bin = self._angle_bin(getattr(lifeform, "angle", 0.0))
-        rotation_key = self._rotation_key(lifeform, angle_bin)
-        if rotation_key in self._rotations:
-            return self._rotations[rotation_key]
-
-        base_key = self._base_key(lifeform)
-        surface = self._base.get(base_key)
-        if surface is None:
-            width = int(round(max(1.0, lifeform.width)))
-            height = int(round(max(1.0, lifeform.height)))
-            color = base_key[3]
-            surface = self._create_body_surface(lifeform, width, height, color)
-            self._base[base_key] = surface
-
-        target_angle = angle_bin * self._angle_bin_size
-        rotated = pygame.transform.rotate(surface, target_angle)
-        self._rotations[rotation_key] = rotated
-        return rotated
+    def _sprite_height(self, lifeform) -> float:
+        if settings.USE_BODYGRAPH_SIZE:
+            geom = getattr(lifeform, "profile_geometry", {}) or getattr(lifeform, "body_geometry", {})
+            height = float(geom.get("height", lifeform.height))
+            return height * settings.BODY_PIXEL_SCALE
+        return float(lifeform.height)
 
 
 lifeform_sprite_cache = LifeformSpriteCache()

@@ -1,0 +1,20 @@
+# Default runtime settings for OpenAI Coop Evolution Simulator
+# Values here override built-in defaults and can be overridden by env variables or CLI flags.
+world_width: 5200
+world_height: 6400
+window_width: 1920
+window_height: 1080
+n_lifeforms: 140
+max_lifeforms: 220
+mutation_chance: 8
+fps: 45
+telemetry_enabled: false
+body_pixel_scale: 6.0
+module_sprite_scale: 0.12
+module_sprite_min_px: 6.0
+module_sprite_min_length: 4.0
+module_sprite_min_height: 4.0
+log_directory: "logs"
+debug_log_file: "simulation_debug.log"
+debug_log_level: "INFO"
+use_bodygraph_size: true

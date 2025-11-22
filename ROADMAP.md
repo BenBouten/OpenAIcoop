@@ -19,6 +19,8 @@ Create a polished evolution simulation game that combines scientific accuracy wi
 - ✅ **NEW**: Documentation (README, CONTRIBUTING, etc.)
 - ✅ **NEW**: CI/CD pipeline
 - ✅ **NEW**: Code quality tools
+- ✅ **NEW**: Attachment-aware module viewer (convex hull skin, fin outlines, sketch pose)
+- ✅ **NEW**: Simulation uses the same renderer for modular lifeforms
 
 **Current Limitations**:
 - ⚠️ Only 9% test coverage
@@ -79,6 +81,7 @@ Create a polished evolution simulation game that combines scientific accuracy wi
 - [ ] Add comprehensive error handling
 - [ ] Performance profiling and optimization
 - [ ] Configuration management system
+- [ ] Integrate modular renderer into in-sim lifeform rendering
 
 **Deliverables**:
 - [ ] Expand test suite to 50+ test files
@@ -283,6 +286,7 @@ Create a polished evolution simulation game that combines scientific accuracy wi
 - [ ] Write 20 new unit tests
 - [ ] Achieve 30% coverage
 - [ ] Document testing strategy
+- [ ] Verify modular renderer integration path for the sim
 
 ### Week 2: Code Quality
 - [ ] Run ruff on entire codebase

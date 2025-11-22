@@ -13,6 +13,7 @@ GridCell = Tuple[int, int]
 
 from .moss_dna import MossDNA, average_dna, ensure_dna_for_cells, random_moss_dna
 from ..config import settings
+from .seaweed import SeaweedCellState, SeaweedStrand, create_initial_strands, create_strand_from_brush
 
 
 NEIGHBOR_OFFSETS: Tuple[Tuple[int, int], ...] = (
@@ -99,8 +100,9 @@ class MossCluster:
 
     cells: Mapping[GridCell, MossDNA | MossCellState] | Iterable[GridCell]
     color: Tuple[int, int, int] = (68, 132, 88)
-    CELL_SIZE: ClassVar[int] = 2
+    CELL_SIZE: ClassVar[int] = 8
     BASE_GROWTH_DELAY: ClassVar[int] = 180
+    MIN_FEED_RADIUS: ClassVar[float] = 4.0
 
     surface: pygame.Surface = field(init=False, repr=False)
     rect: pygame.Rect = field(init=False)
@@ -529,6 +531,10 @@ class MossCluster:
             energy_delta=net_energy,
             toxin_damage=toxin_damage,
         )
+
+    def core_radius(self) -> float:
+        span = max(float(self.width), float(self.height))
+        return max(self.MIN_FEED_RADIUS, span * 0.25)
 
 def _distance_sq_to_point(cell: GridCell, point: Tuple[int, int], cell_size: int) -> float:
     cell_center = (

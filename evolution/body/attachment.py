@@ -51,6 +51,10 @@ class AttachmentPoint:
     description: str = ""
     max_child_mass: float | None = None
     allowed_materials: Sequence[str] | None = None
+    offset: Tuple[float, float] = (0.0, 0.0)
+    angle: float = 0.0
+    clearance: float = 0.0
+    relative: bool = False
 
     def allows(self, module: "BodyModule" | Type["BodyModule"]) -> bool:
         """Return ``True`` if the ``module`` is allowed to attach here."""

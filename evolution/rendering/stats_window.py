@@ -15,11 +15,21 @@ class StatsWindow:
     def __init__(self, body_font: pygame.font.Font, heading_font: pygame.font.Font) -> None:
         self.font = body_font
         self.heading_font = heading_font
-        self.rect = pygame.Rect(24, 24, 360, 440)
+        self.rect = pygame.Rect(24, 80, 360, 440)
         self._chrome = WindowChrome(self.rect, min_size=(320, 320))
         self._header_height = 60
         self._stats: Optional[Dict[str, object]] = None
         self._close_button = pygame.Rect(0, 0, 20, 20)
+        self.visible = True
+
+    def show(self) -> None:
+        self.visible = True
+
+    def hide(self) -> None:
+        self.visible = False
+
+    def toggle(self) -> None:
+        self.visible = not self.visible
 
     def update_stats(self, stats: Dict[str, object]) -> None:
         self._stats = stats
@@ -28,12 +38,12 @@ class StatsWindow:
         self._stats = None
 
     def handle_event(self, event: pygame.event.Event) -> bool:
-        if not self._stats:
+        if not self.visible or not self._stats:
             return False
         consumed = False
         if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             if self._close_button.collidepoint(event.pos):
-                self.clear()
+                self.hide()
                 return True
         if event.type in (pygame.MOUSEBUTTONDOWN, pygame.MOUSEBUTTONUP, pygame.MOUSEMOTION):
             chrome_consumed, _ = self._chrome.handle_event(event, self._header_rect())
@@ -41,7 +51,7 @@ class StatsWindow:
         return consumed
 
     def draw(self, surface: pygame.Surface) -> None:
-        if not self._stats:
+        if not self.visible or not self._stats:
             return
 
         self._chrome.clamp_to_display()

@@ -210,6 +210,20 @@ No security vulnerabilities introduced by this fix:
 - No changes to authentication, authorization, or data handling
 - Minimal code footprint (4 lines changed total)
 
+## Update (Prototype Thrust Scaling – Nov 2025)
+
+A new prototype refines thrust effort to react to actual velocity and desired swim speed.
+
+### Highlights
+- **Effort helper** `_compute_thrust_effort` targets `max_swim_speed` with a PI-like correction, respecting `propulsion_efficiency` and adrenaline boosts.
+- **Behavioral ratios** split thrust vs. oscillation frequency, allowing calm species to pulse slowly while predators ramp to fast beats.
+- **Vector blending** `_blend_desired_with_velocity` now dampens lateral slip based on fin count and adrenaline, producing smoother banking turns.
+- **Tests** were updated (`tests/test_swimming_thrust.py`) to cover the new helpers and steering behaviour.
+
+### Next Steps
+- Gather telemetry in real simulations to tune response bands per locomotion archetype.
+- Add integration-level movement regression so future tuning can safely iterate.
+
 ## Conclusion
 
 The swimming movement issue has been successfully resolved through a targeted fix of the thrust effort calculation. By properly normalizing behavioral speed against its own range rather than against physical capabilities, creatures can now:

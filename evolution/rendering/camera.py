@@ -112,3 +112,11 @@ class Camera:
         screen_x = int((position[0] - self.viewport.left) * scale_x)
         screen_y = int((position[1] - self.viewport.top) * scale_y)
         return screen_x, screen_y
+
+    def render_bounds(self, padding: int = 64) -> "RenderBounds":
+        from .conditions import RenderBounds
+
+        return RenderBounds(self.viewport.copy(), padding=padding)
+
+    def view_rect(self) -> pygame.Rect:
+        return self.viewport.copy()
