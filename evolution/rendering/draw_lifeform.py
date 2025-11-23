@@ -123,6 +123,10 @@ def draw_lifeform(
     body_graph = getattr(lifeform, "body_graph", None)
     if body_graph is not None:
         body, reference = modular_lifeform_renderer.render_surface(lifeform)
+        # Rotate the body to match the lifeform's orientation
+        # Note: We rotate the surface itself because the modular renderer draws in local space (mostly)
+        # or at least the surface is generated axis-aligned to the body's base dimensions.
+        body = pygame.transform.rotate(body, lifeform.angle)
     else:
         body = lifeform_sprite_cache.get_body(lifeform)
         reference = (render_width, render_height)

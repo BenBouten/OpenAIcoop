@@ -347,12 +347,19 @@ class CreatureCreatorOverlay:
             )
             
             pygame.draw.polygon(surface, color, polygon)
+            # Low poly outline
+            outline_color = (200, 240, 120) if module.node_id == self._selected_node else (220, 240, 255)
             pygame.draw.polygon(
                 surface,
-                (200, 240, 120) if module.node_id == self._selected_node else (20, 30, 40),
+                outline_color,
                 polygon,
                 2,
             )
+            # Internal triangulation lines
+            center_pt = (int(center_vec.x), int(center_vec.y))
+            internal_color = (min(255, color[0] + 40), min(255, color[1] + 40), min(255, color[2] + 40))
+            for pt in polygon:
+                pygame.draw.line(surface, internal_color, center_pt, pt, 1)
             label = self.font.render(module.module_type, True, (10, 15, 25))
             rect = label.get_rect(center=(int(center_vec.x), int(center_vec.y)))
             surface.blit(label, rect)
@@ -991,10 +998,11 @@ class CreatureCreatorOverlay:
             return self._disk_polygon(center, scale * 12)
         return []
 
-    def _ellipse_polygon(self, center: pygame.Vector2, a: float, b: float, segments: int = 12) -> List[Tuple[int, int]]:
+    def _ellipse_polygon(self, center: pygame.Vector2, a: float, b: float, segments: int = 7) -> List[Tuple[int, int]]:
         points = []
+        offset_angle = 15.0
         for i in range(segments):
-            theta = i * (math.pi * 2) / segments
+            theta = i * (math.pi * 2) / segments + math.radians(offset_angle)
             x = center.x + a * math.cos(theta)
             y = center.y + b * math.sin(theta)
             points.append((x, y))
@@ -1011,8 +1019,33 @@ class CreatureCreatorOverlay:
         tip = (center.x, center.y - size)
         return [shaft, tip]
 
-    def _disk_polygon(self, center: pygame.Vector2, radius: float, segments: int = 8) -> List[Tuple[int, int]]:
+    def _disk_polygon(self, center: pygame.Vector2, radius: float, segments: int = 6) -> List[Tuple[int, int]]:
         return self._ellipse_polygon(center, radius, radius, segments)
+
+    def _draw_attachment_points(self, surface: pygame.Surface, module: ModuleDraft) -> None:
+        polygon: List[Tuple[int, int]] = self._appearance_cache.get(module.node_id, {}).get("polygon", [])
+        if not polygon:
+            return
+        center = pygame.Vector2(sum(p[0] for p in polygon) / len(polygon), sum(p[1] for p in polygon) / len(polygon))
+        try:
+            attachment_points = self._draft.attachment_points(module.node_id)
+        except Exception:
+            attachment_points = []
+        if not attachment_points:
+            return
+        for point in attachment_points:
+            angle = math.radians(point.angle or 0.0)
+            radius = 16.0 * self._appearance_cache.get(module.node_id, {}).get("scale", 1.0)
+            direction = pygame.Vector2(math.cos(angle), math.sin(angle))
+            if point.offset:
+                direction.x += point.offset[0]
+                direction.y += point.offset[1]
+            handle = center + direction.normalize() * radius
+            pygame.draw.circle(surface, (220, 240, 180), (int(handle.x), int(handle.y)), 5, 1)
+            pygame.draw.circle(surface, (220, 240, 180), (int(handle.x), int(handle.y)), 2)
+            label = self.font.render(point.name[:4], True, (220, 240, 180))
+            surface.blit(label, (handle.x - label.get_width() / 2, handle.y - label.get_height() / 2))
+
 
     def _draw_attachment_points(self, surface: pygame.Surface, module: ModuleDraft) -> None:
         polygon: List[Tuple[int, int]] = self._appearance_cache.get(module.node_id, {}).get("polygon", [])

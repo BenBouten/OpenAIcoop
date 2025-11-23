@@ -25,7 +25,7 @@ class MutationError(RuntimeError):
 
 _MUTATION_TEMPLATES = {
     key: DEFAULT_MODULE_FACTORIES[key]
-    for key in ("head", "limb", "propulsion", "sensor", "tentacle", "bell_core")
+    for key in ("head", "limb", "propulsion", "sensor", "tentacle", "bell_core", "eye", "mouth")
 }
 
 _MATERIAL_LIBRARY: Dict[str, Tuple[str, ...]] = {
@@ -36,6 +36,8 @@ _MATERIAL_LIBRARY: Dict[str, Tuple[str, ...]] = {
     "tentacle": ("mesoglea", "flex-polymer"),
     "propulsion": ("titanium", "ceramic"),
     "sensor": ("ceramic", "bio-alloy"),
+    "eye": ("organic", "ceramic"),
+    "mouth": ("chitin", "organic"),
 }
 
 
@@ -230,13 +232,32 @@ def _select_module_for_attachment(
     attachment: AttachmentPoint, *, rng: random.Random
 ) -> Optional[str]:
     candidates: List[str] = []
+    weights: List[float] = []
+    
+    # Define base weights for module types to control rarity
+    # This satisfies the requirement: "mutate other modules ... to a lower chance"
+    # Common modules have high weight, specialized ones have low weight.
+    base_weights = {
+        "limb": 30.0,
+        "sensor": 30.0,
+        "propulsion": 20.0,
+        "head": 2.0,
+        "tentacle": 5.0,   # Rare
+        "bell_core": 1.0,  # Very rare
+        "eye": 15.0,
+        "mouth": 10.0,
+    }
+    
     for module_type, factory in _MUTATION_TEMPLATES.items():
         probe = factory("probe", {})
         if attachment.allows(probe):
             candidates.append(module_type)
+            weights.append(base_weights.get(module_type, 10.0))
+            
     if not candidates:
         return None
-    return rng.choice(candidates)
+        
+    return rng.choices(candidates, weights=weights, k=1)[0]
 
 
 def _collect_subtree(genes: Mapping[str, ModuleGene], start: str) -> set[str]:

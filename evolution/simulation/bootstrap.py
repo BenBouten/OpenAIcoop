@@ -96,11 +96,30 @@ def reset_simulation(
 
 def generate_dna_profiles(state: SimulationState, world: World) -> None:
     """Generate the configurable DNA profile catalogue."""
+    from ..dna.base_forms import BASE_FORMS, base_form_keys
 
     state.dna_profiles.clear()
     state.dna_home_biome.clear()
 
-    for dna_id in range(settings.N_DNA_PROFILES):
+    base_keys = list(base_form_keys())
+    
+    # Ensure we have at least one of each base form if N_DNA_PROFILES allows
+    for i in range(settings.N_DNA_PROFILES):
+        dna_id = i
+        
+        # Cycle through base forms for the first N, then random
+        if i < len(base_keys):
+            base_key = base_keys[i]
+        else:
+            base_key = random.choice(base_keys)
+            
+        base_def = BASE_FORMS[base_key]
+        
+        # Use base form defaults for diet if possible, or randomize based on form
+        # For now, we keep the random diet logic but maybe bias it?
+        # Actually, let's stick to the existing random diet logic but maybe tweak it later.
+        # The user wants distinct base forms.
+        
         diet = random.choices(
             ["herbivore", "omnivore", "carnivore"],
             weights=[0.4, 0.35, 0.25],
@@ -151,10 +170,13 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
         restlessness = random.uniform(*restlessness_range)
         boid_tendency = random.uniform(*boid_range)
 
-        genome_blueprint = generate_modular_blueprint(diet, rng=random)
+        # Pass base_form to blueprint generator
+        genome_blueprint = generate_modular_blueprint(diet, base_form=base_key, rng=random)
 
         dna_profile = {
             "dna_id": dna_id,
+            "base_form": base_key,
+            "base_form_label": base_def.label,
             "width": random.randint(settings.MIN_WIDTH, settings.MAX_WIDTH),
             "height": random.randint(settings.MIN_HEIGHT, settings.MAX_HEIGHT),
             "color": (
@@ -180,6 +202,7 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "morphology": morphology.to_dict(),
             "development": development,
             "genome": genome_blueprint,
+            "guaranteed_spawn": i < len(base_keys), # Guarantee the first set
         }
         graph, geometry = build_body_graph(genome_blueprint, include_geometry=True)
         dna_profile["geometry"] = geometry

@@ -850,16 +850,21 @@ class Lifeform:
         base_energy = 100.0
         mass_factor = self.physics_body.mass * 2.0
         self.energy = int(base_energy + module_capacity + mass_factor)
-        
         base_vision = 150.0
         self.vision = base_vision + vision_bonus + max_sensor_range
         
         # 5. Combat Power
-        # Attack: Thrust (ramming) + Grip (grappling) + Mass (impact)
+        # Attack: Thrust (ramming) + Grip (grappling) + Mass (impact) + Bite (mouths)
         thrust_factor = self.physics_body.max_thrust * 0.2
         grip_factor = self.physics_body.grip_strength * 0.5
         mass_impact = self.physics_body.mass * 0.1
-        self.attack_power = max(1.0, thrust_factor + grip_factor + mass_impact)
+        
+        bite_damage = 0.0
+        for module in self.body_graph.iter_modules():
+            if getattr(module, "module_type", "") == "mouth":
+                bite_damage += getattr(module, "bite_damage", 0.0)
+                
+        self.attack_power = max(1.0, thrust_factor + grip_factor + mass_impact + bite_damage)
         
         # Defence: Integrity (health) + Mass (bulk) + Density (armor)
         integrity_factor = self.health * 0.1
@@ -964,7 +969,8 @@ class Lifeform:
         if not graph:
             return sensors
         for module in graph.iter_modules():
-            if getattr(module, "module_type", "") != "sensor":
+            m_type = getattr(module, "module_type", "")
+            if m_type != "sensor" and m_type != "eye":
                 continue
             detection_range = float(getattr(module, "detection_range", 0.0))
             for spectrum in getattr(module, "spectrum", ()):
@@ -1246,7 +1252,7 @@ class Lifeform:
     def calculate_attack_power(self) -> None:
         self.attack_power_now = self.attack_power * (self.energy_now / 100)
         self.attack_power_now -= self.attack_power * (self.wounded / 100)
-        self.attack_power_now += (self.size - 50) * 0.8
+        # Removed broken size bonus: self.attack_power_now += (self.size - 50) * 0.8
         self.attack_power_now -= self.hunger * 0.1
         self.attack_power_now *= self.calculate_age_factor()
         mass_bonus = 1.0 + (self.mass - 1.0) * 0.12
@@ -1261,7 +1267,7 @@ class Lifeform:
     def calculate_defence_power(self) -> None:
         self.defence_power_now = self.defence_power * (self.energy_now / 100)
         self.defence_power_now -= self.defence_power * (self.wounded / 100)
-        self.defence_power_now += (self.size - 50) * 0.8
+        # Removed broken size bonus: self.defence_power_now += (self.size - 50) * 0.8
         self.defence_power_now -= self.hunger * 0.1
         self.defence_power_now *= self.calculate_age_factor()
         defence_bonus = 1.0 + (self.grip_strength - 1.0) * 0.25

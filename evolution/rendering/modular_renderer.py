@@ -155,28 +155,37 @@ class ModularRendererState:
             animated.attachment_angle = point.angle
             animated.clearance = float(getattr(point, "clearance", 0.0))
 
-    def _generate_outline(self, module: BodyModule, segments: int = 32) -> List[Vector2]:
+    def _generate_outline(self, module: BodyModule, segments: int = 7) -> List[Vector2]:
         if getattr(module, "module_type", "") == "limb":
             half_span = max(0.05, float(max(module.size[0], module.size[1])) / 2.0)
             length = max(0.1, float(module.size[2]))
             trailing = -length * 0.25
             leading = length * 0.65
+            # Make limbs more angular/diamond shaped
             outline = [
-                Vector2(trailing, -half_span * 0.2),
+                Vector2(trailing, 0.0),
                 Vector2(0.0, -half_span),
                 Vector2(leading, 0.0),
                 Vector2(0.0, half_span),
-                Vector2(trailing, half_span * 0.2),
             ]
             return outline
+        
+        # Low poly circle (heptagon/octagon)
         half_length = max(0.05, float(module.size[2]) / 2.0)
         half_cross = max(0.05, float(max(module.size[0], module.size[1])) / 2.0)
         outline: List[Vector2] = []
+        
+        # Rotate the polygon slightly so it doesn't look too aligned
+        offset_angle = 15.0 
+        
         for idx in range(segments):
-            angle = (idx / segments) * 360.0
+            angle = (idx / segments) * 360.0 + offset_angle
             direction = _unit(angle)
             radius = _ellipse_distance(direction, half_length, half_cross)
             outline.append(direction * radius)
+            
+        # Snap attachment points to nearest vertex to maintain low-poly look
+        # Or just let them float? Let's keep the original logic but maybe relax it
         for point in module.attachment_points.values():
             offset = Vector2(point.offset)
             if point.relative:
@@ -188,6 +197,9 @@ class ModularRendererState:
             if not outline:
                 outline.append(joint_point)
                 continue
+            
+            # Find closest vertex and replace it, or insert?
+            # Replacing maintains the vertex count (low poly)
             target_angle = math.degrees(math.atan2(joint_point.y, joint_point.x)) % 360.0
             closest_idx = min(
                 range(len(outline)),
@@ -278,8 +290,12 @@ class BodyGraphRenderer:
         if len(skin_points) >= 3:
             hull = self._convex_hull(skin_points)
             skin_color = tuple(int(c * 0.9) for c in self.torso_color)
+            # Draw skin with low alpha or wireframe?
+            # Let's keep it solid but maybe lighter
             pygame.draw.polygon(self.surface, skin_color, hull, width=0)
-            pygame.draw.polygon(self.surface, (15, 30, 45), hull, width=2)
+            # Distinct outline for the skin
+            pygame.draw.polygon(self.surface, (200, 220, 230), hull, width=2)
+            
         parent_lookup = state.poses
         for animated in state.iter_poses():
             if animated.parent_id:
@@ -302,7 +318,7 @@ class BodyGraphRenderer:
 
     def _skin_includes_module(self, animated: AnimatedModule) -> bool:
         module_type = getattr(animated.module, "module_type", "")
-        return module_type not in {"limb"}
+        return module_type not in {"limb", "tentacle"}
 
     def _convex_hull(self, points: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
         pts = sorted(set(points))
@@ -338,18 +354,129 @@ class BodyGraphRenderer:
         module = animated.module
         module_type = getattr(module, "module_type", "default")
         color, alpha = self._module_visuals(module_type)
+        
+        if module_type == "eye":
+            self._draw_eye(animated, offset)
+            return
+        elif module_type == "mouth":
+            self._draw_mouth(animated, offset)
+            return
+
         polygon_points = [
             (offset + vertex * self.position_scale) for vertex in animated.outline_world
         ]
         int_points = [(int(point.x), int(point.y)) for point in polygon_points]
+        
         if len(int_points) >= 3:
             fill_color = (*color, alpha)
             pygame.draw.polygon(self.surface, fill_color, int_points)
-            pygame.draw.polygon(self.surface, (20, 35, 50), int_points, 1)
+            
+            # Low Poly Aesthetic: Distinct outlines
+            outline_color = (220, 240, 255) # Bright/Whitish outline
+            pygame.draw.polygon(self.surface, outline_color, int_points, 2)
+            
+            # Triangulation / Internal lines
+            # Draw lines from center to each vertex to create facets
+            center = offset + animated.current_pose.center * self.position_scale
+            center_pt = (int(center.x), int(center.y))
+            
+            # Use a slightly lighter/darker color for internal lines
+            internal_color = (min(255, color[0] + 40), min(255, color[1] + 40), min(255, color[2] + 40))
+            
+            for pt in int_points:
+                pygame.draw.line(self.surface, internal_color, center_pt, pt, 1)
 
+    def _draw_eye(self, animated: AnimatedModule, offset: Vector2) -> None:
+        module = animated.module
+        center = offset + animated.current_pose.center * self.position_scale
+        radius = module.size[0] * self.position_scale * 0.5 * getattr(module, "eye_size", 1.0)
+        
+        # Sclera (White)
+        pygame.draw.circle(self.surface, (240, 240, 240), (int(center.x), int(center.y)), int(radius))
+        pygame.draw.circle(self.surface, (200, 200, 200), (int(center.x), int(center.y)), int(radius), 1)
+        
+        # Iris
+        iris_color = getattr(module, "iris_color", (100, 150, 200))
+        iris_radius = radius * 0.6
+        pygame.draw.circle(self.surface, iris_color, (int(center.x), int(center.y)), int(iris_radius))
+        
+        # Pupil
+        pupil_color = getattr(module, "pupil_color", (0, 0, 0))
+        pupil_shape = getattr(module, "pupil_shape", "circle")
+        pupil_radius = iris_radius * 0.5
+        
+        if pupil_shape == "slit":
+            rect = pygame.Rect(0, 0, pupil_radius * 0.6, pupil_radius * 2)
+            rect.center = (int(center.x), int(center.y))
+            pygame.draw.rect(self.surface, pupil_color, rect)
+        elif pupil_shape == "rect":
+            rect = pygame.Rect(0, 0, pupil_radius * 1.8, pupil_radius * 0.8)
+            rect.center = (int(center.x), int(center.y))
+            pygame.draw.rect(self.surface, pupil_color, rect)
+        elif pupil_shape == "cross":
+            rect1 = pygame.Rect(0, 0, pupil_radius * 0.5, pupil_radius * 1.8)
+            rect1.center = (int(center.x), int(center.y))
+            rect2 = pygame.Rect(0, 0, pupil_radius * 1.8, pupil_radius * 0.5)
+            rect2.center = (int(center.x), int(center.y))
+            pygame.draw.rect(self.surface, pupil_color, rect1)
+            pygame.draw.rect(self.surface, pupil_color, rect2)
+        else: # circle
+            pygame.draw.circle(self.surface, pupil_color, (int(center.x), int(center.y)), int(pupil_radius))
+            
+        # Specular Highlight (Reflection)
+        highlight_pos = (int(center.x + radius * 0.3), int(center.y - radius * 0.3))
+        pygame.draw.circle(self.surface, (255, 255, 255), highlight_pos, int(radius * 0.2))
+
+    def _draw_mouth(self, animated: AnimatedModule, offset: Vector2) -> None:
+        module = animated.module
+        center = offset + animated.current_pose.center * self.position_scale
+        angle = animated.current_pose.angle
+        
+        # Use outline for base shape
+        polygon_points = [
+            (offset + vertex * self.position_scale) for vertex in animated.outline_world
+        ]
+        int_points = [(int(point.x), int(point.y)) for point in polygon_points]
+        
+        if len(int_points) < 3:
+            return
+            
+        color = (180, 100, 100) # Reddish/Pinkish
+        pygame.draw.polygon(self.surface, color, int_points)
+        pygame.draw.polygon(self.surface, (100, 50, 50), int_points, 2)
+        
+        jaw_type = getattr(module, "jaw_type", "mandibles")
+        
+        forward = _unit(angle)
+        right = _unit(angle + 90)
+        size = module.size[0] * self.position_scale
+        
+        if jaw_type == "mandibles":
+            # Draw two pincer shapes
+            p1_start = center + right * size * 0.3
+            p1_end = center + forward * size * 0.8 + right * size * 0.1
+            p2_start = center - right * size * 0.3
+            p2_end = center + forward * size * 0.8 - right * size * 0.1
+            
+            pygame.draw.line(self.surface, (50, 20, 20), (int(p1_start.x), int(p1_start.y)), (int(p1_end.x), int(p1_end.y)), 2)
+            pygame.draw.line(self.surface, (50, 20, 20), (int(p2_start.x), int(p2_start.y)), (int(p2_end.x), int(p2_end.y)), 2)
+        elif jaw_type == "beak":
+            # Draw a triangle
+            tip = center + forward * size * 0.9
+            base_l = center - forward * size * 0.2 + right * size * 0.3
+            base_r = center - forward * size * 0.2 - right * size * 0.3
+            pygame.draw.polygon(self.surface, (200, 180, 100), [(int(tip.x), int(tip.y)), (int(base_l.x), int(base_l.y)), (int(base_r.x), int(base_r.y))])
+            pygame.draw.polygon(self.surface, (100, 90, 50), [(int(tip.x), int(tip.y)), (int(base_l.x), int(base_l.y)), (int(base_r.x), int(base_r.y))], 1)
+        elif jaw_type == "sucker":
+            # Draw a circle with a hole
+            pygame.draw.circle(self.surface, (150, 80, 80), (int(center.x), int(center.y)), int(size * 0.4))
+            pygame.draw.circle(self.surface, (50, 20, 20), (int(center.x), int(center.y)), int(size * 0.2))
+
+        # Draw joint
         joint_center = offset + animated.joint_position * self.position_scale
         joint_color = (120, 190, 240) if animated.parent_id else (220, 230, 240)
-        pygame.draw.circle(self.surface, joint_color, (int(joint_center.x), int(joint_center.y)), 4, 2)
+        pygame.draw.circle(self.surface, joint_color, (int(joint_center.x), int(joint_center.y)), 3)
+        
         if self.show_debug:
             for point, is_parent in animated.contact_markers:
                 self._draw_contact_marker(offset + point * self.position_scale, is_parent)
@@ -358,8 +485,8 @@ class BodyGraphRenderer:
     def _draw_contact_marker(self, position: Vector2, is_parent: bool) -> None:
         color = PARENT_CONTACT_COLOR if is_parent else CHILD_CONTACT_COLOR
         x, y = int(position.x), int(position.y)
-        pygame.draw.line(self.surface, color, (x - 4, y), (x + 4, y), 2)
-        pygame.draw.line(self.surface, color, (x, y - 4), (x, y + 4), 2)
+        pygame.draw.line(self.surface, color, (x - 3, y), (x + 3, y), 1)
+        pygame.draw.line(self.surface, color, (x, y - 3), (x, y + 3), 1)
 
     def _draw_axes(self, animated: AnimatedModule, offset: Vector2) -> None:
         if not self.show_debug:
@@ -374,14 +501,14 @@ class BodyGraphRenderer:
             FORWARD_AXIS_COLOR,
             (int(center.x), int(center.y)),
             (int(center.x + forward.x * forward_len), int(center.y + forward.y * forward_len)),
-            2,
+            1,
         )
         pygame.draw.line(
             self.surface,
             LATERAL_AXIS_COLOR,
             (int(center.x), int(center.y)),
             (int(center.x + lateral.x * lateral_len), int(center.y + lateral.y * lateral_len)),
-            2,
+            1,
         )
 
     def _draw_bridge(self, parent: AnimatedModule, child: AnimatedModule, offset: Vector2) -> None:
@@ -390,8 +517,8 @@ class BodyGraphRenderer:
             return
         direction = direction.normalize()
         tangent = Vector2(-direction.y, direction.x)
-        parent_width = parent.half_cross * self.position_scale * 0.6
-        child_width = child.half_cross * self.position_scale * 0.6
+        parent_width = parent.half_cross * self.position_scale * 0.4 # Thinner bridges
+        child_width = child.half_cross * self.position_scale * 0.4
         parent_center = offset + parent.joint_position * self.position_scale
         child_center = offset + child.joint_position * self.position_scale
         bridge_points = [
@@ -403,7 +530,10 @@ class BodyGraphRenderer:
         color_parent, _ = self._module_visuals(parent.module.module_type)
         color_child, _ = self._module_visuals(child.module.module_type)
         blend_color = tuple(int((p + c) / 2) for p, c in zip(color_parent, color_child))
-        pygame.draw.polygon(self.surface, blend_color, [(int(pt.x), int(pt.y)) for pt in bridge_points])
-
+        
+        int_points = [(int(pt.x), int(pt.y)) for pt in bridge_points]
+        pygame.draw.polygon(self.surface, blend_color, int_points)
+        # Outline for bridge
+        pygame.draw.polygon(self.surface, (200, 220, 230), int_points, 1)
 
 __all__ = ["ModularRendererState", "BodyGraphRenderer", "AnimatedModule"]
