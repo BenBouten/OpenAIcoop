@@ -48,6 +48,12 @@ class World:
         self._bubble_rng = random.Random(4242)
         self._generate()
 
+    @property
+    def static_background(self) -> Optional[pygame.Surface]:
+        """Return the cached static background surface."""
+
+        return getattr(self._renderer, "static_background", None)
+
     def set_environment_modifiers(self, modifiers: Dict[str, float]) -> None:
         self.environment_modifiers = modifiers
 
@@ -137,16 +143,27 @@ class World:
             )
         surface.blit(overlay, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
 
-    def _draw_layer_labels(self, surface: pygame.Surface) -> None:
+    def _draw_layer_labels(
+        self,
+        surface: pygame.Surface,
+        *,
+        offset: Tuple[int, int] = (0, 0),
+        viewport: Optional[pygame.Rect] = None,
+    ) -> None:
         if not self.layers:
             return
         if self._label_font is None:
             self._label_font = pygame.font.Font(None, 20)
         for layer in self.layers:
+            if viewport is not None and not layer.biome.rect.colliderect(viewport):
+                continue
             weather = layer.biome.active_weather.name if layer.biome.active_weather else "Stabiel"
             label = f"{layer.biome.name} – {weather}"
             text = self._label_font.render(label, True, (220, 235, 255))
-            position = (24, layer.biome.rect.centery - text.get_height() // 2)
+            position = (
+                24 - offset[0],
+                layer.biome.rect.centery - text.get_height() // 2 - offset[1],
+            )
             surface.blit(text, position)
 
     def _draw_rad_vent(self, surface: pygame.Surface, vent: RadVentField) -> None:
@@ -181,37 +198,78 @@ class World:
         for biome in self.biomes:
             biome.update_weather(now_ms)
 
-    def draw(self, surface: pygame.Surface) -> None:
-        """
-        Teken de volledige wereld op de meegegeven surface (world_surface).
-        De camera knipt later een deel uit deze surface.
-        """
-        # 1) Nieuwe oceaanachtergrond
-        self._renderer.draw_background(surface, self._time_seconds)
+    def draw_static_region(self, surface: pygame.Surface, region: pygame.Rect) -> None:
+        """Render static layers for a region into ``surface``."""
 
-        # 2) Biome labels (zoals voorheen)
-        self._draw_layer_labels(surface)
+        surface.fill(self.background_color)
 
-        # 3) Rad vents met mooie glow
-        for vent in self.rad_vents:
-            self._renderer.draw_rad_vent(
-                surface,
-                vent.center,
-                radius=max(20, vent.radius),
-                color=vent.color,
-                intensity=vent.intensity,
-            )
-
-        for column in self.bubble_columns:
-            column.draw(surface)
+        background = self.static_background
+        if background is not None:
+            surface.blit(background, (0, 0), region)
 
         for water in self.water_bodies:
             for segment in water.segments:
-                pygame.draw.rect(surface, water.color, segment)
+                if not segment.colliderect(region):
+                    continue
+                local_rect = segment.move(-region.x, -region.y)
+                pygame.draw.rect(surface, water.color, local_rect)
 
-        # 5) Barriers
         for barrier in self.barriers:
-            pygame.draw.rect(surface, barrier.color, barrier.rect)
+            if not barrier.rect.colliderect(region):
+                continue
+            local_rect = barrier.rect.move(-region.x, -region.y)
+            pygame.draw.rect(surface, barrier.color, local_rect)
+
+    def draw_dynamic_layers(
+        self, surface: pygame.Surface, viewport: pygame.Rect, offset: Tuple[int, int]
+    ) -> None:
+        """Draw dynamic overlays that should be re-rendered each frame."""
+
+        self._renderer.draw_waves_region(surface, self._time_seconds, viewport, offset)
+
+        for vent in self.rad_vents:
+            radius = max(20, vent.radius)
+            vent_rect = pygame.Rect(
+                vent.center[0] - radius,
+                vent.center[1] - radius,
+                radius * 2,
+                radius * 2,
+            )
+            if not vent_rect.colliderect(viewport):
+                continue
+            self._renderer.draw_rad_vent(
+                surface,
+                vent.center,
+                radius=radius,
+                color=vent.color,
+                intensity=vent.intensity,
+                offset=offset,
+            )
+
+        for column in self.bubble_columns:
+            col_rect = pygame.Rect(
+                column.base[0] - column.width,
+                column.base[1] - column.height,
+                column.width * 2,
+                column.height,
+            )
+            if col_rect.colliderect(viewport):
+                column.draw(surface, offset=offset)
+
+        self._draw_layer_labels(surface, offset=offset, viewport=viewport)
+
+    def draw(
+        self,
+        surface: pygame.Surface,
+        viewport: Optional[pygame.Rect] = None,
+        *,
+        offset: Tuple[int, int] = (0, 0),
+    ) -> None:
+        """Compatibility wrapper that renders static + dynamic layers."""
+
+        region = viewport or pygame.Rect(0, 0, self.width, self.height)
+        self.draw_static_region(surface, region)
+        self.draw_dynamic_layers(surface, region, offset)
 
 
 

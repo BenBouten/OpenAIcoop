@@ -271,7 +271,7 @@ class EffectManager:
                 alive_particles.append(particle)
         self.confetti = alive_particles
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, *, offset: Tuple[int, int] = (0, 0)) -> None:
         if not (self.labels or self.confetti):
             return
 
@@ -280,7 +280,10 @@ class EffectManager:
             text_surface.set_alpha(label.alpha)
             surface.blit(
                 text_surface,
-                (label.position.x - text_surface.get_width() / 2, label.position.y),
+                (
+                    label.position.x - text_surface.get_width() / 2 - offset[0],
+                    label.position.y - offset[1],
+                ),
             )
 
         for particle in self.confetti:
@@ -292,8 +295,8 @@ class EffectManager:
             surface.blit(
                 sprite,
                 (
-                    particle.position.x - particle.size,
-                    particle.position.y - particle.size,
+                    particle.position.x - particle.size - offset[0],
+                    particle.position.y - particle.size - offset[1],
                 ),
             )
 
