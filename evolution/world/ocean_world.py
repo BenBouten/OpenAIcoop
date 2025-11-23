@@ -411,7 +411,15 @@ def _build_rad_vents(layers: Sequence[DepthLayer], width: int, rng: random.Rando
         count = 2 if layer.biome.name == "Twilight" else 1
         for _ in range(count):
             center_x = rng.randint(int(width * 0.2), int(width * 0.8))
-            center_y = rng.randint(layer.biome.rect.top + 120, layer.biome.rect.bottom - 120)
+            
+            min_y = layer.biome.rect.top + 120
+            max_y = layer.biome.rect.bottom - 120
+            if min_y >= max_y:
+                # Fallback for small layers
+                center_y = layer.biome.rect.centery
+            else:
+                center_y = rng.randint(min_y, max_y)
+                
             radius = rng.randint(180, 260)
             vents.append(
                 RadVentField(

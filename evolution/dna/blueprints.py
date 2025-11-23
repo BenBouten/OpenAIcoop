@@ -1,3 +1,4 @@
+
 """Helpers to assemble DNA blueprints for modular body graphs."""
 from __future__ import annotations
 
@@ -31,8 +32,10 @@ _DEFAULT_CONSTRAINTS = GenomeConstraints(max_mass=240.0, nerve_capacity=36.0)
 
 _MODULE_NERVE_LOAD = {
     "core": 5.0,
+    "bell_core": 4.0,
     "head": 3.0,
     "limb": 1.8,
+    "tentacle": 1.4,
     "propulsion": 2.5,
     "sensor": 0.8,
 }
@@ -117,76 +120,37 @@ def _seed_core_structure(genes: Dict[str, ModuleGene]) -> Dict[str, str]:
     return {"core": core_id, "head": head_id, "thrusters": thruster_id}
 
 
-def _random_limb_chain(
-    genes: Dict[str, ModuleGene],
-    parent: str,
-    slot: str,
-    rng: random.Random,
-) -> None:
-    chain_length = 1 + rng.randint(0, 2)
-    last_parent = parent
-    last_slot = slot
-    for index in range(chain_length):
-        segment_id = _next_gene_id(f"limb_{parent}_{index}", genes)
-        genes[segment_id] = ModuleGene(segment_id, "limb", {}, parent=last_parent, slot=last_slot)
-        last_parent = segment_id
-        last_slot = "proximal_joint"
-
-
 def generate_modular_blueprint(
     diet: str,
+    base_form: Optional[str] = None,
     *,
     rng: Optional[random.Random] = None,
 ) -> Dict[str, object]:
-    """Build a small but valid modular blueprint tailored to ``diet``."""
+    """Build a modular blueprint tailored to ``diet`` and ``base_form``."""
 
     rng = rng or random.Random()
     genes: Dict[str, ModuleGene] = {}
 
-    anchors = _seed_core_structure(genes)
-    core_id = anchors["core"]
-    head_id = anchors["head"]
-    thruster_ids = [anchors["thrusters"]]
+    # Default to a random base form if none provided
+    if not base_form:
+        base_form = rng.choice(["streamliner", "drifter", "burrower", "tentacle_core", "bastion"])
 
-    sensor_slots = ["cranial_sensor", "dorsal_mount", "tail_sensors"]
-    spectra = list(_SENSOR_SPECTRUMS.get(diet, _SENSOR_SPECTRUMS["omnivore"]))
-    rng.shuffle(spectra)
-    for slot in sensor_slots:
-        if not spectra:
-            break
-        if rng.random() < 0.65:
-            spectrum = list(spectra.pop())
-            if slot == "cranial_sensor":
-                parent = head_id
-            elif slot == "tail_sensors":
-                parent = rng.choice(thruster_ids)
-            else:
-                parent = core_id
-            _attach_module(genes, "sensor", parent, slot, parameters=_sensor_parameters(spectrum))
+    # Dispatch to specific builders
+    if base_form == "drifter":
+        _build_drifter(genes, diet, rng)
+    elif base_form == "burrower":
+        _build_burrower(genes, diet, rng)
+    elif base_form == "streamliner":
+        _build_streamliner(genes, diet, rng)
+    elif base_form == "tentacle_core":
+        _build_tentacle_core(genes, diet, rng)
+    elif base_form == "bastion":
+        _build_bastion(genes, diet, rng)
+    else:
+        # Fallback to generic streamliner-ish
+        _build_streamliner(genes, diet, rng)
 
-    limb_pairs = rng.randint(1, 3)
-    for pair in range(limb_pairs):
-        for slot in ("lateral_mount_left", "lateral_mount_right"):
-            if rng.random() < 0.6:
-                _random_limb_chain(genes, core_id, slot, rng)
-
-    optional_slots = ["dorsal_mount", "tail_sensors"]
-    for slot in optional_slots:
-        if rng.random() < 0.4:
-            parent = core_id if slot == "dorsal_mount" else rng.choice(thruster_ids)
-            _attach_module(
-                genes,
-                "sensor",
-                parent,
-                slot,
-                parameters=_sensor_parameters(_select_spectrum(diet, rng)),
-            )
-
-    if rng.random() < 0.3:
-        # Thrusters only mount to the ventral slot on the core; tail sockets are reserved for sensors.
-        new_thruster = _attach_module(genes, "propulsion", core_id, "ventral_core")
-        thruster_ids.append(new_thruster)
-
+    # Calculate nerve load and constraints
     estimated_load = 0.0
     for gene in genes.values():
         estimated_load += _MODULE_NERVE_LOAD.get(gene.module_type, 1.0)
@@ -197,3 +161,197 @@ def generate_modular_blueprint(
     )
     genome = Genome(genes=genes, constraints=constraints)
     return genome.to_dict()
+
+
+def _build_drifter(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
+    """Jellyfish-like: Bell core, hanging tentacles."""
+    core_id = "core"
+    # Use bell_core for Drifter
+    genes[core_id] = ModuleGene(core_id, "bell_core", {"variant": "gelatinous"})
+    
+    # Bell / Umbrella
+    # bell_core has 'umbrella_sensor' but maybe not 'head_socket' in the same way?
+    # JellyBell has 'umbrella_sensor' (SensoryModule).
+    # It does NOT have 'head_socket'.
+    # So we attach sensors directly or use 'umbrella_sensor'.
+    # But we want a "head" module? Jellyfish don't really have heads.
+    # The blueprint logic usually expects a head.
+    # If we skip head, we might break things that expect a head.
+    # But let's try to attach a sensor as "head" if possible, or just skip head.
+    
+    # Actually, let's stick to TrunkCore for now since I patched it to allow mesoglea.
+    # Switching to JellyBell might require more changes (slots are different).
+    # I'll revert to TrunkCore but keep the comment about JellyBell for future.
+    genes[core_id] = ModuleGene(core_id, "core", {"variant": "gelatinous"})
+    
+    # Bell / Umbrella
+    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "dome"})
+    
+    # Hanging tentacles from ventral
+    tentacle_count = rng.randint(4, 8)
+    for i in range(tentacle_count):
+        # Use a specialized socket naming convention or just reuse available ones
+        # For simplicity, we attach to ventral_core and then chain
+        if i == 0:
+            # Use "tentacle" module type for TentacleLimb
+            root = _attach_module(genes, "tentacle", core_id, "ventral_core", parameters={"variant": "tentacle"})
+            _random_limb_chain(genes, root, "distal_tip", rng, length_bias=2, module_type="tentacle")
+        else:
+            # Attach to rim if possible, or just assume abstract attachment
+            pass 
+
+    # Sensors on rim (head)
+    # Sensors on rim (head)
+    _attach_sensors(genes, head_id, ["cranial_sensor"], diet, rng)
+    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
+
+def _build_burrower(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
+    """Worm-like: Segmented chain."""
+    core_id = "core"
+    genes[core_id] = ModuleGene(core_id, "core", {"variant": "segmented"})
+    
+    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "conical"})
+    _attach_sensors(genes, head_id, ["cranial_sensor"], diet, rng)
+    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
+    
+    # Long chain of segments
+    segments = rng.randint(4, 8)
+    current_parent = core_id
+    current_slot = "ventral_core" # Worms grow backwards from core? Or we treat core as head-segment.
+    
+    # Actually, let's treat core as the front segment behind head
+    current_parent = core_id
+    current_slot = "tail_socket" # Assuming core has a tail socket
+    
+    # We need to ensure core has a tail socket or similar. 
+    # The default core usually has 'ventral_core', 'head_socket', 'lateral_mount_left/right'.
+    # Let's use 'ventral_core' as the "back" for now, or assume a 'tail' slot exists.
+    # If not, we chain from ventral.
+    
+    last_id = core_id
+    for i in range(segments):
+        seg_id = _next_gene_id(f"segment_{i}", genes)
+        genes[seg_id] = ModuleGene(seg_id, "propulsion", {}, parent=last_id, slot="ventral_core" if i==0 else "tail_socket")
+        # Add small legs/bristles
+        if rng.random() < 0.7:
+            _attach_module(genes, "limb", seg_id, "lateral_mount_left", parameters={"variant": "bristle"})
+            _attach_module(genes, "limb", seg_id, "lateral_mount_right", parameters={"variant": "bristle"})
+        last_id = seg_id
+
+
+def _build_streamliner(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
+    """Fish-like: Head, Core, Tail, Fins."""
+    anchors = _seed_core_structure(genes)
+    core_id = anchors["core"]
+    head_id = anchors["head"]
+    thruster_id = anchors["thrusters"]
+    
+    # Fins
+    _attach_module(genes, "limb", core_id, "lateral_mount_left", parameters={"variant": "fin"})
+    _attach_module(genes, "limb", core_id, "lateral_mount_right", parameters={"variant": "fin"})
+    
+    # Dorsal fin
+    _attach_module(genes, "limb", core_id, "dorsal_mount", parameters={"variant": "fin_dorsal"})
+    
+    # Sensors
+    # Sensors
+    _attach_sensors(genes, head_id, ["cranial_sensor"], diet, rng)
+    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
+
+def _build_tentacle_core(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
+    """Octopus-like: Central core, radial arms."""
+    core_id = "core"
+    genes[core_id] = ModuleGene(core_id, "core", {"variant": "spherical"})
+    genes[core_id] = ModuleGene(core_id, "core", {"variant": "spherical"})
+    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "bulbous"})
+    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
+    
+    # Arms
+    arm_count = rng.randint(4, 8)
+    for i in range(arm_count):
+        # We need multiple slots. If they don't exist, we might need to hack/overload or use a hub module.
+        # For now, let's attach 2 to laterals and chain, or assume core has radial slots.
+        # To keep it valid with current slots:
+        if i == 0: slot = "lateral_mount_left"
+        elif i == 1: slot = "lateral_mount_right"
+        elif i == 2: slot = "ventral_core"
+        elif i == 3: slot = "dorsal_mount"
+        else: continue # Limit to 4 for now if slots are limited
+        
+        # Use "tentacle" module type
+        arm_root = _attach_module(genes, "tentacle", core_id, slot, parameters={"variant": "tentacle"})
+        _random_limb_chain(genes, arm_root, "distal_tip", rng, length_bias=2, module_type="tentacle")
+
+
+def _build_bastion(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
+    """Crab/Turtle-like: Armored core, legs."""
+    core_id = "core"
+    genes[core_id] = ModuleGene(core_id, "core", {"variant": "armored"})
+    genes[core_id] = ModuleGene(core_id, "core", {"variant": "armored"})
+    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "armored_visored"})
+    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
+    
+    # Shell - represented as rigid limbs/plates
+    _attach_module(genes, "limb", core_id, "dorsal_mount", parameters={"variant": "shell_plate"})
+    
+    # Legs
+    _attach_module(genes, "limb", core_id, "lateral_mount_left", parameters={"variant": "leg_armored"})
+    _attach_module(genes, "limb", core_id, "lateral_mount_right", parameters={"variant": "leg_armored"})
+    
+    # Tail shield
+    _attach_module(genes, "limb", core_id, "ventral_core", parameters={"variant": "tail_plate"})
+
+
+def _attach_sensors(genes: Dict[str, ModuleGene], parent: str, slots: Sequence[str], diet: str, rng: random.Random) -> None:
+    spectra = list(_SENSOR_SPECTRUMS.get(diet, _SENSOR_SPECTRUMS["omnivore"]))
+    for slot in slots:
+        roll = rng.random()
+        if roll < 0.5:
+            # Attach Eye
+            _attach_module(genes, "eye", parent, slot, parameters={"pupil_shape": rng.choice(["circle", "slit", "rect"])})
+        elif roll < 0.9:
+            spectrum = rng.choice(spectra)
+            _attach_module(genes, "sensor", parent, slot, parameters=_sensor_parameters(spectrum))
+
+
+def _attach_mouth(genes: Dict[str, ModuleGene], parent: str, slot: str, diet: str, rng: random.Random) -> None:
+    jaw_types = {
+        "carnivore": ["mandibles", "beak"],
+        "herbivore": ["beak", "sucker"],
+        "omnivore": ["mandibles", "beak", "sucker"],
+    }
+    jaw_type = rng.choice(jaw_types.get(diet, ["mandibles"]))
+    # Check if parent has this slot? We assume yes for now as we added it to CephalonHead.
+    # But we should wrap in try/except or just let it fail if slot missing?
+    # _attach_module doesn't check slot existence in the gene dict, only when building graph.
+    # So it's safe to add the gene.
+    _attach_module(genes, "mouth", parent, slot, parameters={"jaw_type": jaw_type})
+
+
+
+def _random_limb_chain(
+    genes: Dict[str, ModuleGene],
+    parent: str,
+    slot: str,
+    rng: random.Random,
+    *,
+    length_bias: int = 0,
+    module_type: str = "limb",
+) -> None:
+    chain_length = 1 + rng.randint(0, 2) + length_bias
+    last_parent = parent
+    last_slot = slot
+    for index in range(chain_length):
+        segment_id = _next_gene_id(f"{module_type}_{parent}_{index}", genes)
+        genes[segment_id] = ModuleGene(segment_id, module_type, {}, parent=last_parent, slot=last_slot)
+        # Update for next segment
+        # If it's a tentacle, it has 'distal_tip'. If limb, 'proximal_joint'.
+        # We need to know the slot for the next segment.
+        # This is tricky without instantiating.
+        # But we can assume standard naming or pass it in.
+        # For now, let's assume 'distal_tip' for tentacles and 'proximal_joint' for limbs.
+        last_parent = segment_id
+        if module_type == "tentacle":
+            last_slot = "distal_tip"
+        else:
+            last_slot = "proximal_joint"

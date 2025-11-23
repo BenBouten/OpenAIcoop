@@ -34,6 +34,7 @@ class BodyModule:
     natural_orientation: float = 0.0
 
     module_type: str = "generic"
+    variant: Optional[str] = None
 
     def add_attachment_points(self, points: Iterable[AttachmentPoint]) -> None:
         """Register new attachment points on the module."""
@@ -101,6 +102,97 @@ class SensoryModule(BodyModule):
     spectrum: Sequence[str] = field(default_factory=tuple)
 
     module_type: str = "sensor"
+
+
+@dataclass
+class Eye(SensoryModule):
+    """Visual sensory organ with variable pupil and iris characteristics."""
+
+    key: str = "eye"
+    name: str = "Eye"
+    description: str = "Visual receptor"
+    size: Tuple[float, float, float] = (0.4, 0.4, 0.3)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=0.3,
+            energy_cost=0.15,
+            integrity=5.0,
+            heat_dissipation=0.5,
+            buoyancy_bias=0.0,
+        )
+    )
+    material: str = "organic"
+    detection_range: float = 150.0
+    spectrum: Sequence[str] = ("light", "colour", "motion")
+    module_type: str = "eye"
+
+    # Visual traits
+    pupil_shape: str = "circle"  # circle, slit, rect, cross
+    iris_color: Tuple[int, int, int] = (200, 200, 200)
+    pupil_color: Tuple[int, int, int] = (10, 10, 10)
+    eye_size: float = 1.0  # Scale factor for drawing
+
+    def __post_init__(self) -> None:
+        # Scale stats based on size volume relative to default
+        default_vol = 0.4 * 0.4 * 0.3
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.5, vol / max(0.001, default_vol))
+        
+        # Adjust detection range
+        self.detection_range *= (scale ** 0.5)
+        
+        # Adjust stats (mass, energy)
+        # We need to create a new ModuleStats object because it's frozen
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.5),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            buoyancy_bias=self.stats.buoyancy_bias
+        )
+
+
+@dataclass
+class Mouth(BodyModule):
+    """Feeding apparatus."""
+
+    key: str = "mouth"
+    name: str = "Mouth"
+    description: str = "Ingestion orifice"
+    size: Tuple[float, float, float] = (0.6, 0.5, 0.4)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=0.8,
+            energy_cost=0.2,
+            integrity=15.0,
+            heat_dissipation=1.0,
+            buoyancy_bias=0.0,
+        )
+    )
+    material: str = "chitin"
+    module_type: str = "mouth"
+
+    # Traits
+    jaw_type: str = "mandibles"  # mandibles, beak, sucker, filter
+    bite_damage: float = 5.0
+
+    def __post_init__(self) -> None:
+        # Scale stats based on size volume relative to default
+        default_vol = 0.6 * 0.5 * 0.4
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.5, vol / max(0.001, default_vol))
+        
+        # Adjust bite damage
+        self.bite_damage *= scale
+        
+        # Adjust stats
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale, # Bigger mouth = more energy
+            integrity=self.stats.integrity * (scale ** 0.5),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            buoyancy_bias=self.stats.buoyancy_bias
+        )
 
 
 @dataclass
@@ -240,6 +332,47 @@ class PulseSiphon(PropulsionModule):
     pulse_frequency: float = 0.95
 
 
+@dataclass
+class TentacleLimb(LimbModule):
+    """Flexible grasping tentacle."""
+
+    key: str = "tentacle"
+    name: str = "Tentacle"
+    description: str = "Prehensile limb"
+    size: Tuple[float, float, float] = (0.4, 0.4, 4.0)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=1.5,
+            energy_cost=0.2,
+            integrity=10.0,
+            heat_dissipation=1.0,
+            buoyancy_bias=0.0,
+        )
+    )
+    material: str = "mesoglea"
+    thrust: float = 5.0
+    grip_strength: float = 15.0
+    
+    module_type: str = "tentacle"
+    
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="distal_tip",
+            joint=Joint(JointType.BALL, swing_limits=(-45.0, 45.0)),
+            allowed_modules=(LimbModule, SensoryModule),
+            description="Tip of the tentacle",
+            max_child_mass=2.0,
+            allowed_materials=("mesoglea", "flex-polymer"),
+            relative=True,
+            offset=(0.0, 1.0),
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+
+
 # Concrete module implementations -------------------------------------------
 
 
@@ -301,9 +434,9 @@ class TrunkCore(CoreModule):
         AttachmentPoint(
             name="dorsal_mount",
             joint=Joint(JointType.BALL, swing_limits=(-35.0, 35.0)),
-            allowed_modules=(SensoryModule,),
-            max_child_mass=5.0,
-            allowed_materials=("ceramic", "bio-alloy"),
+            allowed_modules=(SensoryModule, LimbModule),
+            max_child_mass=15.0,
+            allowed_materials=("ceramic", "bio-alloy", "flex-polymer", "mesoglea"),
             offset=(0.0, 0.5),
             angle=-90.0,
             clearance=0.6,
@@ -314,7 +447,7 @@ class TrunkCore(CoreModule):
             joint=Joint(JointType.HINGE, swing_limits=(-20.0, 20.0)),
             allowed_modules=(PropulsionModule, LimbModule),
             max_child_mass=25.0,
-            allowed_materials=("flex-polymer", "titanium"),
+            allowed_materials=("flex-polymer", "titanium", "mesoglea"),
             offset=(-0.4, -0.5),
             angle=180.0,
             clearance=1.4,
@@ -325,7 +458,7 @@ class TrunkCore(CoreModule):
             joint=Joint(JointType.MUSCLE, swing_limits=(-50.0, 50.0), torque_limit=120.0),
             allowed_modules=(LimbModule,),
             max_child_mass=12.0,
-            allowed_materials=("flex-polymer",),
+            allowed_materials=("flex-polymer", "mesoglea"),
             offset=(-0.35, 0.0),
             angle=180.0,
             clearance=0.8,
@@ -336,7 +469,7 @@ class TrunkCore(CoreModule):
             joint=Joint(JointType.MUSCLE, swing_limits=(-50.0, 50.0), torque_limit=120.0),
             allowed_modules=(LimbModule,),
             max_child_mass=12.0,
-            allowed_materials=("flex-polymer",),
+            allowed_materials=("flex-polymer", "mesoglea"),
             offset=(-0.35, 0.0),
             angle=0.0,
             clearance=0.8,
@@ -374,12 +507,23 @@ class CephalonHead(HeadModule):
         AttachmentPoint(
             name="cranial_sensor",
             joint=Joint(JointType.FIXED),
-            allowed_modules=(SensoryModule,),
+            allowed_modules=(SensoryModule, Eye),
             max_child_mass=4.0,
-            allowed_materials=("ceramic",),
+            allowed_materials=("ceramic", "organic"),
             offset=(0.8, 0.0),
             angle=0.0,
             clearance=0.8,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="mouth_socket",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(Mouth,),
+            max_child_mass=5.0,
+            allowed_materials=("chitin", "organic"),
+            offset=(0.6, 0.5),  # Below the sensor/eye
+            angle=0.0,
+            clearance=0.5,
             relative=True,
         ),
     )
@@ -461,6 +605,35 @@ class TailThruster(PropulsionModule):
             max_child_mass=4.0,
             allowed_materials=("ceramic",),
         ),
+        AttachmentPoint(
+            name="tail_socket",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(PropulsionModule,),
+            max_child_mass=20.0,
+            allowed_materials=("titanium", "bio-alloy"),
+            offset=(0.0, 1.0),
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="lateral_mount_left",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-30.0, 30.0)),
+            allowed_modules=(LimbModule,),
+            max_child_mass=5.0,
+            allowed_materials=("flex-polymer", "chitin"),
+            offset=(-0.3, 0.0),
+            angle=90.0,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="lateral_mount_right",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-30.0, 30.0)),
+            allowed_modules=(LimbModule,),
+            max_child_mass=5.0,
+            allowed_materials=("flex-polymer", "chitin"),
+            offset=(-0.3, 0.0),
+            angle=-90.0,
+            relative=True,
+        ),
     )
 
     def __post_init__(self) -> None:
@@ -528,6 +701,16 @@ def build_default_sensor(key: str, spectrum: Sequence[str]) -> SensoryModule:
     """Return a sensory module that can be attached on multiple sockets."""
 
     return SensorPod(key=key, spectrum=tuple(spectrum))
+
+
+def build_eye(key: str) -> Eye:
+    """Return a default eye module."""
+    return Eye(key=key)
+
+
+def build_mouth(key: str) -> Mouth:
+    """Return a default mouth module."""
+    return Mouth(key=key)
 
 
 def build_jelly_bell_core(key: str = "bell_core") -> JellyBell:

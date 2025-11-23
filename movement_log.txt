@@ -1,0 +1,54 @@
+Starting test
+Initial Mode: idle
+Initial Thrust Phase: 2.883099239518752
+PhysicsBody: Mass=91.7, MaxThrust=375.0, Drag=2.5
+Propulsion Accel (effort=1.0): 4.089422028353326
+Frame 0: Mode=idle, Speed=0.05, Phase=2.95, Adrenaline=0.00
+Frame 10: Mode=idle, Speed=0.05, Phase=3.59, Adrenaline=0.00
+Frame 20: Mode=idle, Speed=0.05, Phase=4.23, Adrenaline=0.00
+Frame 30: Mode=idle, Speed=0.05, Phase=4.87, Adrenaline=0.00
+Frame 40: Mode=idle, Speed=0.05, Phase=5.51, Adrenaline=0.00
+Frame 50: Mode=idle, Speed=0.05, Phase=6.15, Adrenaline=0.00
+
+--- Testing Flee Mode ---
+Frame 0: Mode=flee, Phase=0.62, Adrenaline=0.08
+Frame 10: Mode=idle, Phase=1.84, Adrenaline=0.26
+Frame 20: Mode=idle, Phase=2.48, Adrenaline=0.11
+Frame 30: Mode=idle, Phase=3.12, Adrenaline=0.05
+Frame 40: Mode=idle, Phase=3.76, Adrenaline=0.02
+Frame 50: Mode=idle, Phase=4.40, Adrenaline=0.01
+FAILURE: Adrenaline did not increase.
+
+--- Testing Vertical Movement ---
+Frame 0: Mode=hunt, Dir=(-0.81, -0.58), Vel=1.7897, Mass=6.11, Drag=2.25
+Frame 10: Mode=hunt, Dir=(0.96, 0.30), Vel=2.7196, Mass=6.11, Drag=2.25
+Frame 20: Mode=hunt, Dir=(0.04, 1.00), Vel=3.5638, Mass=6.11, Drag=2.25
+Frame 30: Mode=hunt, Dir=(-0.02, 1.00), Vel=4.2967, Mass=6.11, Drag=2.25
+Frame 40: Mode=hunt, Dir=(-0.06, 1.00), Vel=4.0559, Mass=6.11, Drag=2.25
+Frame 50: Mode=hunt, Dir=(-0.08, 1.00), Vel=4.5435, Mass=6.11, Drag=2.25
+Frame 60: Mode=hunt, Dir=(-0.09, 1.00), Vel=5.1622, Mass=6.11, Drag=2.25
+Frame 70: Mode=hunt, Dir=(-0.09, 1.00), Vel=5.5990, Mass=6.11, Drag=2.25
+Frame 80: Mode=hunt, Dir=(-0.10, 1.00), Vel=5.0044, Mass=6.11, Drag=2.25
+Frame 90: Mode=hunt, Dir=(-0.10, 1.00), Vel=5.2502, Mass=6.11, Drag=2.25
+Frame 100: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.6818, Mass=6.11, Drag=2.25
+Frame 110: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.9721, Mass=6.11, Drag=2.25
+Frame 120: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.2747, Mass=6.11, Drag=2.25
+Frame 130: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.4424, Mass=6.11, Drag=2.25
+Frame 140: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.8198, Mass=6.11, Drag=2.25
+Frame 150: Mode=hunt, Dir=(-0.10, 0.99), Vel=6.0708, Mass=6.11, Drag=2.25
+Frame 160: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.3490, Mass=6.11, Drag=2.25
+Frame 170: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.4904, Mass=6.11, Drag=2.25
+Frame 180: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.8540, Mass=6.11, Drag=2.25
+Frame 190: Mode=hunt, Dir=(-0.10, 0.99), Vel=6.0967, Mass=6.11, Drag=2.25
+Frame 200: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.3718, Mass=6.11, Drag=2.25
+Frame 210: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.5010, Mass=6.11, Drag=2.25
+Frame 220: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.8616, Mass=6.11, Drag=2.25
+Frame 230: Mode=hunt, Dir=(-0.10, 0.99), Vel=6.1039, Mass=6.11, Drag=2.25
+Frame 240: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.3815, Mass=6.11, Drag=2.25
+Frame 250: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.5022, Mass=6.11, Drag=2.25
+Frame 260: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.8625, Mass=6.11, Drag=2.25
+Frame 270: Mode=hunt, Dir=(-0.10, 0.99), Vel=6.1064, Mass=6.11, Drag=2.25
+Frame 280: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.3882, Mass=6.11, Drag=2.25
+Frame 290: Mode=hunt, Dir=(-0.10, 0.99), Vel=5.4999, Mass=6.11, Drag=2.25
+Initial Y: 100, Final Y: 125.02004273532097
+SUCCESS: Creature dived towards food.

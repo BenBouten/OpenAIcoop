@@ -15,7 +15,13 @@ from ..body.modules import (
     SensoryModule,
     TentacleLimb,
     TailThruster,
+    SensorPod,
+    SensoryModule,
+    TentacleLimb,
+    TailThruster,
     TrunkCore,
+    Eye,
+    Mouth,
 )
 from .genes import Genome, GenomeConstraints, ModuleGene, ensure_genome
 
@@ -58,6 +64,8 @@ DEFAULT_MODULE_FACTORIES: Dict[str, ModuleFactory] = {
     "tentacle": _default_factory_for(TentacleLimb),
     "propulsion": _default_factory_for(TailThruster),
     "sensor": _default_factory_for(SensorPod),
+    "eye": _default_factory_for(Eye),
+    "mouth": _default_factory_for(Mouth),
 }
 
 _NERVE_LOAD: Dict[str, float] = {
@@ -68,6 +76,8 @@ _NERVE_LOAD: Dict[str, float] = {
     "tentacle": 1.4,
     "propulsion": 2.5,
     "sensor": 0.8,
+    "eye": 0.5,
+    "mouth": 1.0,
 }
 
 
