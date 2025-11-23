@@ -90,14 +90,17 @@ class BubbleColumn:
                 alive.append((position, velocity, radius))
         self.bubbles = alive[-80:]
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, *, offset: Tuple[int, int] = (0, 0)) -> None:
         if not self.bubbles:
             return
         for position, _, radius in self.bubbles:
             pygame.draw.circle(
                 surface,
                 self.color,
-                (int(position.x), int(position.y)),
+                (
+                    int(position.x) - offset[0],
+                    int(position.y) - offset[1],
+                ),
                 max(1, int(radius)),
                 width=1,
             )

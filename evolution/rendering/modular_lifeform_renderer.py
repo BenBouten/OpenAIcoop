@@ -53,7 +53,9 @@ class ModularLifeformRenderer:
         margin = int(self.pixel_scale * 1.25)
         surf_width = base_width + margin * 2
         surf_height = base_height + margin * 2
-        surface = pygame.Surface((surf_width, surf_height), flags=pygame.SRCALPHA, depth=32)
+        surface = pygame.Surface(
+            (surf_width, surf_height), flags=pygame.SRCALPHA, depth=32
+        ).convert_alpha()
         surface.fill((0, 0, 0, 0))
         renderer = _get_renderer(surface, lifeform.body_color)
         renderer.set_debug_overlays(False)

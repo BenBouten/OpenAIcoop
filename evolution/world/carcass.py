@@ -70,14 +70,16 @@ class SinkingCarcass:
         self.rect.topleft = (int(self.x), int(self.y))
         self.resource = max(0.0, self.resource - self.decay_rate * dt)
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, *, offset: Tuple[int, int] = (0, 0)) -> None:
         if self.resource <= 0:
             return
         ellipse = pygame.Rect(0, 0, self.width, self.height)
         body_surface = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
         pygame.draw.ellipse(body_surface, (*self.color, 180), ellipse)
         pygame.draw.ellipse(body_surface, self.outline_color, ellipse, 2)
-        surface.blit(body_surface, self.rect.topleft)
+        surface.blit(
+            body_surface, (self.rect.x - offset[0], self.rect.y - offset[1])
+        )
 
     def is_depleted(self) -> bool:
         return self.resource <= 0.25

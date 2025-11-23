@@ -50,6 +50,10 @@ class OceanRenderer:
 
         self._build_static_background()
 
+    @property
+    def static_background(self) -> pygame.Surface:
+        return self._static_bg
+
     # ------------------------------------------------------------------ #
     #  BUILD BACKGROUND
     # ------------------------------------------------------------------ #
@@ -194,31 +198,55 @@ class OceanRenderer:
         surface is hier je world_surface (WORLD_WIDTH x WORLD_HEIGHT).
         """
         surface.blit(self._static_bg, (0, 0))
-        self._draw_waves(surface, time_s)
+        self.draw_waves_region(
+            surface, time_s, pygame.Rect(0, 0, self.w, self.h), (0, 0)
+        )
 
-    def _draw_waves(self, surface: pygame.Surface, time_s: float) -> None:
-        """Golven op de oppervlakte (y ≈ 0)."""
-        wave = self._wave_surface
-        wave.fill((0, 0, 0, 0))
+    def draw_waves_region(
+        self,
+        surface: pygame.Surface,
+        time_s: float,
+        viewport: pygame.Rect,
+        offset: tuple[int, int],
+    ) -> None:
+        """Render surface waves limited to the current viewport."""
 
         base_y = 40
         amp1 = 10
         amp2 = 6
 
-        w = wave.get_width()
-        for x in range(w):
-            y1 = base_y + math.sin(x * 0.02 + time_s * 1.8) * amp1
-            y2 = base_y + math.sin(x * 0.037 + time_s * 2.3 + 1.7) * amp2
+        start_x = max(0, viewport.left)
+        end_x = min(self.w, viewport.right)
+        if start_x >= end_x:
+            return
+
+        for world_x in range(start_x, end_x):
+            y1 = base_y + math.sin(world_x * 0.02 + time_s * 1.8) * amp1
+            y2 = base_y + math.sin(world_x * 0.037 + time_s * 2.3 + 1.7) * amp2
             y = int((y1 + y2) * 0.5)
 
-            pygame.draw.line(wave, (255, 255, 255, 170), (x, y), (x, y + 3))
-            pygame.draw.line(wave, (215, 250, 255, 110), (x, y), (x, y + 7))
+            screen_x = world_x - offset[0]
+            screen_y = y - offset[1]
+            pygame.draw.line(
+                surface, (255, 255, 255, 170), (screen_x, screen_y), (screen_x, screen_y + 3)
+            )
+            pygame.draw.line(
+                surface,
+                (215, 250, 255, 110),
+                (screen_x, screen_y),
+                (screen_x, screen_y + 7),
+            )
 
-        # Plak op y=0 van de wereld
-        surface.blit(wave, (0, 0))
-
-    def draw_rad_vent(self, surface: pygame.Surface, center: Tuple[int, int],
-                      radius: int, color: Color, intensity: float) -> None:
+    def draw_rad_vent(
+        self,
+        surface: pygame.Surface,
+        center: Tuple[int, int],
+        radius: int,
+        color: Color,
+        intensity: float,
+        *,
+        offset: Tuple[int, int] = (0, 0),
+    ) -> None:
         """
         Tekent een pulserende rad-vent glow op world-coördinaten.
 
@@ -241,6 +269,8 @@ class OceanRenderer:
             glow.blit(alpha_mod, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
 
         x, y = center
+        x -= offset[0]
+        y -= offset[1]
         surface.blit(
             glow,
             (x - radius, y - radius),

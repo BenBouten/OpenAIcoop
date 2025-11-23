@@ -32,11 +32,13 @@ def _render_dimensions(lifeform) -> tuple[int, int]:
     )
 
 
-def _centered_position(lifeform, sprite: pygame.Surface, reference: tuple[int, int]) -> tuple[int, int]:
+def _centered_position(
+    lifeform, sprite: pygame.Surface, reference: tuple[int, int], offset: tuple[int, int]
+) -> tuple[int, int]:
     width_diff = sprite.get_width() - reference[0]
     height_diff = sprite.get_height() - reference[1]
-    x = int(lifeform.x - width_diff / 2)
-    y = int(lifeform.y - height_diff / 2)
+    x = int(lifeform.x - width_diff / 2) - offset[0]
+    y = int(lifeform.y - height_diff / 2) - offset[1]
     return x, y
 
 
@@ -98,7 +100,16 @@ def _apply_depth_shading(sprite: pygame.Surface, darkness_factor: float) -> pyga
     return darkened
 
 
-def draw_lifeform(surface, lifeform, settings, *, camera: Camera | None = None, render_bounds: RenderBounds | None = None, world_height: float | None = None):
+def draw_lifeform(
+    surface,
+    lifeform,
+    settings,
+    *,
+    camera: Camera | None = None,
+    render_bounds: RenderBounds | None = None,
+    world_height: float | None = None,
+    offset: tuple[int, int] = (0, 0),
+):
     """Draw a lifeform body and status outline onto ``surface``."""
     if lifeform.health_now <= 0:
         return
@@ -120,7 +131,7 @@ def draw_lifeform(surface, lifeform, settings, *, camera: Camera | None = None, 
         darkness_factor = _calculate_depth_darkness(lifeform.y, world_height)
         body = _apply_depth_shading(body, darkness_factor)
 
-    surface.blit(body, _centered_position(lifeform, body, reference))
+    surface.blit(body, _centered_position(lifeform, body, reference, offset))
 
     outline = pygame.Surface((render_width + 4, render_height + 4))
     outline.set_colorkey(settings.BLACK)
@@ -129,10 +140,21 @@ def draw_lifeform(surface, lifeform, settings, *, camera: Camera | None = None, 
     color = pygame.Color(red_value, 0, blue_value)
     pygame.draw.rect(outline, color, (0, 0, render_width + 2, render_height + 2), 1)
     outline = pygame.transform.rotate(outline, lifeform.angle)
-    surface.blit(outline, _centered_position(lifeform, outline, (render_width, render_height)))
+    surface.blit(
+        outline,
+        _centered_position(lifeform, outline, (render_width, render_height), offset),
+    )
 
 
-def draw_lifeform_vision(surface, lifeform, settings, *, camera: Camera | None = None, render_bounds: RenderBounds | None = None):
+def draw_lifeform_vision(
+    surface,
+    lifeform,
+    settings,
+    *,
+    camera: Camera | None = None,
+    render_bounds: RenderBounds | None = None,
+    offset: tuple[int, int] = (0, 0),
+):
     """Draw the vision radius indicator for a lifeform."""
     if lifeform.health_now <= 0:
         return
@@ -145,7 +167,10 @@ def draw_lifeform_vision(surface, lifeform, settings, *, camera: Camera | None =
     pygame.draw.circle(
         surface,
         settings.GREEN,
-        (int(lifeform.rect.centerx), int(lifeform.rect.centery)),
+        (
+            int(lifeform.rect.centerx) - offset[0],
+            int(lifeform.rect.centery) - offset[1],
+        ),
         int(getattr(lifeform, "sensory_range", lifeform.vision)),
         1,
     )
