@@ -87,10 +87,11 @@ class LifeformSpriteCache:
                 height = int(round(max(1.0, self._sprite_height(lifeform))))
             color = base_key[3]
             surface = self._create_body_surface(lifeform, width, height, color)
+            surface = surface.convert_alpha()
             self._base[base_key] = surface
 
         target_angle = angle_bin * self._angle_bin_size
-        rotated = pygame.transform.rotate(surface, target_angle)
+        rotated = pygame.transform.rotate(surface, target_angle).convert_alpha()
         self._rotations[rotation_key] = rotated
         return rotated
 

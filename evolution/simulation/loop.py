@@ -7,6 +7,7 @@ import logging
 import math
 import os
 import random
+import time
 from collections import deque
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
@@ -40,6 +41,7 @@ from ..rendering.creature_creator_overlay import CreatureCreatorOverlay, Palette
 from ..rendering.draw_lifeform import draw_lifeform, draw_lifeform_vision
 from ..rendering.effects import EffectManager
 from ..rendering.gameplay_panel import GameplaySettingsPanel, SliderConfig
+from ..rendering.perf_hud import PerfHUD
 from ..rendering.lifeform_inspector import LifeformInspector
 from ..rendering.modular_palette import (
     BASE_MODULE_ALPHA,
@@ -51,6 +53,7 @@ from ..rendering.modular_palette import (
 )
 from ..rendering.tools_panel import EditorTool, ToolsPanel
 from ..rendering.stats_window import StatsWindow
+from ..rendering.timers import TimerAggregator
 from ..physics.test_creatures import TestCreature, build_fin_swimmer_prototype
 from ..systems import stats as stats_system
 from ..systems import telemetry
@@ -828,6 +831,8 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
         environment_modifiers=environment_modifiers,
     )
     chunk_manager = ChunkManager()
+    perf_hud = PerfHUD()
+    render_timers = TimerAggregator(logger)
     camera = Camera(
         runtime.WINDOW_WIDTH,
         runtime.WINDOW_HEIGHT,
@@ -847,6 +852,10 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
     player_controller = PlayerController(notification_manager, dna_profiles, lifeforms)
     effects_manager = EffectManager()
     effects_manager.set_font(font2)
+
+    render_ms: float = 0.0
+    last_entity_blit_warning = -120
+    last_rebuild_warning = -120
 
     palette_entries = [
         PaletteEntry("core", "Core", "Hoofdtorso"),
@@ -881,101 +890,138 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
     def _ensure_view_surface(view_rect: pygame.Rect) -> pygame.Surface:
         nonlocal view_surface
         if view_surface is None or view_surface.get_size() != view_rect.size:
-            view_surface = pygame.Surface(view_rect.size, pygame.SRCALPHA)
+            view_surface = pygame.Surface(view_rect.size).convert()
         return view_surface
 
     def _render_world_view(render_lifeforms: List[Lifeform]) -> None:
-        viewport = camera.view_rect()
+        nonlocal render_ms, last_entity_blit_warning, last_rebuild_warning
+
+        chunk_manager.begin_frame()
+        render_start = time.perf_counter()
+
+        viewport_raw = camera.view_rect()
+        viewport = pygame.Rect(
+            int(viewport_raw.x),
+            int(viewport_raw.y),
+            int(viewport_raw.width),
+            int(viewport_raw.height),
+        )
         view = _ensure_view_surface(viewport)
         view.fill(world.background_color)
 
-        chunk_manager.ensure_chunks(viewport)
+        chunk_manager.ensure_chunks(viewport, margin=1)
+        with render_timers.time("rebuild_chunks"):
+            chunk_manager.rebuild_queued()
         chunk_manager.unload_far_chunks(viewport)
-        for chunk in chunk_manager.get_visible_chunks(viewport):
-            view.blit(chunk.surface, (chunk.rect.x - viewport.x, chunk.rect.y - viewport.y))
 
-        offset = viewport.topleft
-        world.draw_dynamic_layers(view, viewport, offset)
+        with render_timers.time("get_visible_chunks"):
+            visible_chunks = chunk_manager.get_visible_chunks(viewport)
 
-        visible_bounds = viewport.inflate(200, 200)
-        for plant in plants:
-            if plant.rect.colliderect(visible_bounds):
-                plant.draw(view, offset=offset)
+        with render_timers.time("draw_chunks"):
+            for chunk in visible_chunks:
+                if chunk.surface is None:
+                    continue
+                dx = int(chunk.rect.x - viewport.x)
+                dy = int(chunk.rect.y - viewport.y)
+                view.blit(chunk.surface, (dx, dy))
 
-        for carcass in carcasses:
-            if carcass.rect.colliderect(visible_bounds):
-                carcass.draw(view, offset=offset)
+        offset = (int(viewport.x), int(viewport.y))
 
-        bounds_cache = camera.render_bounds(padding=96) if camera is not None else None
-        for lifeform in render_lifeforms:
-            if lifeform.health_now <= 0:
-                continue
-            if not lifeform.rect.colliderect(visible_bounds):
-                continue
-            draw_lifeform(
-                view,
-                lifeform,
-                settings,
-                camera=camera,
-                render_bounds=bounds_cache,
-                world_height=world.height,
-                offset=offset,
+        with render_timers.time("dynamic_layers"):
+            world.draw_dynamic_layers(view, viewport, offset)
+
+        with render_timers.time("entities_index"):
+            chunk_manager.update_entity_index(
+                plants=plants, carcasses=carcasses, lifeforms=render_lifeforms
             )
-            if show_vision:
-                draw_lifeform_vision(
+
+        culling_margin = chunk_manager.culling_margin
+        visible_bounds = viewport.inflate(culling_margin, culling_margin)
+        entities_by_type = chunk_manager.entities_in_rect(visible_bounds)
+        entity_blits = 0
+
+        with render_timers.time("draw_entities"):
+            for plant in entities_by_type["plants"]:
+                if plant.rect.colliderect(visible_bounds):
+                    plant.draw(view, offset=offset)
+                    entity_blits += 1
+
+            for carcass in entities_by_type["carcasses"]:
+                if carcass.rect.colliderect(visible_bounds):
+                    carcass.draw(view, offset=offset)
+                    entity_blits += 1
+
+            bounds_cache = camera.render_bounds(padding=96) if camera is not None else None
+            for lifeform in entities_by_type["lifeforms"]:
+                if lifeform.health_now <= 0:
+                    continue
+                if not lifeform.rect.colliderect(visible_bounds):
+                    continue
+                draw_lifeform(
                     view,
                     lifeform,
                     settings,
                     camera=camera,
                     render_bounds=bounds_cache,
+                    world_height=world.height,
                     offset=offset,
                 )
+                entity_blits += 1
+                if show_vision:
+                    draw_lifeform_vision(
+                        view,
+                        lifeform,
+                        settings,
+                        camera=camera,
+                        render_bounds=bounds_cache,
+                        offset=offset,
+                    )
 
-            if show_debug:
-                text = font.render(
-                    f"Health: {lifeform.health_now} ID: {lifeform.id} "
-                    f"cooldown {lifeform.reproduced_cooldown} "
-                    f"gen: {lifeform.generation} "
-                    f"dna_id {lifeform.dna_id} "
-                    f"hunger: {lifeform.hunger} "
-                    f"age: {lifeform.age} ",
-                    True,
-                    (0, 0, 0),
-                )
-                view.blit(
-                    text,
-                    (int(lifeform.x) - offset[0], int(lifeform.y - 30) - offset[1]),
-                )
+                if show_debug:
+                    text = font.render(
+                        f"Health: {lifeform.health_now} ID: {lifeform.id} "
+                        f"cooldown {lifeform.reproduced_cooldown} "
+                        f"gen: {lifeform.generation} "
+                        f"dna_id {lifeform.dna_id} "
+                        f"hunger: {lifeform.hunger} "
+                        f"age: {lifeform.age} ",
+                        True,
+                        (0, 0, 0),
+                    )
+                    view.blit(
+                        text,
+                        (int(lifeform.x) - offset[0], int(lifeform.y - 30) - offset[1]),
+                    )
 
-            if show_dna_id:
-                text = font2.render(f"{lifeform.dna_id}", True, (0, 0, 0))
-                view.blit(
-                    text,
-                    (int(lifeform.x) - offset[0], int(lifeform.y - 10) - offset[1]),
-                )
+                if show_dna_id:
+                    text = font2.render(f"{lifeform.dna_id}", True, (0, 0, 0))
+                    view.blit(
+                        text,
+                        (int(lifeform.x) - offset[0], int(lifeform.y - 10) - offset[1]),
+                    )
 
-            if show_leader and lifeform.is_leader:
-                text = font.render("L", True, (0, 0, 0))
-                view.blit(
-                    text,
-                    (int(lifeform.x) - offset[0], int(lifeform.y - 30) - offset[1]),
-                )
+                if show_leader and lifeform.is_leader:
+                    text = font.render("L", True, (0, 0, 0))
+                    view.blit(
+                        text,
+                        (int(lifeform.x) - offset[0], int(lifeform.y - 30) - offset[1]),
+                    )
 
-            if show_action:
-                text = font.render(
-                    f"Current target, enemy: "
-                    f"{lifeform.closest_enemy.id if lifeform.closest_enemy is not None else None}"
-                    f", prey: "
-                    f"{lifeform.closest_prey.id if lifeform.closest_prey is not None else None}, partner: "
-                    f"{lifeform.closest_partner.id if lifeform.closest_partner is not None else None}, is following: "
-                    f"{lifeform.closest_follower.id if lifeform.closest_follower is not None else None} ",
-                    True,
-                    settings.BLACK,
-                )
-                view.blit(
-                    text,
-                    (int(lifeform.x) - offset[0], int(lifeform.y - 20) - offset[1]),
-                )
+                if show_action:
+                    text = font.render(
+                        f"Current target, enemy: "
+                        f"{lifeform.closest_enemy.id if lifeform.closest_enemy is not None else None}"
+                        f", prey: "
+                        f"{lifeform.closest_prey.id if lifeform.closest_prey is not None else None}, partner: "
+                        f"{lifeform.closest_partner.id if lifeform.closest_partner is not None else None}, is following: "
+                        f"{lifeform.closest_follower.id if lifeform.closest_follower is not None else None} ",
+                        True,
+                        settings.BLACK,
+                    )
+                    view.blit(
+                        text,
+                        (int(lifeform.x) - offset[0], int(lifeform.y - 20) - offset[1]),
+                    )
 
         effects_manager.draw(view, offset=offset)
 
@@ -983,6 +1029,33 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
             view, (camera.window_width, camera.window_height)
         )
         screen.blit(scaled, (0, 0))
+
+        render_ms = (time.perf_counter() - render_start) * 1000.0
+
+        metrics = {
+            "fps": clock.get_fps(),
+            "visible_chunks": len(visible_chunks),
+            "chunk_size": chunk_manager.chunk_size,
+            "culling_margin": culling_margin,
+            "entity_blits": entity_blits,
+            "chunk_rebuilds": chunk_manager.rebuilds_this_frame,
+            "render_ms": render_ms,
+            "streaming": chunk_manager.streaming_enabled,
+            "rebuild_queue": chunk_manager.rebuild_queue_size,
+        }
+
+        if entity_blits > 1500 and chunk_manager.frame_index - last_entity_blit_warning > 60:
+            notification_manager.add("Veel blits deze frame", settings.RED, 1500)
+            last_entity_blit_warning = chunk_manager.frame_index
+        if (
+            chunk_manager.rebuilds_this_frame > 2
+            and chunk_manager.frame_index - last_rebuild_warning > 60
+        ):
+            notification_manager.add("Chunk rebuild limiet overschreden", settings.RED, 1500)
+            last_rebuild_warning = chunk_manager.frame_index
+
+        perf_hud.update(metrics)
+        perf_hud.draw(screen)
 
     creature_creator = CreatureCreatorOverlay(
         font2,
@@ -1250,6 +1323,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                 notification_manager.update()
 
             _render_world_view(render_lifeforms)
+            render_timers.maybe_log()
             if legacy_ui_visible:
                 world.draw_weather_overview(screen, font2)
 
@@ -1357,6 +1431,18 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                         world,
                         on_spawn=_spawn_creature_from_template,
                     )
+                elif event.key == pygame.K_F3:
+                    perf_hud.toggle()
+                elif event.key == pygame.K_F5:
+                    chunk_manager.streaming_enabled = not chunk_manager.streaming_enabled
+                elif event.key == pygame.K_LEFTBRACKET:
+                    chunk_manager.set_chunk_size(chunk_manager.chunk_size - 64)
+                elif event.key == pygame.K_RIGHTBRACKET:
+                    chunk_manager.set_chunk_size(chunk_manager.chunk_size + 64)
+                elif event.key == pygame.K_SEMICOLON:
+                    chunk_manager.culling_margin = max(0, chunk_manager.culling_margin - 25)
+                elif event.key == pygame.K_QUOTE:
+                    chunk_manager.culling_margin = min(512, chunk_manager.culling_margin + 25)
                 elif event.key == pygame.K_p and live_simulation_active:
                     paused = not paused
                 elif event.key == pygame.K_n and live_simulation_active:
@@ -1552,6 +1638,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                         world.barriers.append(
                             Barrier(barrier_preview_rect.copy(), (80, 80, 120), "muur"),
                         )
+                        chunk_manager.mark_region_dirty(barrier_preview_rect)
                     barrier_drag_start = None
                     barrier_preview_rect = None
             elif event.type == pygame.MOUSEWHEEL and live_simulation_active:
