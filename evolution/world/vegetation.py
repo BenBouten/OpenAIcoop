@@ -251,12 +251,12 @@ class MossCluster:
 
         self._dirty = False
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, *, offset: Tuple[int, int] = (0, 0)) -> None:
         if not self.cells:
             return
         if self._dirty:
             self._rebuild_surface()
-        surface.blit(self.surface, self.rect.topleft)
+        surface.blit(self.surface, (self.rect.x - offset[0], self.rect.y - offset[1]))
 
     # ------------------------------------------------------------------
     # Resource & regrowth

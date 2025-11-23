@@ -61,6 +61,7 @@ from ..systems.spatial_hash import build_spatial_grid
 from ..world.types import Barrier
 from ..world.vegetation import create_cluster_from_brush
 from ..world.world import World
+from .world.chunks import ChunkManager
 from . import bootstrap, environment
 from .state import SimulationState
 
@@ -550,6 +551,7 @@ camera: Camera
 notification_manager: NotificationManager = notification_context.notification_manager
 event_manager: EventManager
 player_controller: PlayerController
+chunk_manager: ChunkManager
 
 lifeforms: List[Lifeform] = state.lifeforms
 dna_profiles: List[dict] = state.dna_profiles
@@ -579,7 +581,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
     """Start de pygame-simulatie."""
     global world, camera, notification_manager, event_manager, player_controller
     global latest_stats, show_debug, show_leader, show_action, show_vision, show_dna_id, show_dna_info
-    global start_time
+    global start_time, chunk_manager
 
     # Interaction state placeholders
     painting_tool: Optional[EditorTool] = None
@@ -594,9 +596,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
     )
     pygame.display.set_caption("Evolution Sim")
 
-    world_surface = pygame.Surface(
-        (runtime.WORLD_WIDTH, runtime.WORLD_HEIGHT),
-    )
+    view_surface: Optional[pygame.Surface] = None
 
     font1_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus8-Regular.ttf"
     font2_path = "~/AppData/Local/Microsoft/Windows/Fonts/8bitOperatorPlus-Bold.ttf"
@@ -827,6 +827,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
         world_type=state.world_type,
         environment_modifiers=environment_modifiers,
     )
+    chunk_manager = ChunkManager()
     camera = Camera(
         runtime.WINDOW_WIDTH,
         runtime.WINDOW_HEIGHT,
@@ -875,6 +876,113 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
         effects_manager,
         on_spawn=_spawn_creature_from_template,
     )
+    chunk_manager.build_static_chunks(world)
+
+    def _ensure_view_surface(view_rect: pygame.Rect) -> pygame.Surface:
+        nonlocal view_surface
+        if view_surface is None or view_surface.get_size() != view_rect.size:
+            view_surface = pygame.Surface(view_rect.size, pygame.SRCALPHA)
+        return view_surface
+
+    def _render_world_view(render_lifeforms: List[Lifeform]) -> None:
+        viewport = camera.view_rect()
+        view = _ensure_view_surface(viewport)
+        view.fill(world.background_color)
+
+        chunk_manager.ensure_chunks(viewport)
+        chunk_manager.unload_far_chunks(viewport)
+        for chunk in chunk_manager.get_visible_chunks(viewport):
+            view.blit(chunk.surface, (chunk.rect.x - viewport.x, chunk.rect.y - viewport.y))
+
+        offset = viewport.topleft
+        world.draw_dynamic_layers(view, viewport, offset)
+
+        visible_bounds = viewport.inflate(200, 200)
+        for plant in plants:
+            if plant.rect.colliderect(visible_bounds):
+                plant.draw(view, offset=offset)
+
+        for carcass in carcasses:
+            if carcass.rect.colliderect(visible_bounds):
+                carcass.draw(view, offset=offset)
+
+        bounds_cache = camera.render_bounds(padding=96) if camera is not None else None
+        for lifeform in render_lifeforms:
+            if lifeform.health_now <= 0:
+                continue
+            if not lifeform.rect.colliderect(visible_bounds):
+                continue
+            draw_lifeform(
+                view,
+                lifeform,
+                settings,
+                camera=camera,
+                render_bounds=bounds_cache,
+                world_height=world.height,
+                offset=offset,
+            )
+            if show_vision:
+                draw_lifeform_vision(
+                    view,
+                    lifeform,
+                    settings,
+                    camera=camera,
+                    render_bounds=bounds_cache,
+                    offset=offset,
+                )
+
+            if show_debug:
+                text = font.render(
+                    f"Health: {lifeform.health_now} ID: {lifeform.id} "
+                    f"cooldown {lifeform.reproduced_cooldown} "
+                    f"gen: {lifeform.generation} "
+                    f"dna_id {lifeform.dna_id} "
+                    f"hunger: {lifeform.hunger} "
+                    f"age: {lifeform.age} ",
+                    True,
+                    (0, 0, 0),
+                )
+                view.blit(
+                    text,
+                    (int(lifeform.x) - offset[0], int(lifeform.y - 30) - offset[1]),
+                )
+
+            if show_dna_id:
+                text = font2.render(f"{lifeform.dna_id}", True, (0, 0, 0))
+                view.blit(
+                    text,
+                    (int(lifeform.x) - offset[0], int(lifeform.y - 10) - offset[1]),
+                )
+
+            if show_leader and lifeform.is_leader:
+                text = font.render("L", True, (0, 0, 0))
+                view.blit(
+                    text,
+                    (int(lifeform.x) - offset[0], int(lifeform.y - 30) - offset[1]),
+                )
+
+            if show_action:
+                text = font.render(
+                    f"Current target, enemy: "
+                    f"{lifeform.closest_enemy.id if lifeform.closest_enemy is not None else None}"
+                    f", prey: "
+                    f"{lifeform.closest_prey.id if lifeform.closest_prey is not None else None}, partner: "
+                    f"{lifeform.closest_partner.id if lifeform.closest_partner is not None else None}, is following: "
+                    f"{lifeform.closest_follower.id if lifeform.closest_follower is not None else None} ",
+                    True,
+                    settings.BLACK,
+                )
+                view.blit(
+                    text,
+                    (int(lifeform.x) - offset[0], int(lifeform.y - 20) - offset[1]),
+                )
+
+        effects_manager.draw(view, offset=offset)
+
+        scaled = pygame.transform.smoothscale(
+            view, (camera.window_width, camera.window_height)
+        )
+        screen.blit(scaled, (0, 0))
 
     creature_creator = CreatureCreatorOverlay(
         font2,
@@ -1059,9 +1167,11 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
             boost = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
             camera.move(horizontal, vertical, boost)
 
+            lifeform_snapshot = list(lifeforms)
+            render_lifeforms = list(lifeform_snapshot)
+
             if not paused:
                 world.update(pygame.time.get_ticks())
-                world.draw(world_surface)
 
                 current_time = datetime.datetime.now()
                 time_passed = current_time - start_time
@@ -1076,14 +1186,11 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                 for plant in plants:
                     plant.set_size()
                     plant.regrow(world, plants)
-                    plant.draw(world_surface)
 
                 for carcass in list(carcasses):
                     carcass.update(world, delta_time)
                     if carcass.is_depleted():
                         carcasses.remove(carcass)
-                        continue
-                    carcass.draw(world_surface)
 
                 lifeform_snapshot = list(lifeforms)
                 average_maturity = (
@@ -1095,9 +1202,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                 # Rebuild spatial grid for efficient proximity queries
                 state.spatial_grid = build_spatial_grid(lifeform_snapshot, plants, cell_size=200.0)
 
-                bounds_cache = None
-                if camera is not None:
-                    bounds_cache = camera.render_bounds(padding=96)
+                updated_lifeforms: List[Lifeform] = []
                 for lifeform in lifeform_snapshot:
                     # 1) DNA-afhankelijke eigenschappen & omgeving
                     lifeform.set_speed(average_maturity)
@@ -1120,74 +1225,14 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                     if lifeform.handle_death():
                         continue
 
-                    # 6) Rendering
-                    draw_lifeform(
-                        world_surface,
-                        lifeform,
-                        settings,
-                        camera=camera,
-                        render_bounds=bounds_cache,
-                    )
-                    if show_vision:
-                        draw_lifeform_vision(
-                            world_surface,
-                            lifeform,
-                            settings,
-                            camera=camera,
-                            render_bounds=bounds_cache,
-                        )
-
-                    if show_debug:
-                        text = font.render(
-                            f"Health: {lifeform.health_now} ID: {lifeform.id} "
-                            f"cooldown {lifeform.reproduced_cooldown} "
-                            f"gen: {lifeform.generation} "
-                            f"dna_id {lifeform.dna_id} "
-                            f"hunger: {lifeform.hunger} "
-                            f"age: {lifeform.age} ",
-                            True,
-                            (0, 0, 0),
-                        )
-                        world_surface.blit(
-                            text,
-                            (int(lifeform.x), int(lifeform.y - 30)),
-                        )
-
-                    if show_dna_id:
-                        text = font2.render(f"{lifeform.dna_id}", True, (0, 0, 0))
-                        world_surface.blit(
-                            text,
-                            (int(lifeform.x), int(lifeform.y - 10)),
-                        )
-
-                    if show_leader and lifeform.is_leader:
-                        text = font.render("L", True, (0, 0, 0))
-                        world_surface.blit(
-                            text,
-                            (int(lifeform.x), int(lifeform.y - 30)),
-                        )
-
-                    if show_action:
-                        text = font.render(
-                            f"Current target, enemy: "
-                            f"{lifeform.closest_enemy.id if lifeform.closest_enemy is not None else None}"
-                            f", prey: "
-                            f"{lifeform.closest_prey.id if lifeform.closest_prey is not None else None}, partner: "
-                            f"{lifeform.closest_partner.id if lifeform.closest_partner is not None else None}, is following: "
-                            f"{lifeform.closest_follower.id if lifeform.closest_follower is not None else None} ",
-                            True,
-                            settings.BLACK,
-                        )
-                        world_surface.blit(
-                            text,
-                            (int(lifeform.x), int(lifeform.y - 20)),
-                        )
+                    updated_lifeforms.append(lifeform)
 
                     if lifeform.reproduced_cooldown > 0:
                         lifeform.reproduced_cooldown -= 1
 
+                render_lifeforms = updated_lifeforms
+
                 effects_manager.update(delta_time)
-                effects_manager.draw(world_surface)
 
                 stats = stats_system.collect_population_stats(
                     state, formatted_time_passed
@@ -1204,40 +1249,38 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                 environment.sync_moss_growth_speed(state)
                 notification_manager.update()
 
-                _draw_world(screen, world_surface)
-                if legacy_ui_visible:
-                    world.draw_weather_overview(screen, font2)
+            _render_world_view(render_lifeforms)
+            if legacy_ui_visible:
+                world.draw_weather_overview(screen, font2)
 
-                    pygame.draw.rect(screen, settings.GREEN, reset_button)
-                    pygame.draw.rect(screen, settings.BLACK, reset_button, 2)
-                    pygame.draw.rect(screen, settings.GREEN, show_dna_button)
-                    pygame.draw.rect(screen, settings.BLACK, show_dna_button, 2)
-                    pygame.draw.rect(screen, settings.GREEN, show_dna_info_button)
-                    pygame.draw.rect(screen, settings.BLACK, show_dna_info_button, 2)
+                pygame.draw.rect(screen, settings.GREEN, reset_button)
+                pygame.draw.rect(screen, settings.BLACK, reset_button, 2)
+                pygame.draw.rect(screen, settings.GREEN, show_dna_button)
+                pygame.draw.rect(screen, settings.BLACK, show_dna_button, 2)
+                pygame.draw.rect(screen, settings.GREEN, show_dna_info_button)
+                pygame.draw.rect(screen, settings.BLACK, show_dna_info_button, 2)
 
-                    reset_label = font.render("Reset", True, settings.BLACK)
-                    screen.blit(
-                        reset_label,
-                        (reset_button.x + 28, reset_button.y + 6),
-                    )
-                    dna_label = font.render("DNA", True, settings.BLACK)
-                    screen.blit(
-                        dna_label,
-                        (show_dna_button.right + 8, show_dna_button.y + 4),
-                    )
-                    dna_info_label = font.render("Info", True, settings.BLACK)
-                    screen.blit(
-                        dna_info_label,
-                        (show_dna_info_button.right + 8, show_dna_info_button.y + 4),
-                    )
+                reset_label = font.render("Reset", True, settings.BLACK)
+                screen.blit(
+                    reset_label,
+                    (reset_button.x + 28, reset_button.y + 6),
+                )
+                dna_label = font.render("DNA", True, settings.BLACK)
+                screen.blit(
+                    dna_label,
+                    (show_dna_button.right + 8, show_dna_button.y + 4),
+                )
+                dna_info_label = font.render("Info", True, settings.BLACK)
+                screen.blit(
+                    dna_info_label,
+                    (show_dna_info_button.right + 8, show_dna_info_button.y + 4),
+                )
 
-                    notification_manager.draw(screen, font)
-                    player_controller.draw_overlay(screen, font2)
-                    event_manager.draw(screen, font2)
+                notification_manager.draw(screen, font)
+                player_controller.draw_overlay(screen, font2)
+                event_manager.draw(screen, font2)
 
         if not starting_screen:
-            if paused:
-                _draw_world(screen, world_surface)
             inspector.draw_highlight(screen, camera)
             if inspector.visible:
                 inspector.draw(screen)
@@ -1420,6 +1463,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                             effects_manager,
                             on_spawn=_spawn_creature_from_template,
                         )
+                        chunk_manager.build_static_chunks(world)
                         _initialise_population()
                         inspector.clear()
                         start_time = datetime.datetime.now()
@@ -1448,6 +1492,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                             effects_manager,
                             on_spawn=_spawn_creature_from_template,
                         )
+                        chunk_manager.build_static_chunks(world)
                         _initialise_population()
                         inspector.clear()
                         latest_stats = None
@@ -1552,21 +1597,6 @@ def _draw_top_bar(surface: pygame.Surface, font: pygame.font.Font, buttons: List
                 rect.centery - label_surface.get_height() // 2,
             ),
         )
-
-def _draw_world(screen: pygame.Surface, world_surface: pygame.Surface) -> None:
-    """Render the world surface using the active camera viewport."""
-    viewport = camera.view_rect()
-    window_size = (camera.window_width, camera.window_height)
-    if viewport.width == window_size[0] and viewport.height == window_size[1]:
-        screen.blit(world_surface, (0, 0), viewport)
-        return
-
-    try:
-        view_surface = world_surface.subsurface(viewport)
-    except ValueError:
-        view_surface = world_surface
-    scaled = pygame.transform.smoothscale(view_surface, window_size)
-    screen.blit(scaled, (0, 0))
 
 def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
         if not lifeforms:
