@@ -32,6 +32,7 @@ _DEFAULT_CONSTRAINTS = GenomeConstraints(max_mass=240.0, nerve_capacity=36.0)
 
 _MODULE_NERVE_LOAD = {
     "core": 5.0,
+    "round_core": 5.0,
     "bell_core": 4.0,
     "head": 3.0,
     "limb": 1.8,
@@ -166,23 +167,8 @@ def generate_modular_blueprint(
 def _build_drifter(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
     """Jellyfish-like: Bell core, hanging tentacles."""
     core_id = "core"
-    # Use bell_core for Drifter
-    genes[core_id] = ModuleGene(core_id, "bell_core", {"variant": "gelatinous"})
-    
-    # Bell / Umbrella
-    # bell_core has 'umbrella_sensor' but maybe not 'head_socket' in the same way?
-    # JellyBell has 'umbrella_sensor' (SensoryModule).
-    # It does NOT have 'head_socket'.
-    # So we attach sensors directly or use 'umbrella_sensor'.
-    # But we want a "head" module? Jellyfish don't really have heads.
-    # The blueprint logic usually expects a head.
-    # If we skip head, we might break things that expect a head.
-    # But let's try to attach a sensor as "head" if possible, or just skip head.
-    
-    # Actually, let's stick to TrunkCore for now since I patched it to allow mesoglea.
-    # Switching to JellyBell might require more changes (slots are different).
-    # I'll revert to TrunkCore but keep the comment about JellyBell for future.
-    genes[core_id] = ModuleGene(core_id, "core", {"variant": "gelatinous"})
+    # Use RoundCore for Drifter for a more compact, jelly-like body
+    genes[core_id] = ModuleGene(core_id, "round_core", {"variant": "gelatinous"})
     
     # Bell / Umbrella
     head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "dome"})
@@ -190,17 +176,17 @@ def _build_drifter(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) 
     # Hanging tentacles from ventral
     tentacle_count = rng.randint(4, 8)
     for i in range(tentacle_count):
-        # Use a specialized socket naming convention or just reuse available ones
-        # For simplicity, we attach to ventral_core and then chain
-        if i == 0:
-            # Use "tentacle" module type for TentacleLimb
-            root = _attach_module(genes, "tentacle", core_id, "ventral_core", parameters={"variant": "tentacle"})
-            _random_limb_chain(genes, root, "distal_tip", rng, length_bias=2, module_type="tentacle")
-        else:
-            # Attach to rim if possible, or just assume abstract attachment
-            pass 
+        # RoundCore has ventral_socket and radial slots.
+        # For a drifter, we want them hanging down.
+        # We can attach one main chain to ventral, and others to radials but angled down?
+        # Or just attach to radials.
+        
+        slot = "ventral_socket" if i == 0 else f"radial_{((i-1)%4)+1}"
+        
+        # Use "tentacle" module type for TentacleLimb
+        root = _attach_module(genes, "tentacle", core_id, slot, parameters={"variant": "tentacle"})
+        _random_limb_chain(genes, root, "distal_tip", rng, length_bias=3, module_type="tentacle")
 
-    # Sensors on rim (head)
     # Sensors on rim (head)
     _attach_sensors(genes, head_id, ["cranial_sensor"], diet, rng)
     _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
@@ -216,10 +202,6 @@ def _build_burrower(genes: Dict[str, ModuleGene], diet: str, rng: random.Random)
     
     # Long chain of segments
     segments = rng.randint(4, 8)
-    current_parent = core_id
-    current_slot = "ventral_core" # Worms grow backwards from core? Or we treat core as head-segment.
-    
-    # Actually, let's treat core as the front segment behind head
     current_parent = core_id
     current_slot = "tail_socket" # Assuming core has a tail socket
     
@@ -261,26 +243,20 @@ def _build_streamliner(genes: Dict[str, ModuleGene], diet: str, rng: random.Rand
 def _build_tentacle_core(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
     """Octopus-like: Central core, radial arms."""
     core_id = "core"
-    genes[core_id] = ModuleGene(core_id, "core", {"variant": "spherical"})
-    genes[core_id] = ModuleGene(core_id, "core", {"variant": "spherical"})
+    # Use RoundCore for spherical body
+    genes[core_id] = ModuleGene(core_id, "round_core", {"variant": "spherical"})
     head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "bulbous"})
     _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
     
     # Arms
     arm_count = rng.randint(4, 8)
     for i in range(arm_count):
-        # We need multiple slots. If they don't exist, we might need to hack/overload or use a hub module.
-        # For now, let's attach 2 to laterals and chain, or assume core has radial slots.
-        # To keep it valid with current slots:
-        if i == 0: slot = "lateral_mount_left"
-        elif i == 1: slot = "lateral_mount_right"
-        elif i == 2: slot = "ventral_core"
-        elif i == 3: slot = "dorsal_mount"
-        else: continue # Limit to 4 for now if slots are limited
+        # Use RoundCore's radial slots
+        slot = f"radial_{(i%4)+1}"
         
         # Use "tentacle" module type
         arm_root = _attach_module(genes, "tentacle", core_id, slot, parameters={"variant": "tentacle"})
-        _random_limb_chain(genes, arm_root, "distal_tip", rng, length_bias=2, module_type="tentacle")
+        _random_limb_chain(genes, arm_root, "distal_tip", rng, length_bias=3, module_type="tentacle")
 
 
 def _build_bastion(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:

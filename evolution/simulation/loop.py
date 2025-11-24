@@ -1081,6 +1081,15 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
     def _screen_to_world(position: Tuple[int, int]) -> Tuple[float, float]:
         return camera.screen_to_world(position)
 
+    def _lifeform_at_screen_pos(screen_pos: Tuple[int, int]) -> Optional[Lifeform]:
+        world_pos = _screen_to_world(screen_pos)
+        for lifeform in reversed(lifeforms):
+            if lifeform.health_now <= 0:
+                continue
+            if lifeform.rect.collidepoint(world_pos):
+                return lifeform
+        return None
+
     def _spawn_moss_cluster(world_pos: Tuple[float, float], *, notify: bool = True) -> None:
         brush_radius = max(8, tools_panel.brush_size // 2)
         create_cluster_from_brush(world, world_pos, brush_radius)

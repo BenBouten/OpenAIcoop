@@ -67,6 +67,7 @@ class AnimatedModule:
     relative_angle: float = 0.0
     angle_offset: float = 0.0
     angular_velocity: float = 0.0
+    thrust_factor: float = 0.0  # New field to store animation intensity
     joint_position: Vector2 = field(default_factory=Vector2)
     anchor_offset_local: Vector2 = field(default_factory=Vector2)
     attachment_angle: float = 0.0
@@ -208,9 +209,13 @@ class ModularRendererState:
             outline[closest_idx] = joint_point
         return outline
 
-    def rebuild_world_poses(self) -> None:
+    def rebuild_world_poses(self, angular_velocity: float = 0.0, thrust_output: float = 0.0) -> None:
         if self.dirty:
             self.refresh()
+        
+        # Apply procedural animation to joints
+        self._update_animation(angular_velocity, thrust_output)
+
         root = self.graph.root_id
         root_pose = self.poses[root]
         root_pose.current_pose.center = root_pose.rest_pose.center.copy()
@@ -223,6 +228,67 @@ class ModularRendererState:
                 for vertex in animated.outline_local
             ]
         self._solve_children(root)
+
+    def _update_animation(self, angular_velocity: float, thrust_output: float) -> None:
+        time_ms = pygame.time.get_ticks()
+        
+        # Base animation parameters
+        # Idle movement: slow, low amplitude
+        # Thrust movement: fast, high amplitude
+        
+        # Normalize thrust (assuming max thrust ~20-50 per module, total maybe 100?)
+        # Let's just use a sigmoid or clamp.
+        thrust_factor = min(1.0, abs(thrust_output) / 20.0)
+        
+        base_freq = 0.002 + (0.008 * thrust_factor)
+        base_amp = 5.0 + (15.0 * thrust_factor)
+        
+        visited = set()
+        queue = [(self.graph.root_id, 0, 0.0)] # id, depth, parent_phase
+        
+        while queue:
+            node_id, depth, parent_phase = queue.pop(0)
+            if node_id in visited:
+                continue
+            visited.add(node_id)
+            
+            animated = self.poses[node_id]
+            module_type = getattr(animated.module, "module_type", "")
+            
+            # Animation Parameters
+            wave_amp = 0.0
+            spatial_freq = 0.4
+            
+            if module_type in ("tentacle", "propulsion"):
+                # Snake/Tentacle movement
+                
+                is_chain = False
+                if animated.parent_id:
+                    parent_mod = self.poses[animated.parent_id].module
+                    if getattr(parent_mod, "module_type", "") == module_type:
+                        is_chain = True
+                
+                if is_chain or module_type == "tentacle":
+                    # Scale amplitude by thrust
+                    wave_amp = base_amp
+                    if module_type == "propulsion":
+                        wave_amp *= 0.7 # Tails slightly stiffer
+                    
+                    # Add turn leaning
+                    lag = -angular_velocity * 5.0
+                    
+                    # Sine wave
+                    phase = time_ms * base_freq - depth * spatial_freq
+                    wave = math.sin(phase) * wave_amp
+                    
+                    # Apply to angle_offset
+                    animated.angle_offset = wave + lag
+                    animated.thrust_factor = thrust_factor
+            
+            # Propagate to children
+            if node_id in self.graph.nodes:
+                for child_id in self.graph.nodes[node_id].children:
+                    queue.append((child_id, depth + 1, 0.0))
 
     def _solve_children(self, parent_id: str) -> None:
         parent = self.poses[parent_id]
@@ -237,7 +303,10 @@ class ModularRendererState:
             base_offset = (anchor_base - parent.current_pose.center).dot(direction)
             anchor_world = anchor_base + direction * (parent_target - base_offset)
             self._log_alignment_error(parent, anchor_world, parent_target, "parent")
+            
+            # Include angle_offset in the child's rotation
             child_angle = direction_angle + child.relative_angle + child.angle_offset
+            
             child_dir_local = _rotate(-direction, -(child_angle + child.natural_orientation))
             child_distance = _ellipse_distance(child_dir_local, child.half_length, child.half_cross)
             child_center = anchor_world + direction * (child.clearance + child_distance)
@@ -259,9 +328,10 @@ class ModularRendererState:
     ) -> None:
         actual = (target_point - module.current_pose.center).length()
         if ENABLE_ALIGNMENT_LOG and abs(actual - ideal_distance) > 1.5:
-            print(
-                f"[Renderer] Alignment drift on {module.node_id} ({label}): expected {ideal_distance:.2f}, got {actual:.2f}"
-            )
+            # print(
+            #     f"[Renderer] Alignment drift on {module.node_id} ({label}): expected {ideal_distance:.2f}, got {actual:.2f}"
+            # )
+            pass
 
     def iter_poses(self) -> Iterable[AnimatedModule]:
         for node_id in self.graph.nodes:
@@ -318,7 +388,8 @@ class BodyGraphRenderer:
 
     def _skin_includes_module(self, animated: AnimatedModule) -> bool:
         module_type = getattr(animated.module, "module_type", "")
-        return module_type not in {"limb", "tentacle"}
+        # Exclude limbs, tentacles, and propulsion (fins/tails) from the main skin outline
+        return module_type not in {"limb", "tentacle", "propulsion"}
 
     def _convex_hull(self, points: List[Tuple[int, int]]) -> List[Tuple[int, int]]:
         pts = sorted(set(points))
@@ -361,6 +432,9 @@ class BodyGraphRenderer:
         elif module_type == "mouth":
             self._draw_mouth(animated, offset)
             return
+        elif module_type == "tentacle":
+            self._draw_tentacle(animated, offset, color, alpha)
+            return
 
         polygon_points = [
             (offset + vertex * self.position_scale) for vertex in animated.outline_world
@@ -385,6 +459,123 @@ class BodyGraphRenderer:
             
             for pt in int_points:
                 pygame.draw.line(self.surface, internal_color, center_pt, pt, 1)
+
+    def _draw_tentacle(self, animated: AnimatedModule, offset: Vector2, color: Color, alpha: int) -> None:
+        """Render a multi-segment tentacle with thrust effects."""
+        module = animated.module
+        
+        # Geometry setup
+        start_pos = offset + animated.current_pose.center * self.position_scale
+        base_angle = animated.current_pose.angle
+        
+        # Dimensions
+        length = module.size[2] * self.position_scale
+        base_width = max(module.size[0], module.size[1]) * self.position_scale * 0.5
+        
+        # Animation parameters
+        time_ms = pygame.time.get_ticks()
+        phase_offset = (id(animated) % 100) * 0.1
+        
+        # Movement characteristics
+        # Scale internal animation by thrust factor
+        thrust_factor = getattr(animated, "thrust_factor", 0.0)
+        
+        wave_speed = 0.002 + (0.008 * thrust_factor)
+        wave_freq = 0.8  
+        wave_amp = 2.0 + (5.0 * thrust_factor)   # Scale amplitude with thrust
+        
+        num_segments = max(6, int(length / 8))
+        segment_len = length / num_segments
+        
+        spine_points: List[Vector2] = []
+        current_pos = start_pos
+        current_angle = base_angle
+        
+        # Calculate spine
+        for i in range(num_segments + 1):
+            t = i / num_segments  # 0.0 to 1.0
+            
+            # Envelope: 0 at base, increasing towards tip
+            # This allows the segment to flex slightly internally
+            envelope = math.sin(t * math.pi) * 0.5
+            
+            wave_val = math.sin(time_ms * wave_speed + i * wave_freq + phase_offset)
+            angle_offset = wave_val * wave_amp * envelope * 0.2 
+            
+            current_angle += angle_offset
+            
+            spine_points.append(current_pos)
+            
+            # Advance
+            direction = _unit(current_angle)
+            current_pos += direction * segment_len
+            
+            # Thrust Effects (Bubbles/Flow)
+            velocity_factor = math.cos(time_ms * wave_speed + i * wave_freq + phase_offset)
+            
+            # Draw effects only if thrust is significant
+            if thrust_factor > 0.2 and t > 0.3 and abs(velocity_factor) > 0.65:
+                move_dir = _unit(current_angle + 90) * (1.0 if velocity_factor > 0 else -1.0)
+                effect_pos = current_pos - move_dir * (base_width * 0.8)
+                
+                effect_alpha = int(abs(velocity_factor) * 180 * t * thrust_factor)
+                if effect_alpha > 30:
+                    bubble_radius = max(1, int(3 * t))
+                    bubble_color = (200, 240, 255)
+                    pygame.draw.circle(self.surface, bubble_color, (int(effect_pos.x), int(effect_pos.y)), bubble_radius)
+                    
+                    if abs(velocity_factor) > 0.85:
+                         trail_end = effect_pos - direction * (8 * t * thrust_factor)
+                         pygame.draw.line(self.surface, (180, 230, 250), (int(effect_pos.x), int(effect_pos.y)), (int(trail_end.x), int(trail_end.y)), 1)
+
+        # Build Polygon Strip
+        left_verts: List[Vector2] = []
+        right_verts: List[Vector2] = []
+        
+        for i, pt in enumerate(spine_points):
+            t = i / num_segments
+            # Tapering
+            width = base_width * (1.0 - t * 0.4)
+            
+            # Calculate normal
+            if i < len(spine_points) - 1:
+                diff = spine_points[i+1] - pt
+                if diff.length_squared() > 1e-6:
+                    tangent = diff.normalize()
+                else:
+                    tangent = _unit(base_angle)
+            elif i > 0:
+                diff = pt - spine_points[i-1]
+                if diff.length_squared() > 1e-6:
+                    tangent = diff.normalize()
+                else:
+                    tangent = _unit(base_angle)
+            else:
+                tangent = _unit(base_angle)
+                
+            normal = Vector2(-tangent.y, tangent.x)
+            
+            left_verts.append(pt + normal * width)
+            right_verts.append(pt - normal * width)
+            
+        # Combine into closed loop
+        poly_points = left_verts + list(reversed(right_verts))
+        int_poly = [(int(p.x), int(p.y)) for p in poly_points]
+        
+        # Draw Tentacle Body
+        fill_color = (*color, alpha)
+        pygame.draw.polygon(self.surface, fill_color, int_poly)
+        
+        # Outline
+        pygame.draw.lines(self.surface, (200, 220, 230), False, [(int(p.x), int(p.y)) for p in left_verts], 1)
+        pygame.draw.lines(self.surface, (200, 220, 230), False, [(int(p.x), int(p.y)) for p in right_verts], 1)
+        
+        # Internal muscle striations (rings)
+        for i in range(1, num_segments, 2):
+            p1 = left_verts[i]
+            p2 = right_verts[i]
+            pygame.draw.line(self.surface, (min(255, color[0]+30), min(255, color[1]+30), min(255, color[2]+30)), 
+                             (int(p1.x), int(p1.y)), (int(p2.x), int(p2.y)), 1)
 
     def _draw_eye(self, animated: AnimatedModule, offset: Vector2) -> None:
         module = animated.module

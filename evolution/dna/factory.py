@@ -20,6 +20,7 @@ from ..body.modules import (
     TentacleLimb,
     TailThruster,
     TrunkCore,
+    RoundCore,
     Eye,
     Mouth,
 )
@@ -58,6 +59,7 @@ DEFAULT_MODULE_FACTORIES: Dict[str, ModuleFactory] = {
     "PulseSiphon": _default_factory_for(PulseSiphon),
     "TentacleLimb": _default_factory_for(TentacleLimb),
     "core": _default_factory_for(TrunkCore),
+    "round_core": _default_factory_for(RoundCore),
     "bell_core": _default_factory_for(JellyBell),
     "head": _default_factory_for(CephalonHead),
     "limb": _default_factory_for(HydroFin),

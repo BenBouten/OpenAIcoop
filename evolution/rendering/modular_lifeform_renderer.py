@@ -47,10 +47,15 @@ class ModularLifeformRenderer:
     def render_surface(self, lifeform: Lifeform) -> tuple[Surface, tuple[int, int]]:
         state = self._ensure_state(lifeform)
         state.refresh()
-        state.rebuild_world_poses()
+        thrust = getattr(lifeform, "physics", None) and getattr(lifeform.physics, "thrust_output", 0.0) or 0.0
+        state.rebuild_world_poses(
+            angular_velocity=getattr(lifeform, "angular_velocity", 0.0),
+            thrust_output=thrust
+        )
         base_width = max(1, getattr(lifeform, "base_width", lifeform.width))
         base_height = max(1, getattr(lifeform, "base_height", lifeform.height))
-        margin = int(self.pixel_scale * 1.25)
+        # Increase margin significantly to allow for long tentacles (e.g. 6.0 length * 36 scale ~ 200px)
+        margin = int(self.pixel_scale * 8.0) 
         surf_width = base_width + margin * 2
         surf_height = base_height + margin * 2
         surface = pygame.Surface(
