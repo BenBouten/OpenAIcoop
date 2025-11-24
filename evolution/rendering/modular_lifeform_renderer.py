@@ -47,10 +47,16 @@ class ModularLifeformRenderer:
     def render_surface(self, lifeform: Lifeform) -> tuple[Surface, tuple[int, int]]:
         state = self._ensure_state(lifeform)
         state.refresh()
-        thrust = getattr(lifeform, "physics", None) and getattr(lifeform.physics, "thrust_output", 0.0) or 0.0
+        thrust = (
+            getattr(lifeform, "physics", None)
+            and getattr(lifeform.physics, "thrust_output", 0.0)
+            or getattr(lifeform, "thrust_output", 0.0)
+        )
+        thrust_map = getattr(lifeform, "active_thrust_map", None)
         state.rebuild_world_poses(
             angular_velocity=getattr(lifeform, "angular_velocity", 0.0),
-            thrust_output=thrust
+            thrust_output=thrust,
+            surface_thrust=thrust_map,
         )
         base_width = max(1, getattr(lifeform, "base_width", lifeform.width))
         base_height = max(1, getattr(lifeform, "base_height", lifeform.height))
