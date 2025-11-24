@@ -721,6 +721,13 @@ class LifeformInspector:
         lines.append(
             f"Massa {lifeform.mass:.2f} & bereik {lifeform.reach:.2f} → x{combined:.2f}"
         )
+        if getattr(lifeform, "grapple_power", 0.0) > 0:
+            lines.append(
+                f"Tentakel-greep ({lifeform.tentacle_count}x) → +{lifeform.grapple_power:.2f}"
+            )
+            lines.append(
+                f"  grip {lifeform.tentacle_grip_bonus:.1f}, span {lifeform.tentacle_span:.1f}, bereik {lifeform.tentacle_reach:.1f}"
+            )
         lines.append(f"Resultaat: {lifeform.attack_power_now:.2f}")
         return lines
 
@@ -746,6 +753,9 @@ class LifeformInspector:
         lines.append(
             f"Grip {lifeform.grip_strength:.2f} & massa {lifeform.mass:.2f} → x{combined:.2f}"
         )
+        if getattr(lifeform, "grapple_power", 0.0) > 0:
+            bind_bonus = lifeform.grapple_power * 0.6
+            lines.append(f"Tentakel-verankering → +{bind_bonus:.2f}")
         lines.append(f"Resultaat: {lifeform.defence_power_now:.2f}")
         return lines
 
