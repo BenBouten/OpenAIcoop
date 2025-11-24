@@ -240,8 +240,8 @@ class ModularRendererState:
         # Let's just use a sigmoid or clamp.
         thrust_factor = min(1.0, abs(thrust_output) / 20.0)
         
-        base_freq = 0.002 + (0.008 * thrust_factor)
-        base_amp = 5.0 + (15.0 * thrust_factor)
+        base_freq = 0.0015 + (0.010 * thrust_factor)
+        base_amp = 1.5 + (18.0 * thrust_factor)
         
         visited = set()
         queue = [(self.graph.root_id, 0, 0.0)] # id, depth, parent_phase
@@ -261,29 +261,35 @@ class ModularRendererState:
             
             if module_type in ("tentacle", "propulsion"):
                 # Snake/Tentacle movement
-                
+
                 is_chain = False
                 if animated.parent_id:
                     parent_mod = self.poses[animated.parent_id].module
                     if getattr(parent_mod, "module_type", "") == module_type:
                         is_chain = True
-                
-                if is_chain or module_type == "tentacle":
-                    # Scale amplitude by thrust
+
+                if is_chain or module_type in ("tentacle", "propulsion"):
+                    # Scale amplitude by thrust; idle motion is subtle and elongated
                     wave_amp = base_amp
                     if module_type == "propulsion":
                         wave_amp *= 0.7 # Tails slightly stiffer
-                    
+
                     # Add turn leaning
                     lag = -angular_velocity * 5.0
-                    
-                    # Sine wave
-                    phase = time_ms * base_freq - depth * spatial_freq
+
+                    # Sine wave driven by thrust; deeper segments trail behind
+                    phase = time_ms * base_freq + thrust_output * 0.015 - depth * spatial_freq
                     wave = math.sin(phase) * wave_amp
-                    
+
                     # Apply to angle_offset
                     animated.angle_offset = wave + lag
                     animated.thrust_factor = thrust_factor
+            elif module_type not in {"limb"}:
+                # Flex the core/body slightly when thrusting so the hull undulates
+                # alongside fins and tentacles.
+                body_phase = time_ms * (base_freq * 0.6) - depth * 0.2
+                body_amp = base_amp * 0.25 * thrust_factor + 0.4
+                animated.angle_offset = math.sin(body_phase) * body_amp
             
             # Propagate to children
             if node_id in self.graph.nodes:
@@ -378,12 +384,13 @@ class BodyGraphRenderer:
     def _collect_outline_points(self, state: ModularRendererState, offset: Vector2) -> List[Tuple[int, int]]:
         points: List[Tuple[int, int]] = []
         for animated in state.iter_poses():
-            if self._skin_includes_module(animated):
+            include_module = self._skin_includes_module(animated)
+            if include_module:
                 for vertex in animated.outline_world:
                     screen_point = offset + vertex * self.position_scale
                     points.append((int(screen_point.x), int(screen_point.y)))
-            joint_point = offset + animated.joint_position * self.position_scale
-            points.append((int(joint_point.x), int(joint_point.y)))
+                joint_point = offset + animated.joint_position * self.position_scale
+                points.append((int(joint_point.x), int(joint_point.y)))
         return points
 
     def _skin_includes_module(self, animated: AnimatedModule) -> bool:
