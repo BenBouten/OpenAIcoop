@@ -172,6 +172,58 @@ def _compute_thrust_effort(
     return effort
 
 
+def _compose_steering_thrust(
+    lifeform: "Lifeform",
+    physics_body: PhysicsBody,
+    desired: Vector2,
+    propulsion_acceleration: float,
+) -> Vector2:
+    """Blend thrust across control surfaces to allow asymmetric steering."""
+
+    surfaces = getattr(physics_body, "steering_surfaces", ())
+    if not surfaces:
+        return desired * propulsion_acceleration
+
+    facing = desired
+    if lifeform.velocity.length_squared() > 0.2:
+        facing = lifeform.velocity.normalize()
+
+    # Signed turn demand: positive means rotate left, negative rotate right
+    steering_error = facing.cross(desired)
+    bias = max(-1.0, min(1.0, steering_error * 2.2))
+    vectoring_limit = max(0.0, float(getattr(physics_body, "vectoring_limit", 0.0)))
+
+    thrust_vector = Vector2()
+    total_weight = 0.0
+    for surface in surfaces:
+        leverage = max(0.1, float(getattr(surface, "leverage", 0.0)))
+        side = int(getattr(surface, "side", 0))
+        base_power = float(getattr(surface, "thrust", 0.0))
+        lift_power = float(getattr(surface, "lift", 0.0))
+        if lift_power > 0.0:
+            base_power += lift_power * max(0.8, getattr(physics_body, "lift_per_fin", 0.0))
+        if base_power <= 0.0:
+            base_power = physics_body.max_thrust * 0.08
+
+        oscillation = 0.85 + 0.25 * math.sin(lifeform.thrust_phase + surface.phase_offset)
+        side_gain = 1.0 + bias * leverage * 0.55 * side
+        weight = max(0.05, base_power * side_gain * oscillation)
+        total_weight += weight
+
+        vectoring = bias * side * vectoring_limit
+        directed = desired.rotate(vectoring)
+        thrust_vector += directed * weight
+
+    if thrust_vector.length_squared() == 0 or total_weight <= 0.0:
+        return desired * propulsion_acceleration
+
+    averaged = thrust_vector / total_weight
+    if averaged.length_squared() == 0:
+        return desired * propulsion_acceleration
+
+    return averaged.normalize() * propulsion_acceleration
+
+
 def _blend_desired_with_velocity(lifeform: "Lifeform", desired: Vector2) -> Vector2:
     """Blend steering with current velocity to avoid abrupt turns."""
     current_vel = lifeform.velocity
@@ -342,7 +394,7 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     propulsion_force = physics_body.max_thrust * clamped_effort
 
     desired = _blend_desired_with_velocity(lifeform, desired)
-    thrust_vector = desired * propulsion_acceleration
+    thrust_vector = _compose_steering_thrust(lifeform, physics_body, desired, propulsion_acceleration)
     telemetry.movement_sample(
         tick=now_ms,
         lifeform=lifeform,

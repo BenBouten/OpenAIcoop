@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from ..body.body_graph import BodyGraph
+from ..body.body_graph import BodyGraph, SteeringSurface
 
 
 @dataclass(frozen=True)
@@ -30,6 +30,8 @@ class PhysicsBody:
     tentacle_span: float = 0.0
     tentacle_reach: float = 0.0
     tentacle_count: int = 0
+    steering_surfaces: Tuple[SteeringSurface, ...] = ()
+    vectoring_limit: float = 18.0
 
     def propulsion_acceleration(self, effort: float) -> float:
         """Return longitudinal acceleration (m/s^2) for the provided effort."""
@@ -58,6 +60,7 @@ def build_physics_body(graph: BodyGraph) -> PhysicsBody:
     if aggregation.lift_modules > 0:
         lift_per_fin = aggregation.lift_total / aggregation.lift_modules
     buoyancy_offsets = (aggregation.buoyancy_positive, aggregation.buoyancy_negative)
+    vectoring_limit = 14.0 + min(10.0, aggregation.lift_modules * 1.2)
     return PhysicsBody(
         mass=mass,
         volume=volume,
@@ -77,4 +80,6 @@ def build_physics_body(graph: BodyGraph) -> PhysicsBody:
         tentacle_span=aggregation.tentacle_span,
         tentacle_reach=aggregation.tentacle_reach,
         tentacle_count=aggregation.tentacle_count,
+        steering_surfaces=aggregation.steering_surfaces,
+        vectoring_limit=vectoring_limit,
     )

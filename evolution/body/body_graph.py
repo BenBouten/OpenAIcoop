@@ -9,6 +9,18 @@ from typing import Dict, Iterator, List, Optional, Tuple
 from .modules import BodyModule
 
 
+@dataclass(frozen=True)
+class SteeringSurface:
+    """Control surface or thruster that can impart directional thrust."""
+
+    module_type: str
+    side: int
+    leverage: float
+    thrust: float
+    lift: float
+    phase_offset: float
+
+
 @dataclass
 class BodyNode:
     """Node that stores a module instance and its relations."""
@@ -60,6 +72,7 @@ class BodyGraph:
         tentacle_span: float
         tentacle_reach: float
         tentacle_count: int
+        steering_surfaces: Tuple[SteeringSurface, ...]
 
     def _aggregate_geometry(self) -> PhysicsAggregation:
         """Internal helper that walks modules once to derive stats."""
@@ -84,7 +97,10 @@ class BodyGraph:
         tentacle_reach = 0.0
         tentacle_count = 0
 
-        for module in self.iter_modules():
+        steering_surfaces: list[SteeringSurface] = []
+
+        for node_id, node in self.nodes.items():
+            module = node.module
             stats = module.stats
             width, height, length = module.size
             module_volume = max(0.0, prod(module.size))
@@ -128,6 +144,31 @@ class BodyGraph:
                 tentacle_reach += max(0.0, length)
                 tentacle_span += max(width, height)
 
+            if module.module_type in {"propulsion", "tentacle", "limb"} or lift_coeff > 0.0:
+                tx, ty, _ = self._transforms.get(node_id, (0.0, 0.0, 0.0))
+                side = 0
+                if tx > 0.05:
+                    side = 1
+                elif tx < -0.05:
+                    side = -1
+                leverage = max(0.1, abs(tx) + 0.15 * abs(ty))
+                thrust_power = float(getattr(module, "thrust_power", 0.0)) + float(
+                    getattr(module, "thrust", 0.0)
+                )
+                if thrust_power > 0.0 or lift_coeff > 0.0:
+                    phase_seed = int.from_bytes(node_id.encode("utf-8"), "little") % 1000
+                    phase_offset = (phase_seed / 1000.0) * 6.28318
+                    steering_surfaces.append(
+                        SteeringSurface(
+                            module_type=module.module_type,
+                            side=side,
+                            leverage=leverage,
+                            thrust=thrust_power,
+                            lift=lift_coeff,
+                            phase_offset=phase_offset,
+                        )
+                    )
+
         return BodyGraph.PhysicsAggregation(
             mass=mass,
             volume=volume,
@@ -148,6 +189,7 @@ class BodyGraph:
             tentacle_span=tentacle_span,
             tentacle_reach=tentacle_reach,
             tentacle_count=tentacle_count,
+            steering_surfaces=tuple(steering_surfaces),
         )
 
     @staticmethod
