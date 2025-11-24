@@ -56,6 +56,10 @@ class BodyGraph:
         lift_modules: int
         buoyancy_positive: float
         buoyancy_negative: float
+        tentacle_grip: float
+        tentacle_span: float
+        tentacle_reach: float
+        tentacle_count: int
 
     def _aggregate_geometry(self) -> PhysicsAggregation:
         """Internal helper that walks modules once to derive stats."""
@@ -75,6 +79,10 @@ class BodyGraph:
         lift_modules = 0
         buoyancy_positive = 0.0
         buoyancy_negative = 0.0
+        tentacle_grip = 0.0
+        tentacle_span = 0.0
+        tentacle_reach = 0.0
+        tentacle_count = 0
 
         for module in self.iter_modules():
             stats = module.stats
@@ -114,6 +122,12 @@ class BodyGraph:
                 lift_total += lift_coeff
                 lift_modules += 1
 
+            if module.module_type == "tentacle":
+                tentacle_count += 1
+                tentacle_grip += float(getattr(module, "grip_strength", 0.0))
+                tentacle_reach += max(0.0, length)
+                tentacle_span += max(width, height)
+
         return BodyGraph.PhysicsAggregation(
             mass=mass,
             volume=volume,
@@ -130,6 +144,10 @@ class BodyGraph:
             lift_modules=lift_modules,
             buoyancy_positive=buoyancy_positive,
             buoyancy_negative=buoyancy_negative,
+            tentacle_grip=tentacle_grip,
+            tentacle_span=tentacle_span,
+            tentacle_reach=tentacle_reach,
+            tentacle_count=tentacle_count,
         )
 
     @staticmethod

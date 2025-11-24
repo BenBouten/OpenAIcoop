@@ -26,6 +26,10 @@ class PhysicsBody:
     energy_cost: float
     lift_per_fin: float = 0.0
     buoyancy_offsets: Tuple[float, float] = (0.0, 0.0)
+    tentacle_grip: float = 0.0
+    tentacle_span: float = 0.0
+    tentacle_reach: float = 0.0
+    tentacle_count: int = 0
 
     def propulsion_acceleration(self, effort: float) -> float:
         """Return longitudinal acceleration (m/s^2) for the provided effort."""
@@ -69,4 +73,8 @@ def build_physics_body(graph: BodyGraph) -> PhysicsBody:
         energy_cost=aggregation.energy_cost,
         lift_per_fin=lift_per_fin,
         buoyancy_offsets=buoyancy_offsets,
+        tentacle_grip=aggregation.tentacle_grip,
+        tentacle_span=aggregation.tentacle_span,
+        tentacle_reach=aggregation.tentacle_reach,
+        tentacle_count=aggregation.tentacle_count,
     )
