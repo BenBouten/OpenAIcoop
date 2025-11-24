@@ -88,14 +88,11 @@ def _apply_depth_shading(sprite: pygame.Surface, darkness_factor: float) -> pyga
     if not darkened.get_flags() & pygame.SRCALPHA:
         darkened = darkened.convert_alpha()
 
-    # Create a black overlay with transparency based on darkness
-    overlay = pygame.Surface(darkened.get_size(), pygame.SRCALPHA)
-    alpha = int(255 * (1.0 - darkness_factor))
-    overlay.fill((0, 0, 0, alpha))
-
-    # Blend the overlay onto the sprite using standard alpha blending
-    # This darkens the sprite by overlaying black with appropriate transparency
-    darkened.blit(overlay, (0, 0))
+    # Multiply RGB channels to darken while preserving the original alpha mask.
+    # Using RGBA_MULT avoids drawing over transparent regions, preventing black
+    # squares from appearing around sprites with per-pixel transparency.
+    multiplier = int(255 * darkness_factor)
+    darkened.fill((multiplier, multiplier, multiplier, 255), special_flags=pygame.BLEND_RGBA_MULT)
 
     return darkened
 
