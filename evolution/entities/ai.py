@@ -104,6 +104,7 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     # 4) Groepsgedrag en "laatste posities vermijden" en boundary repulsion
     desired += _group_goal_vector(lifeform, now)
     desired += _group_behavior_vector(lifeform)
+    desired += _biome_preference_vector(lifeform)
     desired += _avoid_recent_positions(lifeform, now)
     desired += _buoyancy_compensation_vector(lifeform)  # Active buoyancy control
     desired += _depth_bias_vector(lifeform)
@@ -499,7 +500,7 @@ def _apply_locomotion_escape_bias(
     vector = Vector2(base)
     locomotion = getattr(lifeform, "locomotion_profile", None)
     burst_force = getattr(locomotion, "burst_force", 1.0) if locomotion else 1.0
-    vector *= 0.85 + max(0.0, burst_force) * 0.35
+    vector *= 0.9 + max(0.0, burst_force) * 0.55
 
     depth_bias = float(getattr(lifeform, "depth_bias", 0.0))
     if abs(depth_bias) > 0.05:
@@ -794,6 +795,44 @@ def _memory_target_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
     return direction * weight
 
 
+def _biome_preference_vector(lifeform: "Lifeform") -> Vector2:
+    state = getattr(lifeform, "state", None)
+    world = getattr(state, "world", None)
+    if state is None or world is None:
+        return Vector2()
+
+    preferred = state.dna_home_biome.get(lifeform.dna_id)
+    if preferred is None:
+        return Vector2()
+
+    current = getattr(lifeform, "current_biome", None)
+    if current is None:
+        current, _ = world.get_environment_context(lifeform.x, lifeform.y)
+        lifeform.current_biome = current
+
+    if preferred.contains(lifeform.x, lifeform.y):
+        return Vector2()
+
+    target = preferred.rect.center
+    direction, distance = lifeform._direction_to_point(target)
+    if distance == 0:
+        return Vector2()
+
+    reach = max(preferred.rect.width, preferred.rect.height)
+    distance_factor = min(1.0, max(0.25, distance / max(1.0, reach * 0.35)))
+
+    restlessness = max(0.0, min(1.0, getattr(lifeform, "restlessness", 0.5)))
+    strength = 0.35 + restlessness * 0.35
+
+    if lifeform.should_seek_food() or getattr(lifeform, "current_behavior_mode", "") in {"hunt", "flee"}:
+        strength += 0.2
+
+    if lifeform.in_group:
+        strength += min(0.25, getattr(lifeform, "group_strength", 0.0) * 0.5)
+
+    return direction * min(1.2, strength * distance_factor)
+
+
 def _group_behavior_vector(lifeform: "Lifeform") -> Vector2:
     if not lifeform.in_group or not lifeform.group_neighbors:
         return Vector2()
@@ -802,11 +841,14 @@ def _group_behavior_vector(lifeform: "Lifeform") -> Vector2:
         getattr(lifeform, "boid_tendency", getattr(lifeform, "social_tendency", 0.5))
     )
     boid_drive = max(0.0, min(1.0, boid_drive))
-    
+
+    group_strength = max(0.0, float(getattr(lifeform, "group_strength", 0.0)))
+    boid_drive = max(boid_drive, 0.15 + group_strength * 0.6)
+
     # Non-linear boost for high boid tendency to make flocking very distinct
     if boid_drive > 0.5:
         boid_drive = min(1.0, boid_drive * 1.4)
-        
+
     if boid_drive <= 0.01:
         return Vector2()
 
@@ -876,6 +918,11 @@ def _group_behavior_vector(lifeform: "Lifeform") -> Vector2:
         follow_direction, _ = lifeform._direction_to_lifeform(lifeform.closest_follower)
         influence += follow_direction * 0.35 * boid_drive
 
+    if influence.length_squared() == 0 and lifeform.group_center:
+        center_dir, _ = lifeform._direction_to_point(lifeform.group_center)
+        if center_dir.length_squared() > 0:
+            influence += center_dir * min(0.8, boid_drive + group_strength * 0.4)
+
     return influence
 
 
@@ -896,7 +943,9 @@ def _group_goal_vector(lifeform: "Lifeform", timestamp: int) -> Vector2:
 
     target = _leader_goal_position(lifeform, leader, timestamp)
     if target is None:
-        return Vector2()
+        target = getattr(lifeform, "group_center", None)
+        if target is None:
+            return Vector2()
 
     direction, distance = lifeform._direction_to_point(target)
     if distance == 0:
@@ -1053,12 +1102,13 @@ def _avoid_recent_positions(lifeform: "Lifeform", timestamp: int) -> Vector2:
         if distance_sq == 0:
             continue
 
-        repulsion += offset / (distance_sq + 1)
+        freshness = 1.0 - age / settings.RECENT_VISIT_MEMORY_MS
+        repulsion += offset / (distance_sq + 1) * (0.6 + 0.8 * freshness)
 
     if repulsion.length_squared() == 0:
         return Vector2()
 
-    return repulsion.normalize() * 0.4
+    return repulsion.normalize() * 0.65
 
 
 def _ensure_wander_state(lifeform: "Lifeform") -> None:
@@ -1117,8 +1167,8 @@ def _choose_wander_duration(lifeform: "Lifeform", phase: str) -> float:
 def _compute_pause_speed_factor(lifeform: "Lifeform", *, initial: bool = False) -> float:
     restlessness = float(getattr(lifeform, "restlessness", 0.5))
     restlessness = max(0.0, min(1.0, restlessness))
-    min_factor = max(0.05, 0.08 + restlessness * 0.24)
-    max_factor = min(0.65, 0.32 + restlessness * 0.4)
+    min_factor = max(0.2, 0.25 + restlessness * 0.25)
+    max_factor = min(0.55, 0.4 + restlessness * 0.35)
     if initial:
         return max(0.05, max_factor)
 

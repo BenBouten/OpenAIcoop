@@ -95,41 +95,55 @@ def _apply_environment_bias(
 
 
 def _behavioral_thrust_ratio(lifeform: "Lifeform") -> float:
-    """Return how aggressively a lifeform wants to swim (0-1.2)."""
+    """Return how aggressively a lifeform wants to swim (0-1.4)."""
     mode = getattr(lifeform, "current_behavior_mode", "idle")
+    hunger = float(getattr(lifeform, "hunger", 0.0))
+    restlessness = max(0.0, min(1.0, getattr(lifeform, "restlessness", 0.5)))
 
+    base = 0.3
     if mode == "flee":
-        return 1.2
+        base = 1.35
     elif mode == "hunt":
-        return 1.0
+        base = 1.05
     elif mode == "mate":
-        return 0.9
+        base = 0.9
     elif mode == "search":
-        return 0.7
+        base = 0.78
     elif mode == "flock":
-        return 0.6
+        base = 0.65
     elif mode == "interact":
-        return 0.4
+        base = 0.45
 
-    # Idle / Default
-    return 0.3
+    if lifeform.should_seek_food():
+        hunger_boost = max(0.0, hunger - settings.HUNGER_SATIATED_THRESHOLD) / 320.0
+        base *= 1.0 + min(0.32, hunger_boost)
+
+    base *= 1.0 + restlessness * 0.12
+    return min(1.4, base)
 
 
 def _behavioral_frequency_ratio(lifeform: "Lifeform") -> float:
     mode = getattr(lifeform, "current_behavior_mode", "idle")
+    hunger = float(getattr(lifeform, "hunger", 0.0))
+
+    base = 0.2
     if mode == "flee":
-        return 1.0
+        base = 1.15
     elif mode == "hunt":
-        return 0.8
+        base = 0.9
     elif mode == "mate":
-        return 0.7
+        base = 0.72
     elif mode == "search":
-        return 0.6
+        base = 0.62
     elif mode == "flock":
-        return 0.5
+        base = 0.52
     elif mode == "interact":
-        return 0.3
-    return 0.2
+        base = 0.32
+
+    if lifeform.should_seek_food():
+        base += min(0.2, max(0.0, hunger - settings.HUNGER_SATIATED_THRESHOLD) / 450.0)
+
+    return min(1.4, base)
 
 
 def _target_swim_speed(lifeform: "Lifeform", thrust_ratio: float) -> float:
@@ -277,11 +291,11 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     mode = getattr(lifeform, "current_behavior_mode", "idle")
     if mode in ("flee", "hunt"):
         target_adrenaline = 1.0
-        frequency *= 1.4
+        frequency *= 1.45
 
     # Smoothly interpolate adrenaline
     current_adrenaline = getattr(lifeform, "adrenaline_factor", 0.0)
-    lifeform.adrenaline_factor = current_adrenaline * 0.92 + target_adrenaline * 0.08
+    lifeform.adrenaline_factor = current_adrenaline * 0.8 + target_adrenaline * 0.2
 
     lifeform.thrust_phase += frequency * dt
     if lifeform.thrust_phase > 6.28318:
@@ -314,12 +328,13 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
                 lifeform.closest_enemy
                 or lifeform.closest_prey
                 or lifeform.should_seek_food()
+                or mode == "flee"
             )
             if should_burst and lifeform.energy_now > 20.0:
-                 # Only trigger burst if we are in the positive phase of oscillation
-                 if oscillation > 0.5:
-                    lifeform._burst_timer = max(4, locomotion.burst_duration)
-                    lifeform._burst_cooldown = max(30, locomotion.burst_cooldown)
+                # Only trigger burst if we are in the positive phase of oscillation
+                if oscillation > 0.3:
+                    lifeform._burst_timer = max(5, locomotion.burst_duration + 1)
+                    lifeform._burst_cooldown = max(22, int(locomotion.burst_cooldown * 0.75))
                     effort *= locomotion.burst_force
 
     clamped_effort = max(-1.0, min(2.0, effort)) # Allow bursting > 1.0
