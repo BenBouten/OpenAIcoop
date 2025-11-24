@@ -83,6 +83,7 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     _record_current_observations(lifeform, now)
 
     desired = Vector2()
+    pursuit_vector = Vector2()
 
     # 1) Dreiging eerst
     threat_vector = _compute_threat_vector(lifeform, now)
@@ -122,37 +123,72 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
 
     # 7) Fallback naar wander / huidige richting
     energy_forced_search = getattr(lifeform, "_energy_starved", False)
-
-    if desired.length_squared() == 0:
-        # Use search patterns instead of simple wander
+    
+    # Check if we are actively looking for something but haven't found it
+    seeking_food = lifeform.should_seek_food()
+    seeking_partner = lifeform.should_seek_partner()
+    has_target = pursuit_vector.length_squared() > 0
+    
+    # If we want food/partner but have no vector, we are SEARCHING
+    if (seeking_food or seeking_partner) and not has_target:
         lifeform.search = True
-        
-        # Pick a pattern based on species/intelligence
-        # For now, cycle based on time or random
-        t = now / 1000.0
-        
-        # Use spiral by default, or zigzag if we have a general direction
-        if lifeform.wander_direction.length_squared() > 0:
-             pattern_vec = movement_patterns.get_zigzag_vector(t, lifeform.wander_direction)
-        else:
-             pattern_vec = movement_patterns.get_spiral_vector(t)
-             
-        desired = pattern_vec
+    elif desired.length_squared() == 0:
+        # Use search patterns instead of simple wander if completely idle
+        lifeform.search = True
     else:
         lifeform.search = energy_forced_search
+
+    if lifeform.search:
+        # Reynolds Wander Steering
+        current_angle = getattr(lifeform, "_wander_angle", 0.0)
+        current_vel = Vector2(lifeform.x_direction, lifeform.y_direction)
+        
+        # Adjust wander strength based on restlessness
+        restlessness = getattr(lifeform, "restlessness", 0.5)
+        wander_strength = 0.3 + restlessness * 0.4
+        
+        pattern_vec, new_angle = movement_patterns.get_wander_vector(
+            current_vel, 
+            current_angle, 
+            wander_strength=wander_strength
+        )
+        lifeform._wander_angle = new_angle
+             
+        # Blend pattern into desired direction
+        if desired.length_squared() == 0:
+            desired = pattern_vec
+        else:
+            # If we have a weak desire (e.g. vague smell), blend it with wandering
+            desired = desired.lerp(pattern_vec, 0.4)
 
     # Determine and set Behavior Mode
     new_mode = "idle"
     if threat_vector.length_squared() > 0:
         new_mode = "flee"
     elif pursuit_vector.length_squared() > 0:
-        new_mode = "hunt"
-    elif lifeform.in_group and getattr(lifeform, "boid_tendency", 0) > 0.4:
-        new_mode = "flock"
+        # Distinguish between hunting (food) and mating (partner)
+        # This is a bit heuristic since pursuit_vector combines both
+        if seeking_partner and not seeking_food:
+            new_mode = "mate"
+        else:
+            new_mode = "hunt"
     elif lifeform.search:
         new_mode = "search"
+    elif lifeform.in_group and getattr(lifeform, "boid_tendency", 0) > 0.4:
+        new_mode = "flock"
         
     lifeform.current_behavior_mode = new_mode
+    
+    # Log behavior change
+    previous_mode = getattr(lifeform, "_last_behavior_mode", "idle")
+    if new_mode != previous_mode:
+        from ..systems.telemetry import log_event
+        log_event("AI", "BEHAVIOR_CHANGE", lifeform.id, {
+            "from": previous_mode,
+            "to": new_mode,
+            "reason": "threat" if new_mode == "flee" else "opportunity"
+        })
+        lifeform._last_behavior_mode = new_mode
 
     if lifeform.search and _search_mode_active(lifeform):
         _apply_speed_drift(lifeform, dt)
@@ -179,6 +215,35 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     lifeform.wander_direction = blended
     lifeform.x_direction = blended.x
     lifeform.y_direction = blended.y
+
+
+def register_threat(lifeform: "Lifeform", threat: "Lifeform", timestamp: int) -> None:
+    """Force the lifeform to recognize a threat (e.g. after taking damage)."""
+    if not threat or threat.health_now <= 0:
+        return
+        
+    # Update closest enemy if not set or if this threat is closer/more dangerous
+    if not lifeform.closest_enemy:
+        lifeform.closest_enemy = threat
+    
+    # Add to memory with high weight (pain response)
+    _remember(
+        lifeform,
+        "threats",
+        (threat.x, threat.y),
+        timestamp,
+        weight=5.0, # High weight for direct damage
+    )
+    
+    # Trigger immediate flee response if not already fleeing
+    if lifeform.current_behavior_mode != "flee":
+        lifeform.current_behavior_mode = "flee"
+        # Force a search vector away from threat
+        direction, _ = lifeform._direction_to_lifeform(threat)
+        if direction.length_squared() > 0:
+            lifeform._escape_vector = -direction
+            lifeform._escape_timer = 30 # Flee for at least 0.5s
+
 
 
 # ---------------------------------------------------------

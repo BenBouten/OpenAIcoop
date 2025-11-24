@@ -29,10 +29,11 @@ from ..dna.genes import Genome, ensure_genome
 from ..morphology import MorphologyGenotype, MorphStats, compute_morph_stats
 from ..physics.physics_body import PhysicsBody, build_physics_body
 from ..physics.physics_body import PhysicsBody, build_physics_body
-from ..world.carcass import SinkingCarcass
+from ..world.advanced_carcass import DecomposingCarcass
 from ..world.world import BiomeRegion
 from . import reproduction
 from .locomotion import LocomotionProfile, derive_locomotion_profile
+from ..systems.telemetry import log_event
 
 if TYPE_CHECKING:
     from ..simulation.state import SimulationState
@@ -220,23 +221,28 @@ class Lifeform:
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
         # Combat stats
-        # Combat stats
         # self.defence_power and self.attack_power are now set in _derive_stats_from_body()
         self.attack_power_now = self.attack_power
         self.defence_power_now = self.defence_power
-
+        
         # Vital stats
         self.age = 0.0
         self.hunger = 0.0
-        self.wounded = 0.0
+        self.wounded = 0.0  # General wound severity (0-100)
         self.health_now = float(self.health)
         self.energy_now = float(self.energy)
-        self._feeding_frames = 0  # hoelang staat dit beest al “aan tafel”
-
+        self._feeding_frames = 0  # hoelang staat dit beest al "aan tafel"
+        
+        # Advanced wound tracking
+        self.wounds: List[Dict[str, Any]] = []  # Individual wounds with metadata
+        self.limb_damage: Dict[str, float] = {}  # Damage to specific body parts
+        self.healing_factor = 1.0  # Base healing rate modifier
+        self.scar_tissue = 0.0  # Accumulated scar tissue (0-1), reduces max health
+        
         # Reproduction
         self.reproduced = 0
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
-
+        
         # Perception targets
         self.closest_prey: Optional[Lifeform] = None
         self.closest_enemy: Optional[Lifeform] = None
@@ -778,12 +784,27 @@ class Lifeform:
                 carcass_candidate = carcass
                 carcass_distance = distance_sq
 
+        old_enemy = self.closest_enemy
+        old_prey = self.closest_prey
+
         self.closest_enemy = enemy_candidate
         self.closest_prey = prey_candidate
         self.closest_partner = partner_candidate
         self.closest_follower = follower_candidate if not self.is_leader else None
         self.closest_plant = plant_candidate
         self.closest_carcass = carcass_candidate
+        
+        if self.closest_enemy is not old_enemy and self.closest_enemy:
+            log_event("AI", "THREAT_DETECTED", self.id, {
+                "target_id": self.closest_enemy.id,
+                "dist": round(enemy_distance, 1)
+            })
+            
+        if self.closest_prey is not old_prey and self.closest_prey:
+            log_event("AI", "PREY_ACQUIRED", self.id, {
+                "target_id": self.closest_prey.id,
+                "dist": round(prey_distance, 1)
+            })
 
     def _initialise_body(self, dna_profile: dict) -> None:
         diet = dna_profile.get("diet", "omnivore")
@@ -1226,12 +1247,14 @@ class Lifeform:
             center_x = self.x + self.width / 2
             effects.spawn_death((center_x, self.y - 12))
 
-        carcass = SinkingCarcass(
+        carcass = DecomposingCarcass(
             position=(self.x, self.y),
             size=(int(self.width), int(self.height)),
             mass=self.mass,
             nutrition=max(12.0, self.size * 0.18),
             color=self.color,
+            body_graph=getattr(self, "body_graph", None),
+            body_geometry=getattr(self, "profile_geometry", {}),
         )
         self.state.carcasses.append(carcass)
 

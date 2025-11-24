@@ -1078,6 +1078,49 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
         available_biomes=world.biomes,
     )
 
+    def _screen_to_world(position: Tuple[int, int]) -> Tuple[float, float]:
+        return camera.screen_to_world(position)
+
+    def _spawn_moss_cluster(world_pos: Tuple[float, float], *, notify: bool = True) -> None:
+        brush_radius = max(8, tools_panel.brush_size // 2)
+        create_cluster_from_brush(world, world_pos, brush_radius)
+        if notify:
+            notification_manager.add("Moscluster geplaatst", settings.SEA, 1500)
+
+    def _stamp_wall_segment(world_pos: Tuple[float, float]) -> None:
+        brush_radius = max(8, tools_panel.brush_size // 2)
+        rect = pygame.Rect(0, 0, brush_radius * 2, brush_radius * 2)
+        rect.center = (int(world_pos[0]), int(world_pos[1]))
+        world.barriers.append(Barrier(rect, (90, 90, 150), "muur"))
+        chunk_manager.mark_region_dirty(rect)
+
+    def _paint_biome(world_pos: Tuple[float, float]) -> None:
+        biome = tools_panel.get_selected_biome()
+        if biome is None:
+            notification_manager.add("Geen biome geselecteerd", settings.ORANGE, 1600)
+            return
+        brush_radius = max(16, tools_panel.brush_size)
+        rect = pygame.Rect(0, 0, brush_radius * 2, brush_radius * 2)
+        rect.center = (int(world_pos[0]), int(world_pos[1]))
+        world.paint_biome(rect, biome)
+        chunk_manager.mark_region_dirty(rect)
+
+    def _begin_tool_action(position: Tuple[int, int]) -> None:
+        nonlocal painting_tool, barrier_drag_start
+        painting_tool = tools_panel.selected_tool
+        world_pos = _screen_to_world(position)
+        if painting_tool == EditorTool.SPAWN_MOSS:
+            _spawn_moss_cluster(world_pos)
+            painting_tool = None
+        elif painting_tool == EditorTool.DRAW_BARRIER:
+            barrier_drag_start = world_pos
+        elif painting_tool == EditorTool.PAINT_MOSS:
+            _spawn_moss_cluster(world_pos)
+        elif painting_tool == EditorTool.PAINT_WALL:
+            _stamp_wall_segment(world_pos)
+        elif painting_tool == EditorTool.PAINT_BIOME:
+            _paint_biome(world_pos)
+
     running = True
     starting_screen = True
     paused = True
@@ -1684,33 +1727,4 @@ def _draw_top_bar(surface: pygame.Surface, font: pygame.font.Font, buttons: List
                 rect.centery - label_surface.get_height() // 2,
             ),
         )
-
-def _lifeform_at_screen_pos(position: Tuple[int, int]) -> Optional[Lifeform]:
-        if not lifeforms:
-            return None
-
-        world_x, world_y = camera.screen_to_world(position)
-        click_radius = max(8.0, 18.0 / max(0.75, camera.zoom))
-
-        grid = getattr(state, "spatial_grid", None)
-        candidates = (
-            grid.query_lifeforms(world_x, world_y, click_radius * 1.5)
-            if grid is not None
-            else lifeforms
-        )
-
-        best: Optional[Lifeform] = None
-        best_distance = float("inf")
-        for lifeform in candidates:
-            if lifeform.health_now <= 0:
-                continue
-            rect = lifeform.rect.inflate(int(click_radius), int(click_radius))
-            if not rect.collidepoint(world_x, world_y):
-                continue
-            centerx, centery = lifeform.rect.center
-            distance = float((centerx - world_x) ** 2 + (centery - world_y) ** 2)
-            if distance < best_distance:
-                best_distance = distance
-                best = lifeform
-        return best
 

@@ -17,6 +17,7 @@ from ..entities.lifeform import Lifeform
 from ..morphology.genotype import MorphologyGenotype
 from ..world.vegetation import MossCluster, create_initial_clusters
 from ..world.world import BiomeRegion, World
+from ..systems.telemetry import enable_telemetry
 from .state import SimulationState
 
 if TYPE_CHECKING:
@@ -47,6 +48,8 @@ def reset_simulation(
     on_spawn: Optional[Callable[[object], None]] = None,
 ) -> None:
     """Reset all shared simulation state and regenerate the world."""
+    
+    enable_telemetry("all")
 
     state.lifeforms.clear()
     state.dna_profiles.clear()

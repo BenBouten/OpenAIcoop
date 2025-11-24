@@ -18,6 +18,47 @@ class ModuleStats:
     heat_dissipation: float
     power_output: float = 0.0
     buoyancy_bias: float = 0.0
+    nutrition_value: float = 0.0  # Nutrition when eaten (auto-calculated from mass)
+
+
+def calculate_module_nutrition(mass: float, module_type: str = "generic") -> float:
+    """Calculate nutrition value for a module based on its mass and type.
+    
+    Different module types have different nutritional values:
+    - Cores/organs are energy-rich (1.5x multiplier)
+    - Muscles are protein-rich (1.3x)
+    - Armor/teeth are less edible (0.6-0.8x)
+    
+    Args:
+        mass: Module mass in kg
+        module_type: Type of module (affects nutrition multiplier)
+        
+    Returns:
+        Nutrition value (energy units creature gains from eating this module)
+    """
+    # Base nutrition: ~10 nutrition per kg of mass
+    base_nutrition = mass * 10.0
+    
+    # Type multipliers (some modules are more nutritious than others)
+    type_multipliers = {
+        "core": 1.5,       # Energy-rich organs
+        "muscle": 1.3,     # Protein-rich tissue
+        "storage": 1.4,    # Fat/energy storage
+        "mouth": 0.8,      # Teeth/beak - less edible
+        "armor": 0.6,      # Hard scales - less nutritious
+        "sensor": 0.9,     # Eyes, sensors - moderate
+        "eye": 0.9,        # Visual organs
+        "propulsion": 1.2, # Muscles for movement
+        "limb": 1.1,       # Fins, legs
+        "tentacle": 1.1,   # Tentacles
+        "head": 1.0,       # Brain matter
+        "tail": 1.0,       # Standard tissue
+        "fin": 1.1,        # Fin tissue
+        "generic": 1.0,    # Default
+    }
+    
+    multiplier = type_multipliers.get(module_type, 1.0)
+    return base_nutrition * multiplier
 
 
 @dataclass

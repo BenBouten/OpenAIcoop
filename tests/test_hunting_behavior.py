@@ -1,4 +1,4 @@
-
+'['
 import unittest
 import pygame
 import random

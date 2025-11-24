@@ -102,6 +102,8 @@ def _behavioral_thrust_ratio(lifeform: "Lifeform") -> float:
         return 1.2
     elif mode == "hunt":
         return 1.0
+    elif mode == "mate":
+        return 0.9
     elif mode == "search":
         return 0.7
     elif mode == "flock":
@@ -119,6 +121,8 @@ def _behavioral_frequency_ratio(lifeform: "Lifeform") -> float:
         return 1.0
     elif mode == "hunt":
         return 0.8
+    elif mode == "mate":
+        return 0.7
     elif mode == "search":
         return 0.6
     elif mode == "flock":

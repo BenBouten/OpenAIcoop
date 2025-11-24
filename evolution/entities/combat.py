@@ -7,6 +7,7 @@ import pygame
 from typing import TYPE_CHECKING
 from ..config import settings
 from ..systems import telemetry
+from . import ai
 
 if TYPE_CHECKING:
     from .lifeform import Lifeform
@@ -45,6 +46,10 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                 aanvaller=getattr(lifeform, "id", None),
                 schade=damage,
             )
+        
+        # Force threat recognition (pain response)
+        ai.register_threat(enemy, lifeform, pygame.time.get_ticks())
+
         if effects:
             enemy_anchor = _lifeform_anchor(enemy)
             lifeform_anchor = _lifeform_anchor(lifeform)

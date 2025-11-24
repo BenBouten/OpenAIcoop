@@ -4,42 +4,43 @@ import math
 from pygame.math import Vector2
 import random
 
-def get_spiral_vector(t: float, scale: float = 1.0) -> Vector2:
-    """Generate a spiral pattern vector based on time t."""
-    # Expanding spiral: radius increases with time
-    # Reset every so often to keep it local
-    cycle = t % 20.0
-    radius = 1.0 + cycle * 0.5 * scale
-    angle = t * 2.0
+def get_wander_vector(
+    current_velocity: Vector2,
+    current_wander_angle: float,
+    wander_strength: float = 0.5,
+    steering_strength: float = 0.2
+) -> tuple[Vector2, float]:
+    """
+    Generate a natural 'wander' vector using Reynolds steering behavior.
+    Returns (new_direction, new_wander_angle).
+    """
+    # 1. Project a circle ahead of the agent
+    circle_distance = 2.0
+    circle_radius = 1.5
     
-    x = math.cos(angle) * radius
-    y = math.sin(angle) * radius
-    
-    return Vector2(x, y).normalize()
-
-def get_zigzag_vector(t: float, base_direction: Vector2, amplitude: float = 1.0) -> Vector2:
-    """Generate a zigzag vector along a base direction."""
-    if base_direction.length_squared() == 0:
-        return Vector2(1, 0)
+    # Base direction (forward)
+    if current_velocity.length_squared() > 0:
+        forward = current_velocity.normalize()
+    else:
+        forward = Vector2(1, 0)
         
-    # Perpendicular vector
-    perp = Vector2(-base_direction.y, base_direction.x).normalize()
+    # 2. Calculate displacement on the circle based on angle
+    # Add small random jitter to the angle
+    jitter = (random.random() - 0.5) * wander_strength
+    new_angle = current_wander_angle + jitter
     
-    # Oscillate side to side
-    offset = perp * math.sin(t * 3.0) * amplitude
+    # Constrain angle to avoid spinning? No, wandering can loop.
     
-    return (base_direction + offset).normalize()
+    displacement = Vector2(math.cos(new_angle), math.sin(new_angle)) * circle_radius
+    
+    # 3. Target is ahead + displacement
+    target = forward * circle_distance + displacement
+    
+    return target.normalize(), new_angle
 
 def get_vertical_search_vector(t: float) -> Vector2:
     """Generate a vertical bobbing search pattern (for depth checking)."""
-    y = math.sin(t * 1.5)
-    x = math.cos(t * 0.5) * 0.3 # Slight horizontal drift
-    return Vector2(x, y).normalize()
-
-def get_clover_vector(t: float) -> Vector2:
-    """Generate a clover-leaf pattern."""
-    k = 2 # Number of leaves
-    r = math.cos(k * t)
-    x = r * math.cos(t)
-    y = r * math.sin(t)
+    # Slow down the bobbing for more natural buoyancy feel
+    y = math.sin(t * 0.8) 
+    x = math.cos(t * 0.3) * 0.2
     return Vector2(x, y).normalize()

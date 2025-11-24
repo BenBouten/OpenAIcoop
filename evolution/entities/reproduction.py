@@ -91,6 +91,27 @@ def create_offspring_profile(
         source_profile=source_profile_id,
         is_new_profile=is_new_profile,
     )
+    
+    # Log reproduction telemetry
+    try:
+        import pygame
+        from ..systems import telemetry
+        telemetry.reproduction_sample(
+            tick=pygame.time.get_ticks(),
+            parent_1_id=getattr(parent, "id", "unknown"),
+            parent_2_id=getattr(partner, "id", "unknown"),
+            parent_1_dna=str(parent.dna_id),
+            parent_2_dna=str(partner.dna_id),
+            offspring_dna=str(candidate.get("dna_id", "unknown")),
+            is_new_profile=is_new_profile,
+            dna_change=dna_change,
+            color_change=color_change,
+            mutations=list(mutated_attributes),
+            offspring_color=candidate.get("color", (0, 0, 0)),
+        )
+    except Exception:
+        pass
+        
     return candidate, metadata
 
 
