@@ -271,15 +271,15 @@ class JellyBell(CoreModule):
     key: str = "bell_core"
     name: str = "Jelly Bell"
     description: str = "Buoyant bell with radial tentacle ring"
-    size: Tuple[float, float, float] = (3.6, 3.6, 3.0)
+    size: Tuple[float, float, float] = (3.2, 3.2, 2.6)
     stats: ModuleStats = field(
         default_factory=lambda: ModuleStats(
-            mass=12.0,
-            energy_cost=0.9,
-            integrity=32.0,
-            heat_dissipation=3.0,
-            power_output=24.0,
-            buoyancy_bias=1.35,
+            mass=10.5,
+            energy_cost=0.8,
+            integrity=30.0,
+            heat_dissipation=2.8,
+            power_output=22.0,
+            buoyancy_bias=1.25,
         )
     )
     material: str = "mesoglea"
@@ -310,35 +310,51 @@ class JellyBell(CoreModule):
         ),
         AttachmentPoint(
             name="tentacle_socket_front",
-            joint=Joint(JointType.MUSCLE, swing_limits=(-65.0, 65.0), torque_limit=45.0),
+            joint=Joint(JointType.MUSCLE, swing_limits=(-85.0, 55.0), torque_limit=45.0),
             allowed_modules=(LimbModule,),
             description="Front-facing tentacle socket",
             max_child_mass=4.0,
             allowed_materials=("mesoglea", "flex-polymer"),
+            offset=(-0.15, -0.55),
+            angle=-120.0,
+            clearance=0.8,
+            relative=True,
         ),
         AttachmentPoint(
             name="tentacle_socket_left",
-            joint=Joint(JointType.MUSCLE, swing_limits=(-70.0, 55.0), torque_limit=45.0),
+            joint=Joint(JointType.MUSCLE, swing_limits=(-85.0, 55.0), torque_limit=50.0),
             allowed_modules=(LimbModule,),
             description="Left rim tentacle socket",
-            max_child_mass=4.0,
+            max_child_mass=4.2,
             allowed_materials=("mesoglea", "flex-polymer"),
+            offset=(-0.4, -0.45),
+            angle=-150.0,
+            clearance=0.9,
+            relative=True,
         ),
         AttachmentPoint(
             name="tentacle_socket_right",
-            joint=Joint(JointType.MUSCLE, swing_limits=(-70.0, 55.0), torque_limit=45.0),
+            joint=Joint(JointType.MUSCLE, swing_limits=(-85.0, 55.0), torque_limit=50.0),
             allowed_modules=(LimbModule,),
             description="Right rim tentacle socket",
-            max_child_mass=4.0,
+            max_child_mass=4.2,
             allowed_materials=("mesoglea", "flex-polymer"),
+            offset=(0.4, -0.45),
+            angle=-30.0,
+            clearance=0.9,
+            relative=True,
         ),
         AttachmentPoint(
             name="tentacle_socket_rear",
-            joint=Joint(JointType.MUSCLE, swing_limits=(-45.0, 70.0), torque_limit=55.0),
+            joint=Joint(JointType.MUSCLE, swing_limits=(-65.0, 85.0), torque_limit=60.0),
             allowed_modules=(LimbModule,),
             description="Trailing tentacle socket",
-            max_child_mass=4.5,
+            max_child_mass=4.7,
             allowed_materials=("mesoglea", "flex-polymer"),
+            offset=(0.0, -0.65),
+            angle=-90.0,
+            clearance=1.0,
+            relative=True,
         ),
     )
 
@@ -354,15 +370,15 @@ class RoundCore(CoreModule):
     key: str = "round_core"
     name: str = "Round Core"
     description: str = "Orb-like body with evenly spaced limb sockets"
-    size: Tuple[float, float, float] = (2.2, 2.2, 2.2)
+    size: Tuple[float, float, float] = (1.9, 1.9, 1.9)
     stats: ModuleStats = field(
         default_factory=lambda: ModuleStats(
-            mass=22.0,
-            energy_cost=2.4,
-            integrity=105.0,
-            heat_dissipation=10.0,
-            power_output=55.0,
-            buoyancy_bias=0.65,
+            mass=18.0,
+            energy_cost=2.0,
+            integrity=95.0,
+            heat_dissipation=9.0,
+            power_output=50.0,
+            buoyancy_bias=0.6,
         )
     )
     material: str = "bio-alloy"

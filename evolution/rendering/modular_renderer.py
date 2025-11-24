@@ -240,8 +240,8 @@ class ModularRendererState:
         # Let's just use a sigmoid or clamp.
         thrust_factor = min(1.0, abs(thrust_output) / 20.0)
         
-        base_freq = 0.0015 + (0.010 * thrust_factor)
-        base_amp = 1.5 + (18.0 * thrust_factor)
+        base_freq = 0.0018 + (0.011 * thrust_factor)
+        base_amp = 2.0 + (20.0 * thrust_factor)
         
         visited = set()
         queue = [(self.graph.root_id, 0, 0.0)] # id, depth, parent_phase
@@ -270,26 +270,29 @@ class ModularRendererState:
 
                 if is_chain or module_type in ("tentacle", "propulsion"):
                     # Scale amplitude by thrust; idle motion is subtle and elongated
-                    wave_amp = base_amp
-                    if module_type == "propulsion":
-                        wave_amp *= 0.7 # Tails slightly stiffer
+                    wave_amp = base_amp * (1.1 if module_type == "tentacle" else 0.7)
 
                     # Add turn leaning
-                    lag = -angular_velocity * 5.0
+                    lag = -angular_velocity * (7.5 if module_type == "tentacle" else 5.0)
 
                     # Sine wave driven by thrust; deeper segments trail behind
-                    phase = time_ms * base_freq + thrust_output * 0.015 - depth * spatial_freq
+                    phase = time_ms * base_freq + thrust_output * 0.018 - depth * spatial_freq
                     wave = math.sin(phase) * wave_amp
 
+                    # Loosen the tips so they drift under the body when idle
+                    sway = math.sin((time_ms + depth * 55) * 0.001) * (6.0 + depth * 0.6)
+
                     # Apply to angle_offset
-                    animated.angle_offset = wave + lag
+                    animated.angle_offset = wave + lag + sway
                     animated.thrust_factor = thrust_factor
             elif module_type not in {"limb"}:
-                # Flex the core/body slightly when thrusting so the hull undulates
-                # alongside fins and tentacles.
-                body_phase = time_ms * (base_freq * 0.6) - depth * 0.2
-                body_amp = base_amp * 0.25 * thrust_factor + 0.4
-                animated.angle_offset = math.sin(body_phase) * body_amp
+                # Flex the core/body when thrusting or turning so the hull undulates
+                # alongside fins and tentacles. Depth amplifies curvature so multi-
+                # segment spines visibly arc like eels or snakes.
+                body_phase = time_ms * (base_freq * 0.6) - depth * 0.25
+                body_amp = base_amp * 0.28 * thrust_factor + 0.55
+                turn_bend = angular_velocity * depth * 8.0
+                animated.angle_offset = math.sin(body_phase) * body_amp + turn_bend
             
             # Propagate to children
             if node_id in self.graph.nodes:
@@ -487,11 +490,11 @@ class BodyGraphRenderer:
         # Scale internal animation by thrust factor
         thrust_factor = getattr(animated, "thrust_factor", 0.0)
         
-        wave_speed = 0.002 + (0.008 * thrust_factor)
-        wave_freq = 0.8  
-        wave_amp = 2.0 + (5.0 * thrust_factor)   # Scale amplitude with thrust
-        
-        num_segments = max(6, int(length / 8))
+        wave_speed = 0.003 + (0.014 * thrust_factor)
+        wave_freq = 1.25
+        wave_amp = 4.5 + (10.5 * thrust_factor)   # Scale amplitude with thrust
+
+        num_segments = max(8, int(length / 6))
         segment_len = length / num_segments
         
         spine_points: List[Vector2] = []
@@ -504,10 +507,11 @@ class BodyGraphRenderer:
             
             # Envelope: 0 at base, increasing towards tip
             # This allows the segment to flex slightly internally
-            envelope = math.sin(t * math.pi) * 0.5
-            
+            envelope = 0.3 + math.sin(t * math.pi) * 0.8
+
             wave_val = math.sin(time_ms * wave_speed + i * wave_freq + phase_offset)
-            angle_offset = wave_val * wave_amp * envelope * 0.2 
+            drift = math.sin(time_ms * 0.0008 + phase_offset * 0.7) * (8.0 * t)
+            angle_offset = (wave_val * wave_amp * envelope * 0.22) + (drift * 0.15)
             
             current_angle += angle_offset
             
@@ -521,19 +525,19 @@ class BodyGraphRenderer:
             velocity_factor = math.cos(time_ms * wave_speed + i * wave_freq + phase_offset)
             
             # Draw effects only if thrust is significant
-            if thrust_factor > 0.2 and t > 0.3 and abs(velocity_factor) > 0.65:
+            if thrust_factor > 0.12 and t > 0.2 and abs(velocity_factor) > 0.55:
                 move_dir = _unit(current_angle + 90) * (1.0 if velocity_factor > 0 else -1.0)
                 effect_pos = current_pos - move_dir * (base_width * 0.8)
-                
-                effect_alpha = int(abs(velocity_factor) * 180 * t * thrust_factor)
-                if effect_alpha > 30:
-                    bubble_radius = max(1, int(3 * t))
+
+                effect_alpha = int(abs(velocity_factor) * 220 * t * thrust_factor)
+                if effect_alpha > 24:
+                    bubble_radius = max(1, int(2 + 4 * t))
                     bubble_color = (200, 240, 255)
                     pygame.draw.circle(self.surface, bubble_color, (int(effect_pos.x), int(effect_pos.y)), bubble_radius)
-                    
-                    if abs(velocity_factor) > 0.85:
-                         trail_end = effect_pos - direction * (8 * t * thrust_factor)
-                         pygame.draw.line(self.surface, (180, 230, 250), (int(effect_pos.x), int(effect_pos.y)), (int(trail_end.x), int(trail_end.y)), 1)
+
+                    if abs(velocity_factor) > 0.7:
+                         trail_end = effect_pos - direction * (12 * t * max(thrust_factor, 0.35))
+                         pygame.draw.line(self.surface, (180, 230, 250), (int(effect_pos.x), int(effect_pos.y)), (int(trail_end.x), int(trail_end.y)), 2)
 
         # Build Polygon Strip
         left_verts: List[Vector2] = []
@@ -542,7 +546,8 @@ class BodyGraphRenderer:
         for i, pt in enumerate(spine_points):
             t = i / num_segments
             # Tapering
-            width = base_width * (1.0 - t * 0.4)
+            width = base_width * (1.0 - t * 0.55)
+            width += base_width * 0.05 * math.sin(time_ms * 0.003 + i * 0.4)
             
             # Calculate normal
             if i < len(spine_points) - 1:
