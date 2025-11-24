@@ -516,6 +516,30 @@ class TrunkCore(CoreModule):
             clearance=0.8,
             relative=True,
         ),
+        AttachmentPoint(
+            name="caudal_tentacle_left",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-110.0, 110.0), torque_limit=90.0),
+            allowed_modules=(LimbModule,),
+            description="Rear-left tentacle fan mount",
+            max_child_mass=10.0,
+            allowed_materials=("flex-polymer", "mesoglea"),
+            offset=(-0.8, -0.35),
+            angle=210.0,
+            clearance=1.0,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="caudal_tentacle_right",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-110.0, 110.0), torque_limit=90.0),
+            allowed_modules=(LimbModule,),
+            description="Rear-right tentacle fan mount",
+            max_child_mass=10.0,
+            allowed_materials=("flex-polymer", "mesoglea"),
+            offset=(-0.8, -0.35),
+            angle=-30.0,
+            clearance=1.0,
+            relative=True,
+        ),
     )
 
     def __post_init__(self) -> None:

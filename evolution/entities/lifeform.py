@@ -134,6 +134,11 @@ class Lifeform:
         self.lift_per_fin = getattr(physics, "lift_per_fin", 0.0)
         self.buoyancy_offsets = getattr(physics, "buoyancy_offsets", (0.0, 0.0))
         self.buoyancy_volume = physics.buoyancy_volume
+        self.tentacle_grip = getattr(physics, "tentacle_grip", 0.0)
+        self.tentacle_span = getattr(self, "tentacle_span", getattr(physics, "tentacle_span", 0.0))
+        self.tentacle_reach = getattr(self, "tentacle_reach", getattr(physics, "tentacle_reach", 0.0))
+        self.tentacle_count = getattr(self, "tentacle_count", getattr(physics, "tentacle_count", 0))
+        self.tentacle_grip_bonus = getattr(self, "tentacle_grip_bonus", getattr(physics, "tentacle_grip", 0.0))
         self.mass = self._scaled_mass(self.body_mass)
         self.reach = self.morph_stats.reach
         morph_maintenance = self.morph_stats.maintenance_cost
@@ -847,7 +852,11 @@ class Lifeform:
         module_capacity = 0.0
         vision_bonus = 0.0
         max_sensor_range = 0.0
-        
+        tentacle_count = 0
+        tentacle_reach = 0.0
+        tentacle_grip = 0.0
+        tentacle_span = 0.0
+
         for module in self.body_graph.iter_modules():
             # Health & Integrity
             total_integrity += module.stats.integrity
@@ -865,33 +874,56 @@ class Lifeform:
                 detection = getattr(module, "detection_range", 0.0)
                 if detection > max_sensor_range:
                     max_sensor_range = detection
-        
+
+            if module.module_type == "tentacle":
+                tentacle_count += 1
+                tentacle_reach += max(0.0, module.size[2])
+                tentacle_span += max(module.size[0], module.size[1])
+                tentacle_grip += float(getattr(module, "grip_strength", 0.0))
+
         self.health = max(10, int(total_integrity))
-        
+
         base_energy = 100.0
         mass_factor = self.physics_body.mass * 2.0
         self.energy = int(base_energy + module_capacity + mass_factor)
         base_vision = 150.0
         self.vision = base_vision + vision_bonus + max_sensor_range
-        
+
+        self.tentacle_count = tentacle_count or getattr(self, "tentacle_count", 0)
+        self.tentacle_reach = tentacle_reach or getattr(self.physics_body, "tentacle_reach", 0.0)
+        self.tentacle_span = tentacle_span or getattr(self.physics_body, "tentacle_span", 0.0)
+        self.tentacle_grip_bonus = tentacle_grip or getattr(self.physics_body, "tentacle_grip", 0.0)
+
         # 5. Combat Power
         # Attack: Thrust (ramming) + Grip (grappling) + Mass (impact) + Bite (mouths)
         thrust_factor = self.physics_body.max_thrust * 0.2
         grip_factor = self.physics_body.grip_strength * 0.5
         mass_impact = self.physics_body.mass * 0.1
-        
+
         bite_damage = 0.0
         for module in self.body_graph.iter_modules():
             if getattr(module, "module_type", "") == "mouth":
                 bite_damage += getattr(module, "bite_damage", 0.0)
-                
-        self.attack_power = max(1.0, thrust_factor + grip_factor + mass_impact + bite_damage)
-        
+
+        tentacle_control = (
+            self.tentacle_grip_bonus * 0.35
+            + self.tentacle_reach * 0.08
+            + self.tentacle_span * 0.15
+            + self.tentacle_count * 0.5
+        )
+        self.grapple_power = max(0.0, tentacle_control)
+
+        self.attack_power = max(
+            1.0, thrust_factor + grip_factor + mass_impact + bite_damage + self.grapple_power
+        )
+
         # Defence: Integrity (health) + Mass (bulk) + Density (armor)
         integrity_factor = self.health * 0.1
         bulk_factor = self.physics_body.mass * 0.2
         armor_factor = self.physics_body.density * 5.0
-        self.defence_power = max(1.0, integrity_factor + bulk_factor + armor_factor)
+        self.defence_power = max(
+            1.0, integrity_factor + bulk_factor + armor_factor + self.grapple_power * 0.6
+        )
 
     def _compute_buoyancy_debug(self) -> None:
         """Compute and store buoyancy diagnostics for debugging and inspection."""
