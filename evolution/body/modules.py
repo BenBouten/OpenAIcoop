@@ -348,6 +348,110 @@ class JellyBell(CoreModule):
 
 
 @dataclass
+class RoundCore(CoreModule):
+    """Compact spherical torso with radial arm slots."""
+
+    key: str = "round_core"
+    name: str = "Round Core"
+    description: str = "Orb-like body with evenly spaced limb sockets"
+    size: Tuple[float, float, float] = (2.2, 2.2, 2.2)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=22.0,
+            energy_cost=2.4,
+            integrity=105.0,
+            heat_dissipation=10.0,
+            power_output=55.0,
+            buoyancy_bias=0.65,
+        )
+    )
+    material: str = "bio-alloy"
+    energy_capacity: float = 180.0
+    cargo_slots: int = 1
+
+    module_type: str = "core"
+
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="head_socket",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(HeadModule,),
+            description="Crown mount for sensory head",
+            max_child_mass=14.0,
+            allowed_materials=("bio-alloy", "chitin"),
+            offset=(0.0, 0.6),
+            angle=0.0,
+            clearance=1.0,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="ventral_socket",
+            joint=Joint(JointType.HINGE, swing_limits=(-30.0, 30.0)),
+            allowed_modules=(PropulsionModule, LimbModule),
+            description="Underslung socket for jets or trailing limbs",
+            max_child_mass=18.0,
+            allowed_materials=("flex-polymer", "mesoglea", "titanium"),
+            offset=(-0.25, -0.6),
+            angle=180.0,
+            clearance=1.1,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="radial_1",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-110.0, 110.0), torque_limit=95.0),
+            allowed_modules=(LimbModule,),
+            description="Front-left radial limb mount",
+            max_child_mass=10.0,
+            allowed_materials=("flex-polymer", "mesoglea"),
+            offset=(-0.55, 0.05),
+            angle=135.0,
+            clearance=0.9,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="radial_2",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-110.0, 110.0), torque_limit=95.0),
+            allowed_modules=(LimbModule,),
+            description="Front-right radial limb mount",
+            max_child_mass=10.0,
+            allowed_materials=("flex-polymer", "mesoglea"),
+            offset=(0.55, 0.05),
+            angle=45.0,
+            clearance=0.9,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="radial_3",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-110.0, 110.0), torque_limit=95.0),
+            allowed_modules=(LimbModule,),
+            description="Rear-right radial limb mount",
+            max_child_mass=10.0,
+            allowed_materials=("flex-polymer", "mesoglea"),
+            offset=(0.55, -0.05),
+            angle=-45.0,
+            clearance=0.9,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="radial_4",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-110.0, 110.0), torque_limit=95.0),
+            allowed_modules=(LimbModule,),
+            description="Rear-left radial limb mount",
+            max_child_mass=10.0,
+            allowed_materials=("flex-polymer", "mesoglea"),
+            offset=(-0.55, -0.05),
+            angle=-135.0,
+            clearance=0.9,
+            relative=True,
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+
+
+@dataclass
 class PulseSiphon(PropulsionModule):
     """Low-profile jet that rhythmically expands/contracts."""
 
