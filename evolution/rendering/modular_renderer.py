@@ -209,12 +209,18 @@ class ModularRendererState:
             outline[closest_idx] = joint_point
         return outline
 
-    def rebuild_world_poses(self, angular_velocity: float = 0.0, thrust_output: float = 0.0) -> None:
+    def rebuild_world_poses(
+        self,
+        angular_velocity: float = 0.0,
+        thrust_output: float = 0.0,
+        surface_thrust: dict[str, float] | None = None,
+    ) -> None:
         if self.dirty:
             self.refresh()
-        
+
         # Apply procedural animation to joints
-        self._update_animation(angular_velocity, thrust_output)
+        thrust_map = surface_thrust or {}
+        self._update_animation(angular_velocity, thrust_output, thrust_map)
 
         root = self.graph.root_id
         root_pose = self.poses[root]
@@ -229,17 +235,19 @@ class ModularRendererState:
             ]
         self._solve_children(root)
 
-    def _update_animation(self, angular_velocity: float, thrust_output: float) -> None:
+    def _update_animation(
+        self, angular_velocity: float, thrust_output: float, surface_thrust: dict[str, float]
+    ) -> None:
         time_ms = pygame.time.get_ticks()
-        
+
         # Base animation parameters
         # Idle movement: slow, low amplitude
         # Thrust movement: fast, high amplitude
-        
+
         # Normalize thrust (assuming max thrust ~20-50 per module, total maybe 100?)
         # Let's just use a sigmoid or clamp.
-        thrust_factor = min(1.0, abs(thrust_output) / 20.0)
-        
+        thrust_factor = max(surface_thrust.values(), default=min(1.0, abs(thrust_output) / 20.0))
+
         base_freq = 0.0018 + (0.011 * thrust_factor)
         base_amp = 2.0 + (20.0 * thrust_factor)
         
@@ -254,13 +262,18 @@ class ModularRendererState:
             
             animated = self.poses[node_id]
             module_type = getattr(animated.module, "module_type", "")
+            module_thrust = surface_thrust.get(node_id, 0.0)
+            animated.thrust_factor = module_thrust or thrust_factor
             
             # Animation Parameters
             wave_amp = 0.0
             spatial_freq = 0.4
             
-            if module_type in ("tentacle", "propulsion"):
+            if module_type in ("tentacle", "propulsion", "limb"):
                 # Snake/Tentacle movement
+                if module_thrust <= 0.01:
+                    animated.angle_offset = 0.0
+                    continue
 
                 is_chain = False
                 if animated.parent_id:
@@ -270,7 +283,8 @@ class ModularRendererState:
 
                 if is_chain or module_type in ("tentacle", "propulsion"):
                     # Scale amplitude by thrust; idle motion is subtle and elongated
-                    wave_amp = base_amp * (1.1 if module_type == "tentacle" else 0.7)
+                    local_amp = max(base_amp, 2.0 + module_thrust * 18.0)
+                    wave_amp = local_amp * (1.1 if module_type == "tentacle" else 0.7)
 
                     # Add turn leaning
                     lag = -angular_velocity * (7.5 if module_type == "tentacle" else 5.0)
@@ -284,8 +298,10 @@ class ModularRendererState:
 
                     # Apply to angle_offset
                     animated.angle_offset = wave + lag + sway
-                    animated.thrust_factor = thrust_factor
             elif module_type not in {"limb"}:
+                if thrust_factor <= 0.01:
+                    animated.angle_offset = 0.0
+                    continue
                 # Flex the core/body when thrusting or turning so the hull undulates
                 # alongside fins and tentacles. Depth amplifies curvature so multi-
                 # segment spines visibly arc like eels or snakes.

@@ -97,7 +97,7 @@ class DecomposingCarcass:
         self.x, self.y = position
         width, height = size
         self.width = max(6, int(width))
-        self.height = max(4, int(height * 0.6))
+        self.height = max(4, int(height))
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
         
         # Store original body for rendering

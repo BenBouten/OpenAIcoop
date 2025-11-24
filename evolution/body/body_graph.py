@@ -13,6 +13,7 @@ from .modules import BodyModule
 class SteeringSurface:
     """Control surface or thruster that can impart directional thrust."""
 
+    node_id: str
     module_type: str
     side: int
     leverage: float
@@ -160,6 +161,7 @@ class BodyGraph:
                     phase_offset = (phase_seed / 1000.0) * 6.28318
                     steering_surfaces.append(
                         SteeringSurface(
+                            node_id=node_id,
                             module_type=module.module_type,
                             side=side,
                             leverage=leverage,

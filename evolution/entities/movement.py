@@ -177,12 +177,12 @@ def _compose_steering_thrust(
     physics_body: PhysicsBody,
     desired: Vector2,
     propulsion_acceleration: float,
-) -> Vector2:
+) -> tuple[Vector2, dict[str, float]]:
     """Blend thrust across control surfaces to allow asymmetric steering."""
 
     surfaces = getattr(physics_body, "steering_surfaces", ())
     if not surfaces:
-        return desired * propulsion_acceleration
+        return desired * propulsion_acceleration, {}
 
     facing = desired
     if lifeform.velocity.length_squared() > 0.2:
@@ -195,6 +195,7 @@ def _compose_steering_thrust(
 
     thrust_vector = Vector2()
     total_weight = 0.0
+    surface_activity: dict[str, float] = {}
     for surface in surfaces:
         leverage = max(0.1, float(getattr(surface, "leverage", 0.0)))
         side = int(getattr(surface, "side", 0))
@@ -209,19 +210,22 @@ def _compose_steering_thrust(
         side_gain = 1.0 + bias * leverage * 0.55 * side
         weight = max(0.05, base_power * side_gain * oscillation)
         total_weight += weight
+        surface_activity[surface.node_id] = weight
 
         vectoring = bias * side * vectoring_limit
         directed = desired.rotate(vectoring)
         thrust_vector += directed * weight
 
     if thrust_vector.length_squared() == 0 or total_weight <= 0.0:
-        return desired * propulsion_acceleration
+        return desired * propulsion_acceleration, {}
 
     averaged = thrust_vector / total_weight
     if averaged.length_squared() == 0:
-        return desired * propulsion_acceleration
+        return desired * propulsion_acceleration, {}
 
-    return averaged.normalize() * propulsion_acceleration
+    normalised = averaged.normalize() * propulsion_acceleration
+    activity_map = {node_id: weight / total_weight for node_id, weight in surface_activity.items()}
+    return normalised, activity_map
 
 
 def _blend_desired_with_velocity(lifeform: "Lifeform", desired: Vector2) -> Vector2:
@@ -394,7 +398,9 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     propulsion_force = physics_body.max_thrust * clamped_effort
 
     desired = _blend_desired_with_velocity(lifeform, desired)
-    thrust_vector = _compose_steering_thrust(lifeform, physics_body, desired, propulsion_acceleration)
+    thrust_vector, thrust_activity = _compose_steering_thrust(
+        lifeform, physics_body, desired, propulsion_acceleration
+    )
     telemetry.movement_sample(
         tick=now_ms,
         lifeform=lifeform,
@@ -402,6 +408,13 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         thrust=propulsion_acceleration,
         effort=clamped_effort,
     )
+    if thrust_activity:
+        thrust_activity = {
+            node_id: max(0.0, min(1.0, weight * abs(clamped_effort)))
+            for node_id, weight in thrust_activity.items()
+        }
+    lifeform.active_thrust_map = thrust_activity
+    lifeform.thrust_output = propulsion_force
     attempted_position, fluid = state.world.apply_fluid_dynamics(
         lifeform,
         thrust_vector,
