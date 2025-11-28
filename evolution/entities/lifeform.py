@@ -44,12 +44,6 @@ _GRAVITY = 9.81  # m/s² - used for buoyancy diagnostics
 
 
 class BehaviorMode:
-    IDLE = "idle"
-    SEARCH = "search"
-    FLEE = "flee"
-    HUNT = "hunt"
-    FLOCK = "flock"
-    INTERACT = "interact"
     NEURAL = "neural"
 
 
