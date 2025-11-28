@@ -476,12 +476,25 @@ class DecomposingCarcass:
     def movement_modifier_for(self, _lifeform: "Lifeform") -> float:
         return 1.0
 
-    def apply_effect(self, lifeform: "Lifeform", nutrition: float) -> None:
+    def apply_effect(
+        self,
+        lifeform: "Lifeform",
+        nutrition: float,
+        *,
+        digest_multiplier: float = 1.0,
+    ) -> None:
         """Apply nutrition effect to lifeform eating the carcass."""
-        hunger_reduction = nutrition * settings.PLANT_HUNGER_SATIATION_PER_NUTRITION * 1.4
+        scaled_nutrition = nutrition * digest_multiplier
+        hunger_reduction = (
+            scaled_nutrition * settings.PLANT_HUNGER_SATIATION_PER_NUTRITION * 1.4
+        )
         lifeform.hunger = max(settings.HUNGER_MINIMUM, lifeform.hunger - hunger_reduction)
-        lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + nutrition * 0.8)
-        lifeform.health_now = min(lifeform.health, lifeform.health_now + nutrition * 0.2)
+        lifeform.energy_now = min(
+            lifeform.energy, lifeform.energy_now + scaled_nutrition * 0.8
+        )
+        lifeform.health_now = min(
+            lifeform.health, lifeform.health_now + scaled_nutrition * 0.2
+        )
 
     def summary(self) -> dict:
         return {

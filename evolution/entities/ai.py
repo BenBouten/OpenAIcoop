@@ -217,6 +217,44 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     lifeform.x_direction = blended.x
     lifeform.y_direction = blended.y
 
+    lifeform.bite_intent = _compute_bite_intent(lifeform)
+
+
+def _compute_bite_intent(lifeform: "Lifeform") -> float:
+    hunger_span = max(1.0, settings.HUNGER_SEEK_THRESHOLD - settings.HUNGER_RELAX_THRESHOLD)
+    hunger_norm = (lifeform.hunger - settings.HUNGER_RELAX_THRESHOLD) / hunger_span
+    bite_intent = max(0.0, min(1.0, hunger_norm))
+
+    base_size = max(float(lifeform.width), float(lifeform.height))
+    proximity: list[tuple[float, float]] = []
+
+    plant = getattr(lifeform, "closest_plant", None)
+    if plant is not None:
+        proximity.append((lifeform.distance_to_plant(plant), lifeform._plant_feeding_radius(plant)))
+
+    carcass = getattr(lifeform, "closest_carcass", None)
+    if carcass is not None:
+        reach = max(5.0, lifeform.reach * 0.8 + base_size * 0.4)
+        proximity.append((lifeform.distance_to_carcass(carcass), reach))
+
+    for creature in (
+        getattr(lifeform, "closest_enemy", None),
+        getattr(lifeform, "closest_prey", None),
+        getattr(lifeform, "closest_partner", None),
+    ):
+        if creature is None or getattr(creature, "health_now", 0) <= 0:
+            continue
+        reach = max(4.0, lifeform.reach + base_size * 0.25)
+        proximity.append((lifeform.distance_to(creature), reach))
+
+    for distance, reach in proximity:
+        if reach <= 0:
+            continue
+        closeness = max(0.0, 1.0 - distance / reach)
+        bite_intent = max(bite_intent, closeness)
+
+    return max(0.0, min(1.0, bite_intent))
+
 
 def register_threat(lifeform: "Lifeform", threat: "Lifeform", timestamp: int) -> None:
     """Force the lifeform to recognize a threat (e.g. after taking damage)."""

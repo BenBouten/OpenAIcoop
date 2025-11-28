@@ -154,6 +154,10 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             risk_tolerance = random.uniform(0.6, 1.0)
             restlessness_range = (0.55, 0.95)
             boid_range = (0.25, 0.7)
+            digest_plants = random.uniform(0.35, 0.8)
+            digest_meat = random.uniform(0.95, 1.35)
+            bite_force = random.uniform(16.0, 32.0)
+            tissue_hardness = random.uniform(0.8, 1.8)
         else:
             attack_power = random.randint(30, 85)
             defence_power = random.randint(25, 75)
@@ -167,6 +171,16 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             risk_tolerance = random.uniform(0.4, 0.8)
             restlessness_range = (0.32, 0.78)
             boid_range = (0.45, 0.9)
+            digest_plants = random.uniform(0.75, 1.15)
+            digest_meat = random.uniform(0.75, 1.15)
+            bite_force = random.uniform(12.0, 24.0)
+            tissue_hardness = random.uniform(0.6, 1.6)
+
+        if diet == "herbivore":
+            digest_plants = random.uniform(0.95, 1.3)
+            digest_meat = random.uniform(0.35, 0.75)
+            bite_force = random.uniform(10.0, 20.0)
+            tissue_hardness = random.uniform(0.6, 1.4)
 
         morphology = MorphologyGenotype.random()
         development = generate_development_plan(diet)
@@ -202,6 +216,10 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "boid_tendency": boid_tendency,
             "risk_tolerance": risk_tolerance,
             "restlessness": restlessness,
+            "digest_efficiency_plants": digest_plants,
+            "digest_efficiency_meat": digest_meat,
+            "bite_force": bite_force,
+            "tissue_hardness": tissue_hardness,
             "morphology": morphology.to_dict(),
             "development": development,
             "genome": genome_blueprint,
@@ -495,6 +513,10 @@ def _build_jellyfish_profile(dna_id: int) -> dict:
         "boid_tendency": rng.uniform(0.35, 0.85),
         "risk_tolerance": rng.uniform(0.35, 0.75),
         "restlessness": rng.uniform(0.28, 0.62),
+        "digest_efficiency_plants": rng.uniform(0.9, 1.25),
+        "digest_efficiency_meat": rng.uniform(0.7, 1.05),
+        "bite_force": rng.uniform(12.0, 22.0),
+        "tissue_hardness": rng.uniform(0.6, 1.2),
         "morphology": MorphologyGenotype.random().to_dict(),
         "development": generate_development_plan("omnivore"),
         "genome": genome,

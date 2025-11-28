@@ -464,7 +464,11 @@ class MossCluster:
         return 0.0
 
     def apply_effect(
-        self, lifeform: "Lifeform", consumption: Sequence[ConsumptionSample]
+        self,
+        lifeform: "Lifeform",
+        consumption: Sequence[ConsumptionSample],
+        *,
+        digest_multiplier: float = 1.0,
     ) -> ConsumptionOutcome:
         if not consumption:
             return ConsumptionOutcome()
@@ -484,12 +488,12 @@ class MossCluster:
             cell_capacity = max(dna.nutrition, 1e-6)
             portion = nutrition / cell_capacity
 
-            energy_gain += nutrition * (1.0 + dna.hydration * 0.4)
+            energy_gain += nutrition * (1.0 + dna.hydration * 0.4) * digest_multiplier
             toxin_energy += portion * dna.toxicity * 8.0
-            heal_amount += portion * dna.vitality * 12.0
+            heal_amount += portion * dna.vitality * 12.0 * digest_multiplier
             toxin_damage += portion * dna.toxicity * 16.0
-            soothing += portion * dna.hydration * 4.0
-            satiety_bonus += portion * dna.fiber_density * 8.0
+            soothing += portion * dna.hydration * 4.0 * digest_multiplier
+            satiety_bonus += portion * dna.fiber_density * 8.0 * digest_multiplier
 
         net_energy = energy_gain - toxin_energy
         if net_energy >= 0:
