@@ -104,6 +104,17 @@ class Lifeform:
         tinted = self._apply_pigment(base_color, self.morph_stats.pigment_tint)
         self.body_color = self._apply_skin_development(tinted)
         self.color = self.body_color
+        self.brain_weights = list(dna_profile.get("brain_weights", []))
+        self._neural_controller = None
+        self.neural_commands: Dict[str, float] = {}
+        self.neural_thrust_ratio: float | None = None
+        self.tail_thrust = 0.0
+        self.left_fin_thrust = 0.0
+        self.right_fin_thrust = 0.0
+        self.vertical_thrust = 0.0
+        self.bite_intent = 0.0
+        self.lum_intensity = 0.0
+        self.lum_pattern_mod = 0.0
 
         # Feeding traits
         self.digest_efficiency_plants = float(

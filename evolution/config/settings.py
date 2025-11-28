@@ -46,7 +46,7 @@ N_VEGETATION = 100
 N_DNA_PROFILES = 10
 MAX_LIFEFORMS = 150
 STARTING_SPECIES_COUNT = 5
-STARTER_BASE_FORM_LIMIT = 2
+INITIAL_BASEFORM_COUNT = int(os.getenv("EVOLUTION_INITIAL_BASEFORMS", "1"))
 MUTATION_CHANCE = 5
 MOSS_MUTATION_CHANCE = 0.2
 MOSS_MUTATION_STRENGTH = 0.25
@@ -167,9 +167,7 @@ class SimulationSettings:
     MODULE_SPRITE_MIN_PX: float = MODULE_SPRITE_MIN_PX
     MODULE_SPRITE_MIN_LENGTH: float = MODULE_SPRITE_MIN_LENGTH
     MODULE_SPRITE_MIN_HEIGHT: float = MODULE_SPRITE_MIN_HEIGHT
-    THRUST_SCALE_EXPONENT: float = THRUST_SCALE_EXPONENT
-    THRUST_BASE_MULTIPLIER: float = THRUST_BASE_MULTIPLIER
-    DRAG_COEFFICIENT_MULTIPLIER: float = DRAG_COEFFICIENT_MULTIPLIER
+    INITIAL_BASEFORM_COUNT: int = INITIAL_BASEFORM_COUNT
     MIN_MATURITY: int = MIN_MATURITY
     MAX_MATURITY: int = MAX_MATURITY
     VISION_MIN: int = VISION_MIN
@@ -201,10 +199,7 @@ _ENV_VARS: Dict[str, str] = {
     "MODULE_SPRITE_MIN_PX": "EVOLUTION_MODULE_SPRITE_MIN_PX",
     "MODULE_SPRITE_MIN_LENGTH": "EVOLUTION_MODULE_SPRITE_MIN_LENGTH",
     "MODULE_SPRITE_MIN_HEIGHT": "EVOLUTION_MODULE_SPRITE_MIN_HEIGHT",
-    "THRUST_SCALE_EXPONENT": "EVOLUTION_THRUST_SCALE_EXPONENT",
-    "THRUST_BASE_MULTIPLIER": "EVOLUTION_THRUST_BASE_MULTIPLIER",
-    "DRAG_COEFFICIENT_MULTIPLIER": "EVOLUTION_DRAG_COEFFICIENT_MULTIPLIER",
-    "REPRODUCTION_DISTANCE_MULTIPLIER": "EVOLUTION_REPRODUCTION_DISTANCE_MULTIPLIER",
+    "INITIAL_BASEFORM_COUNT": "EVOLUTION_INITIAL_BASEFORMS",
 }
 
 
@@ -286,6 +281,7 @@ _NUMERIC_BOUNDS: Dict[str, tuple[float, float]] = {
     "WINDOW_HEIGHT": (200, 4320),
     "N_LIFEFORMS": (1, 2000),
     "MAX_LIFEFORMS": (50, 4000),
+    "INITIAL_BASEFORM_COUNT": (1, 10),
     "MUTATION_CHANCE": (0, 100),
     "FPS": (1, 360),
     "BODY_PIXEL_SCALE": (1.0, 50.0),
@@ -390,6 +386,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-height", type=int, help="Viewport height")
     parser.add_argument("--n-lifeforms", type=int, help="Initial lifeform count")
     parser.add_argument("--max-lifeforms", type=int, help="Population cap")
+    parser.add_argument("--initial-baseforms", type=int, help="Seed baseform templates")
     parser.add_argument("--mutation-chance", type=int, help="Mutation percentage")
     parser.add_argument("--fps", type=int, help="Target frames per second")
     parser.add_argument("--telemetry-enabled", type=int, help="Enable telemetry (1 or 0)")
@@ -435,6 +432,7 @@ def load_runtime_settings(args: Sequence[str] | None = None, env: Mapping[str, s
         "WINDOW_HEIGHT": parsed.window_height,
         "N_LIFEFORMS": parsed.n_lifeforms,
         "MAX_LIFEFORMS": parsed.max_lifeforms,
+        "INITIAL_BASEFORM_COUNT": parsed.initial_baseforms,
         "MUTATION_CHANCE": parsed.mutation_chance,
         "FPS": parsed.fps,
         "TELEMETRY_ENABLED": None if parsed.telemetry_enabled is None else bool(parsed.telemetry_enabled),
@@ -457,7 +455,7 @@ def load_runtime_settings(args: Sequence[str] | None = None, env: Mapping[str, s
 def apply_runtime_settings(new_settings: SimulationSettings) -> SimulationSettings:
     global _ACTIVE_SETTINGS
     global WORLD_WIDTH, WORLD_HEIGHT, WINDOW_WIDTH, WINDOW_HEIGHT
-    global N_LIFEFORMS, MAX_LIFEFORMS, MUTATION_CHANCE, FPS
+    global N_LIFEFORMS, MAX_LIFEFORMS, INITIAL_BASEFORM_COUNT, MUTATION_CHANCE, FPS
     global LOG_DIRECTORY, DEBUG_LOG_FILE, DEBUG_LOG_LEVEL, TELEMETRY_ENABLED
     global BODY_PIXEL_SCALE, USE_BODYGRAPH_SIZE
     global MODULE_SPRITE_SCALE, MODULE_SPRITE_MIN_PX, MODULE_SPRITE_MIN_LENGTH, MODULE_SPRITE_MIN_HEIGHT
@@ -471,6 +469,7 @@ def apply_runtime_settings(new_settings: SimulationSettings) -> SimulationSettin
     WINDOW_HEIGHT = new_settings.WINDOW_HEIGHT
     N_LIFEFORMS = new_settings.N_LIFEFORMS
     MAX_LIFEFORMS = new_settings.MAX_LIFEFORMS
+    INITIAL_BASEFORM_COUNT = new_settings.INITIAL_BASEFORM_COUNT
     MUTATION_CHANCE = new_settings.MUTATION_CHANCE
     FPS = new_settings.FPS
     LOG_DIRECTORY = new_settings.LOG_DIRECTORY

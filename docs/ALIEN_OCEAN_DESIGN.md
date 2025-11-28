@@ -19,6 +19,12 @@
 4. **Physics layer** – 2D newtoniaanse simulatie in water met krachten (thrust, drag, buoyancy) en stromingen.
 5. **Energy & fitness** – energiemodel gekoppeld aan fysica voor verbruik en efficiëntie; reproductie kost expliciet energie/biomassa.
 
+### Neuraal gedrag
+- Elke lifeform krijgt een vaste feedforward-controller (10 inputs → 12 verborgen neuronen → 7 outputs) waarvan alle gewichten als vlakke floatlijst in het DNA zitten.【F:evolution/entities/neural_controller.py†L1-L82】
+- Inputs omvatten lokale voedsel-densiteit voorwaarts/links/rechts, genormaliseerde diepte, energieratio, buurtdichtheid, verticale snelheid, actuele snelheid, ruis en een simpele drijfvermogen-bias.【F:evolution/entities/ai.py†L84-L110】
+- Outputs gaan uitsluitend naar actuatoren: staart- en fin-thrust, verticale thrust, bijtintentie en bioluminescentie-intensiteit/patroon; de waardes worden rechtstreeks gebruikt door de physicslaag en sturen geen posities of doelen aan.【F:evolution/entities/ai.py†L40-L71】【F:evolution/entities/ai.py†L112-L142】
+- Tijdens reproductie worden de gewichten gemiddeld tussen ouders en vervolgens met kleine Gaussische noise gemuteerd zodat gedrag kan evolueren zonder nieuwe logica te coderen.【F:evolution/entities/reproduction.py†L55-L98】【F:evolution/entities/reproduction.py†L210-L243】
+
 ## Modulair lichaamssysteem
 
 Het nieuwe lijf wordt niet langer beschreven door vlakke `width/height`-velden maar door een modulair “lego” systeem:
@@ -44,6 +50,9 @@ Het nieuwe lijf wordt niet langer beschreven door vlakke `width/height`-velden m
 - `generate_modular_blueprint()` bouwt voor elk dieettype een klein maar valide moduleplan met kern, thruster, vinnen en sensor-suites; randomness bepaalt extra sensoren maar het resultaat blijft binnen `GenomeConstraints`, waardoor elke DNA-profiel op zijn minst een bruikbaar lichaamsplan bezit.【F:evolution/dna/blueprints.py†L1-L94】
 - Zowel het bootstrap-proces als reproductie haken hierin: `generate_dna_profiles()` vult alle catalogusprofielen met een blueprint op basis van hun dieet, terwijl `_mix_parent_genome()` bij het ontbreken van ouder-genomen automatisch een blueprint genereert. Hierdoor zijn newborns en seeds altijd compatibel met het modulaire lichaamssysteem.【F:evolution/simulation/bootstrap.py†L62-L135】【F:evolution/entities/reproduction.py†L70-L120】
 - Dedicated tests bouwen een BodyGraph uit de blueprint en verifiëren zowel de structurele geldigheid als dieetvariatie in sensor-spectrums, zodat regressies in de generator direct zichtbaar worden.【F:tests/test_dna_blueprints.py†L1-L26】
+- De startpopulatie komt uit een kleine set neutrale baseforms (common ancestor + optionele varianten) met symmetrische thruster + vinnen rond het massacentrum. Elk basisprofiel bevat een klein brein met willekeurig gewichtjes en wordt bij het klonen licht gemuteerd in lichaam en controller zodat alle diversiteit uit evolutie ontstaat, niet uit vaste rollen.【F:evolution/simulation/base_population.py†L9-L138】
+- Het aantal basisvormen en de populatiegrootte zijn configureerbaar via `INITIAL_BASEFORM_COUNT` en `N_LIFEFORMS` in de centrale settings/CLI/YAML, waardoor de seeding in één plek af te stemmen is.【F:evolution/config/settings.py†L41-L118】【F:configs/default.yaml†L1-L11】
+- Spawning plaatst deze clones bewust rond meerdere voedselpatches op verschillende dieptes in plaats van uniform random, waardoor vroege gedragsdiversiteit meteen gekoppeld wordt aan resource hotspots.【F:evolution/simulation/bootstrap.py†L239-L323】
 
 ### PhysicsBody bridge
 - `BodyGraph.aggregate_physics_stats()` levert een `PhysicsAggregation` met massa, volume, drag-oppervlak, totale thrust, grip en power. `build_physics_body()` vertaalt die naar een compacte `PhysicsBody` met dichtheid, drag-coëfficiënt en maximale voortstuwing die direct in de Newtoniaanse ocean-simulator kan worden gebruikt.【F:evolution/body/body_graph.py†L34-L93】【F:evolution/physics/physics_body.py†L1-L53】

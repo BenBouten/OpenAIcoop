@@ -98,6 +98,9 @@ def _apply_environment_bias(
 
 def _behavioral_thrust_ratio(lifeform: "Lifeform") -> float:
     """Return how aggressively a lifeform wants to swim (0-1.4)."""
+    neural_ratio = getattr(lifeform, "neural_thrust_ratio", None)
+    if neural_ratio is not None:
+        return max(0.0, min(1.5, float(neural_ratio)))
     mode = getattr(lifeform, "current_behavior_mode", "idle")
     hunger = float(getattr(lifeform, "hunger", 0.0))
     restlessness = max(0.0, min(1.0, getattr(lifeform, "restlessness", 0.5)))
@@ -285,36 +288,37 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     else:
         desired = desired.normalize()
 
-    desired = _apply_environment_bias(lifeform, desired, state)
+    if getattr(lifeform, "current_behavior_mode", "") != "neural":
+        desired = _apply_environment_bias(lifeform, desired, state)
 
-    plant_viable = lifeform.closest_plant if lifeform.prefers_plants() else None
-    prey_viable = lifeform.closest_prey if lifeform.prefers_meat() else None
-    carrion_viable = (
-        getattr(lifeform, "closest_carcass", None)
-        if lifeform.prefers_meat()
-        else None
-    )
+        plant_viable = lifeform.closest_plant if lifeform.prefers_plants() else None
+        prey_viable = lifeform.closest_prey if lifeform.prefers_meat() else None
+        carrion_viable = (
+            getattr(lifeform, "closest_carcass", None)
+            if lifeform.prefers_meat()
+            else None
+        )
 
-    if lifeform.should_seek_food() and not (
-        plant_viable or prey_viable or carrion_viable
-    ):
-        search_vec = _ensure_search_vector(lifeform)
-        desired = desired.lerp(search_vec, 0.35)
-        if desired.length_squared() == 0:
-            desired = search_vec
-        desired = desired.normalize()
-    elif (
-        lifeform.should_seek_partner()
-        and not lifeform.closest_partner
-        and not getattr(lifeform, "_search_partner_vector", None)
-    ):
-        search_vec = _ensure_search_vector(lifeform)
-        desired = desired.lerp(search_vec, 0.3)
-        if desired.length_squared() == 0:
-            desired = search_vec
-        desired = desired.normalize()
-    else:
-        lifeform._search_vector_timer = 0
+        if lifeform.should_seek_food() and not (
+            plant_viable or prey_viable or carrion_viable
+        ):
+            search_vec = _ensure_search_vector(lifeform)
+            desired = desired.lerp(search_vec, 0.35)
+            if desired.length_squared() == 0:
+                desired = search_vec
+            desired = desired.normalize()
+        elif (
+            lifeform.should_seek_partner()
+            and not lifeform.closest_partner
+            and not getattr(lifeform, "_search_partner_vector", None)
+        ):
+            search_vec = _ensure_search_vector(lifeform)
+            desired = desired.lerp(search_vec, 0.3)
+            if desired.length_squared() == 0:
+                desired = search_vec
+            desired = desired.normalize()
+        else:
+            lifeform._search_vector_timer = 0
 
     locomotion = getattr(lifeform, "locomotion_profile", None)
 

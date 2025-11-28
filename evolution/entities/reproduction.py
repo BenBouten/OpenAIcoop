@@ -13,6 +13,11 @@ from ..dna.factory import build_body_graph
 from ..dna.genes import Genome
 from ..dna.mutation import MutationError, mutate_genome
 from ..morphology.genotype import MorphologyGenotype, mutate_profile_morphology
+from .neural_controller import (
+    expected_weight_count,
+    initialize_brain_weights,
+    mutate_brain_weights,
+)
 
 if TYPE_CHECKING:
     from ..simulation.state import SimulationState
@@ -134,6 +139,7 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
     development = mix_development_plans(diet, parent.development, partner.development)
 
     genome_blueprint = _mix_parent_genome(parent, partner)
+    brain_weights = _mix_brain_weights(parent, partner)
 
     return {
         "dna_id": parent.dna_id,
@@ -179,6 +185,7 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
         "morphology": morphology.to_dict(),
         "development": development,
         "genome": genome_blueprint,
+        "brain_weights": brain_weights,
     }
 
 
@@ -198,6 +205,26 @@ def _mix_parent_genome(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
     except MutationError:
         genome = base
     return genome.to_dict()
+
+
+def _mix_brain_weights(parent: "Lifeform", partner: "Lifeform") -> List[float]:
+    expected = expected_weight_count()
+    candidates: List[List[float]] = []
+    for source in (parent, partner):
+        weights = getattr(source, "brain_weights", None)
+        if isinstance(weights, list) and len(weights) == expected:
+            candidates.append(weights)
+
+    if candidates:
+        # Average when both parents have valid controllers to keep behaviour smooth
+        if len(candidates) == 2:
+            return [
+                (a + b) / 2.0
+                for a, b in zip(candidates[0], candidates[1])
+            ]
+        return list(candidates[0])
+
+    return initialize_brain_weights()
 
 
 def _apply_mutations(profile: Dict[str, object]) -> None:
@@ -255,6 +282,16 @@ def _apply_mutations(profile: Dict[str, object]) -> None:
         profile["tissue_hardness"] = profile.get("tissue_hardness", 0.6) + random.uniform(
             -0.18, 0.18
         )
+
+    weights = profile.get("brain_weights")
+    if not isinstance(weights, list) or len(weights) != expected_weight_count():
+        weights = initialize_brain_weights()
+    profile["brain_weights"] = mutate_brain_weights(
+        weights,
+        rng=random,
+        sigma=0.08,
+        mutation_rate=0.2,
+    )
 
     mutate_profile_morphology(profile)
     mutate_profile_development(profile)
