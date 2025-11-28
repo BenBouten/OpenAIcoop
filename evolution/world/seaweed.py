@@ -229,6 +229,10 @@ class SeaweedStrand:
         gy = int(local.y) // self.CELL_SIZE
         return (gx, gy) in self.cells
 
+    def occupies_cell(self, cell: GridCell) -> bool:
+        """Compatibility helper so moss oxygen checks see seaweed occupancy."""
+        return cell in self.cells
+
     def decrement_resource(
         self, amount: float, *, eater: Optional["Lifeform"] = None
     ) -> List["ConsumptionSample"]:
