@@ -9,7 +9,6 @@ from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
 from ..body.body_graph import BodyGraph
-from ..body.modules import catalogue_jellyfish_modules
 from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import generate_development_plan
 from ..dna.factory import build_body_graph, serialize_body_graph
@@ -104,18 +103,21 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
     state.dna_profiles.clear()
     state.dna_home_biome.clear()
 
-    base_keys = list(base_form_keys())
+    base_keys = _select_starter_base_keys()
+    additional_keys = list(base_form_keys())
+    base_keys = base_keys[:settings.STARTER_BASE_FORM_LIMIT]
+
+    # Limit the number of profiles to the starter limit
+    profile_count = settings.STARTER_BASE_FORM_LIMIT
     
-    # Ensure we have at least one of each base form if N_DNA_PROFILES allows
-    for i in range(settings.N_DNA_PROFILES):
+    for i in range(profile_count):
         dna_id = i
-        
-        # Cycle through base forms for the first N, then random
+
         if i < len(base_keys):
             base_key = base_keys[i]
         else:
-            base_key = random.choice(base_keys)
-            
+            base_key = random.choice(additional_keys)
+
         base_def = BASE_FORMS[base_key]
         
         # Use base form defaults for diet if possible, or randomize based on form
@@ -242,14 +244,15 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             home = None
         state.dna_home_biome[dna_profile["dna_id"]] = home
 
-    jelly_profile = _build_jellyfish_profile(len(state.dna_profiles))
-    state.dna_profiles.append(jelly_profile)
-
-    if world.biomes:
-        jelly_home = determine_home_biome(jelly_profile, world.biomes)
-    else:
-        jelly_home = None
-    state.dna_home_biome[jelly_profile["dna_id"]] = jelly_home
+    # Jellyfish profile is no longer needed if we want strict starter limits
+    # jelly_profile = _build_jellyfish_profile(len(state.dna_profiles))
+    # state.dna_profiles.append(jelly_profile)
+    #
+    # if world.biomes:
+    #     jelly_home = determine_home_biome(jelly_profile, world.biomes)
+    # else:
+    #     jelly_home = None
+    # state.dna_home_biome[jelly_profile["dna_id"]] = jelly_home
 
 
 def spawn_lifeforms(state: SimulationState, world: World) -> None:
@@ -522,3 +525,11 @@ def _build_jellyfish_profile(dna_id: int) -> dict:
         "genome": genome,
         "guaranteed_spawn": True,
     }
+
+
+
+def _select_starter_base_keys() -> List[str]:
+    from ..dna.base_forms import base_form_keys
+
+    keys = list(base_form_keys())
+    return keys[:2]

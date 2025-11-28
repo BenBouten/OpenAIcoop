@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from typing import ClassVar, Dict, Iterable, Mapping, Sequence, Tuple
 
 from .attachment import AttachmentPoint, Joint, JointType
+from evolution.config import settings
 
 
 @dataclass(frozen=True)
@@ -465,6 +466,23 @@ class RoundCore(CoreModule):
     def __post_init__(self) -> None:
         if not self.attachment_points:
             self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+            
+        # Scale stats based on size volume relative to default
+        default_vol = 1.9 * 1.9 * 1.9
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.2, vol / max(0.001, default_vol))
+        
+        # Adjust stats
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.6),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            power_output=self.stats.power_output * scale,
+            buoyancy_bias=self.stats.buoyancy_bias * scale
+        )
+        self.energy_capacity *= scale
+        self.cargo_slots = max(1, int(self.cargo_slots * (scale ** 0.5)))
 
 
 @dataclass
@@ -532,6 +550,22 @@ class TentacleLimb(LimbModule):
     def __post_init__(self) -> None:
         if not self.attachment_points:
             self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+            
+        # Scale stats based on size volume relative to default
+        default_vol = 0.4 * 0.4 * 4.0
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.2, vol / max(0.001, default_vol))
+        
+        # Adjust stats
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.6),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            buoyancy_bias=self.stats.buoyancy_bias
+        )
+        self.thrust *= (scale ** settings.THRUST_SCALE_EXPONENT) * settings.THRUST_BASE_MULTIPLIER
+        self.grip_strength *= scale
 
 
 # Concrete module implementations -------------------------------------------
@@ -665,6 +699,24 @@ class TrunkCore(CoreModule):
     def __post_init__(self) -> None:
         if not self.attachment_points:
             self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+            
+        # Scale stats based on size volume relative to default
+        default_vol = 2.8 * 1.8 * 7.2
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.2, vol / max(0.001, default_vol))
+        
+        # Adjust stats
+        # We need to create a new ModuleStats object because it's frozen
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.6), # Integrity scales slower than mass
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            power_output=self.stats.power_output * scale,
+            buoyancy_bias=self.stats.buoyancy_bias * scale
+        )
+        self.energy_capacity *= scale
+        self.cargo_slots = max(1, int(self.cargo_slots * (scale ** 0.5)))
 
 
 @dataclass
@@ -716,6 +768,22 @@ class CephalonHead(HeadModule):
     def __post_init__(self) -> None:
         if not self.attachment_points:
             self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+            
+        # Scale stats based on size volume relative to default
+        default_vol = 1.6 * 1.2 * 4.2
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.2, vol / max(0.001, default_vol))
+        
+        # Adjust stats
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.6),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            buoyancy_bias=self.stats.buoyancy_bias
+        )
+        self.vision_bonus *= scale
+        self.cognition_bonus *= scale
 
 
 @dataclass
@@ -736,7 +804,7 @@ class HydroFin(LimbModule):
         )
     )
     material: str = "flex-polymer"
-    thrust: float = 45.0
+    thrust: float = 65.0
     grip_strength: float = 5.0
     lift_coefficient: float = 36.0
 
@@ -758,6 +826,22 @@ class HydroFin(LimbModule):
     def __post_init__(self) -> None:
         if not self.attachment_points:
             self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+            
+        # Scale stats based on size volume relative to default
+        default_vol = 2.4 * 0.6 * 5.2
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.2, vol / max(0.001, default_vol))
+        
+        # Adjust stats
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.6),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            buoyancy_bias=self.stats.buoyancy_bias
+        )
+        self.thrust *= (scale ** settings.THRUST_SCALE_EXPONENT) * settings.THRUST_BASE_MULTIPLIER
+        self.lift_coefficient *= (scale ** 0.8)
 
 
 @dataclass
@@ -779,8 +863,9 @@ class TailThruster(PropulsionModule):
         )
     )
     material: str = "titanium"
-    thrust_power: float = 120.0
+    thrust_power: float = 180.0
     fuel_efficiency: float = 0.8
+    vectoring_angle: float = 15.0  # Degrees of thrust vectoring capability
 
     ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
         AttachmentPoint(
@@ -824,6 +909,22 @@ class TailThruster(PropulsionModule):
     def __post_init__(self) -> None:
         if not self.attachment_points:
             self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+            
+        # Scale stats based on size volume relative to default
+        default_vol = 2.1 * 1.2 * 6.0
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.2, vol / max(0.001, default_vol))
+        
+        # Adjust stats
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.6),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            power_output=self.stats.power_output * scale,
+            buoyancy_bias=self.stats.buoyancy_bias * scale
+        )
+        self.thrust_power *= (scale ** settings.THRUST_SCALE_EXPONENT) * settings.THRUST_BASE_MULTIPLIER
 
 
 @dataclass

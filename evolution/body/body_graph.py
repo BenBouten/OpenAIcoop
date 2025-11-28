@@ -10,9 +10,20 @@ from .modules import BodyModule
 
 
 @dataclass(frozen=True)
-class SteeringSurface:
-    """Control surface or thruster that can impart directional thrust."""
+class ThrusterData:
+    """Detailed data for a single propulsion source."""
+    node_id: str
+    position: Tuple[float, float]  # Relative to Center of Mass
+    direction: Tuple[float, float]  # Unit vector of thrust direction
+    max_force: float
+    activation_cost: float  # Energy cost per tick at max force
+    type: str  # "fin", "jet", "tail"
+    vectoring_limit: float = 0.0  # Max angle deviation in radians
 
+
+@dataclass(frozen=True)
+class SteeringSurface:
+    """Legacy control surface data (kept for backward compatibility if needed)."""
     node_id: str
     module_type: str
     side: int
@@ -55,6 +66,8 @@ class BodyGraph:
         """Aggregated geometry/force stats derived from all modules."""
 
         mass: float
+        center_of_mass: Tuple[float, float]
+        moment_of_inertia: float
         volume: float
         frontal_area: float
         lateral_area: float
@@ -74,11 +87,16 @@ class BodyGraph:
         tentacle_reach: float
         tentacle_count: int
         steering_surfaces: Tuple[SteeringSurface, ...]
+        thrusters: Tuple[ThrusterData, ...]
 
     def _aggregate_geometry(self) -> PhysicsAggregation:
         """Internal helper that walks modules once to derive stats."""
 
         mass = 0.0
+        moment_of_inertia_origin = 0.0  # I relative to (0,0)
+        weighted_pos_x = 0.0
+        weighted_pos_y = 0.0
+
         volume = 0.0
         frontal_area = 0.0
         lateral_area = 0.0
@@ -99,11 +117,31 @@ class BodyGraph:
         tentacle_count = 0
 
         steering_surfaces: list[SteeringSurface] = []
+        raw_thrusters: list[dict] = []  # Temp storage before shifting by CoM
 
         for node_id, node in self.nodes.items():
             module = node.module
             stats = module.stats
             width, height, length = module.size
+            
+            # Physics properties
+            m_mass = float(stats.mass)
+            
+            # Transform (World position relative to root)
+            tx, ty, ta = self._transforms.get(node_id, (0.0, 0.0, 0.0))
+            
+            # Accumulate Mass & Center of Mass
+            mass += m_mass
+            weighted_pos_x += m_mass * tx
+            weighted_pos_y += m_mass * ty
+            
+            # Accumulate Moment of Inertia (relative to Origin)
+            # I_module_center = 1/12 * m * (w^2 + h^2) (Approximation for box)
+            # I_origin = I_module_center + m * dist^2
+            i_local = (1.0/12.0) * m_mass * (width**2 + height**2)
+            dist_sq = tx*tx + ty*ty
+            moment_of_inertia_origin += i_local + m_mass * dist_sq
+
             module_volume = max(0.0, prod(module.size))
             module_frontal = max(0.0, width * height)
             module_lateral = max(0.0, height * length)
@@ -120,7 +158,6 @@ class BodyGraph:
             thrust += float(getattr(module, "thrust_power", 0.0))
             grip += float(getattr(module, "grip_strength", 0.0))
 
-            mass += float(stats.mass)
             power_output += float(stats.power_output)
             energy_cost += float(stats.energy_cost)
             volume += module_volume
@@ -145,34 +182,109 @@ class BodyGraph:
                 tentacle_reach += max(0.0, length)
                 tentacle_span += max(width, height)
 
-            if module.module_type in {"propulsion", "tentacle", "limb"} or lift_coeff > 0.0:
-                tx, ty, _ = self._transforms.get(node_id, (0.0, 0.0, 0.0))
+            # Collect Thruster Data
+            thrust_power = float(getattr(module, "thrust_power", 0.0)) + float(getattr(module, "thrust", 0.0))
+            if thrust_power > 0.0 or lift_coeff > 0.0:
+                thrust_dir_rad = radians(ta)
+                dx = cos(thrust_dir_rad)
+                dy = sin(thrust_dir_rad)
+                
+                # Determine Force Vector based on module type
+                if module.module_type == "propulsion":
+                    # Rocket/Jet: Force is opposite to exhaust direction
+                    # If module points Back (180), Force is Forward (0)
+                    fx, fy = -dx, -dy
+                elif module.module_type in ("limb", "tentacle", "fin"):
+                    # Fins/Paddles: Primarily generate thrust in the body's forward direction
+                    # regardless of their attachment angle (simplified flapping model).
+                    # We assume 'Forward' is the body's local +X (0 radians).
+                    # However, we rotate this by the module's global rotation 'ta' relative to the body?
+                    # No, if a fin is at 90 deg, we still want it to push Forward.
+                    # So we use the Body's Forward vector, which in this Local Space (relative to root)
+                    # is simply (1, 0) if the root is at (0,0) and aligned.
+                    # Wait, 'ta' is global rotation? No, 'ta' is relative to root (if root is 0).
+                    # Yes, _transforms stores relative-to-root transforms.
+                    # So Body Forward is (1, 0).
+                    
+                    # But we also want to allow "vectoring" or angling.
+                    # Let's say the base thrust is Forward (1, 0).
+                    fx, fy = 1.0, 0.0
+                    
+                    # If it's a tentacle, maybe it can push in any direction?
+                    # For now, assume forward propulsion.
+                else:
+                    # Default fallback
+                    fx, fy = dx, dy
+
+                vectoring_deg = float(getattr(module, "vectoring_angle", 0.0))
+                # Fins usually have high vectoring capability (flapping)
+                if module.module_type in ("limb", "fin"):
+                    vectoring_deg = max(vectoring_deg, 45.0)
+                elif module.module_type == "tentacle":
+                     vectoring_deg = max(vectoring_deg, 90.0)
+                     
+                vectoring_rad = radians(vectoring_deg)
+
+                raw_thrusters.append({
+                    "node_id": node_id,
+                    "pos": (tx, ty),
+                    "dir": (fx, fy),
+                    "force": thrust_power,
+                    "cost": float(stats.energy_cost) * 0.1, # Heuristic cost
+                    "type": module.module_type,
+                    "vectoring": vectoring_rad
+                })
+
+                # Legacy Steering Surface collection
                 side = 0
                 if tx > 0.05:
                     side = 1
                 elif tx < -0.05:
                     side = -1
                 leverage = max(0.1, abs(tx) + 0.15 * abs(ty))
-                thrust_power = float(getattr(module, "thrust_power", 0.0)) + float(
-                    getattr(module, "thrust", 0.0)
-                )
-                if thrust_power > 0.0 or lift_coeff > 0.0:
-                    phase_seed = int.from_bytes(node_id.encode("utf-8"), "little") % 1000
-                    phase_offset = (phase_seed / 1000.0) * 6.28318
-                    steering_surfaces.append(
-                        SteeringSurface(
-                            node_id=node_id,
-                            module_type=module.module_type,
-                            side=side,
-                            leverage=leverage,
-                            thrust=thrust_power,
-                            lift=lift_coeff,
-                            phase_offset=phase_offset,
-                        )
+                phase_seed = int.from_bytes(node_id.encode("utf-8"), "little") % 1000
+                phase_offset = (phase_seed / 1000.0) * 6.28318
+                steering_surfaces.append(
+                    SteeringSurface(
+                        node_id=node_id,
+                        module_type=module.module_type,
+                        side=side,
+                        leverage=leverage,
+                        thrust=thrust_power,
+                        lift=lift_coeff,
+                        phase_offset=phase_offset,
                     )
+                )
+
+        # Finalize Physics Stats
+        if mass > 0:
+            com_x = weighted_pos_x / mass
+            com_y = weighted_pos_y / mass
+            # Parallel Axis Theorem: I_cm = I_origin - M * d^2
+            com_dist_sq = com_x*com_x + com_y*com_y
+            moment_of_inertia = max(0.01, moment_of_inertia_origin - mass * com_dist_sq)
+        else:
+            com_x, com_y = 0.0, 0.0
+            moment_of_inertia = 0.1
+
+        # Shift thrusters to be relative to CoM
+        final_thrusters = []
+        for t in raw_thrusters:
+            px, py = t["pos"]
+            final_thrusters.append(ThrusterData(
+                node_id=t["node_id"],
+                position=(px - com_x, py - com_y),
+                direction=t["dir"],
+                max_force=t["force"],
+                activation_cost=t["cost"],
+                type=t["type"],
+                vectoring_limit=t["vectoring"]
+            ))
 
         return BodyGraph.PhysicsAggregation(
             mass=mass,
+            center_of_mass=(com_x, com_y),
+            moment_of_inertia=moment_of_inertia,
             volume=volume,
             frontal_area=frontal_area,
             lateral_area=lateral_area,
@@ -192,6 +304,7 @@ class BodyGraph:
             tentacle_reach=tentacle_reach,
             tentacle_count=tentacle_count,
             steering_surfaces=tuple(steering_surfaces),
+            thrusters=tuple(final_thrusters)
         )
 
     @staticmethod

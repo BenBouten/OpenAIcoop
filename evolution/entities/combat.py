@@ -19,7 +19,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
     effects = lifeform.effects_manager
 
     partner = lifeform.closest_partner
-    partner_range = max(3.0, lifeform.reach * 0.6)
+    partner_range = max(10.0, lifeform.reach * settings.REPRODUCTION_DISTANCE_MULTIPLIER)
     if (
         partner
         and partner.health_now > 0
