@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import logging
 import math
-import random
 from typing import TYPE_CHECKING
 
 from evolution.config import settings
@@ -31,123 +30,24 @@ from . import ai, combat  # Gebruik aparte modules voor gedrag en interacties
 
 logger = logging.getLogger("evolution.movement")
 
-_MAX_THRUST_BEHAVIOUR_SPEED = 8.0
-_MAX_FREQUENCY_BEHAVIOUR_SPEED = 14.0
+def _command_thrust_ratio(lifeform: "Lifeform") -> float:
+    """Return how aggressively the neural controller wants to swim (0-1.5)."""
+
+    commands = getattr(lifeform, "neural_commands", {}) or {}
+    neural_ratio = commands.get("thrust_ratio")
+    if neural_ratio is None:
+        neural_ratio = getattr(lifeform, "neural_thrust_ratio", 0.0)
+
+    if not neural_ratio:
+        tail = abs(commands.get("tail_thrust", 0.0))
+        fins = abs(commands.get("left_fin_thrust", 0.0)) + abs(commands.get("right_fin_thrust", 0.0))
+        neural_ratio = tail + fins * 0.35
+
+    return max(0.0, min(1.5, float(neural_ratio)))
 
 
-def _ensure_search_vector(lifeform: "Lifeform") -> Vector2:
-    vector = getattr(lifeform, "_search_vector", None)
-    timer = getattr(lifeform, "_search_vector_timer", 0)
-    if not vector or timer <= 0:
-        angle = random.uniform(-math.pi, math.pi)
-        vector = Vector2(math.cos(angle), math.sin(angle)) or Vector2(1.0, 0.0)
-        vector = vector.normalize()
-        lifeform._search_vector = vector
-        lifeform._search_vector_timer = random.randint(45, 140)
-    else:
-        lifeform._search_vector_timer = timer - 1
-    return lifeform._search_vector
-
-
-def _apply_environment_bias(
-    lifeform: "Lifeform",
-    desired: Vector2,
-    state: "SimulationState",
-) -> Vector2:
-    world = getattr(state, "world", None)
-    if world is None:
-        return desired
-
-    vertical_adjust = 0.0
-    depth = float(lifeform.y)
-    world_height = float(getattr(world, "height", 0.0))
-    rel_buoyancy = float(getattr(lifeform, "relative_buoyancy", 0.0))
-
-    if rel_buoyancy > 0.08:
-        vertical_adjust += 0.35
-    elif rel_buoyancy < -0.08:
-        vertical_adjust -= 0.35
-
-    hunger = float(getattr(lifeform, "hunger", 0.0))
-    if hunger > settings.HUNGER_SEEK_THRESHOLD and not (
-        lifeform.closest_plant or lifeform.closest_prey
-    ):
-        vertical_adjust += 0.25
-    elif hunger < settings.HUNGER_RELAX_THRESHOLD:
-        vertical_adjust -= 0.15
-
-    margin = 150.0
-    if depth < margin:
-        vertical_adjust += 0.2
-    elif depth > world_height - lifeform.height - margin:
-        vertical_adjust -= 0.2
-
-    behavior = getattr(lifeform, "current_behavior_mode", "idle")
-    if behavior == "flee":
-        vertical_adjust -= 0.2
-    elif behavior == "hunt":
-        vertical_adjust += 0.2
-
-    if vertical_adjust:
-        adjusted = Vector2(desired.x, desired.y + vertical_adjust)
-        if adjusted.length_squared() > 0:
-            desired = adjusted.normalize()
-
-    return desired
-
-
-def _behavioral_thrust_ratio(lifeform: "Lifeform") -> float:
-    """Return how aggressively a lifeform wants to swim (0-1.4)."""
-    neural_ratio = getattr(lifeform, "neural_thrust_ratio", None)
-    if neural_ratio is not None:
-        return max(0.0, min(1.5, float(neural_ratio)))
-    mode = getattr(lifeform, "current_behavior_mode", "idle")
-    hunger = float(getattr(lifeform, "hunger", 0.0))
-    restlessness = max(0.0, min(1.0, getattr(lifeform, "restlessness", 0.5)))
-
-    base = 0.3
-    if mode == "flee":
-        base = 1.35
-    elif mode == "hunt":
-        base = 1.05
-    elif mode == "mate":
-        base = 0.9
-    elif mode == "search":
-        base = 0.78
-    elif mode == "flock":
-        base = 0.65
-    elif mode == "interact":
-        base = 0.45
-
-    if lifeform.should_seek_food():
-        hunger_boost = max(0.0, hunger - settings.HUNGER_SATIATED_THRESHOLD) / 320.0
-        base *= 1.0 + min(0.32, hunger_boost)
-
-    base *= 1.0 + restlessness * 0.12
-    return min(1.4, base)
-
-
-def _behavioral_frequency_ratio(lifeform: "Lifeform") -> float:
-    mode = getattr(lifeform, "current_behavior_mode", "idle")
-    hunger = float(getattr(lifeform, "hunger", 0.0))
-
-    base = 0.2
-    if mode == "flee":
-        base = 1.15
-    elif mode == "hunt":
-        base = 0.9
-    elif mode == "mate":
-        base = 0.72
-    elif mode == "search":
-        base = 0.62
-    elif mode == "flock":
-        base = 0.52
-    elif mode == "interact":
-        base = 0.32
-
-    if lifeform.should_seek_food():
-        base += min(0.2, max(0.0, hunger - settings.HUNGER_SATIATED_THRESHOLD) / 450.0)
-
+def _command_frequency_ratio(lifeform: "Lifeform", thrust_ratio: float) -> float:
+    base = max(0.0, min(1.0, thrust_ratio))
     return min(1.4, base)
 
 
@@ -288,38 +188,6 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     else:
         desired = desired.normalize()
 
-    if getattr(lifeform, "current_behavior_mode", "") != "neural":
-        desired = _apply_environment_bias(lifeform, desired, state)
-
-        plant_viable = lifeform.closest_plant if lifeform.prefers_plants() else None
-        prey_viable = lifeform.closest_prey if lifeform.prefers_meat() else None
-        carrion_viable = (
-            getattr(lifeform, "closest_carcass", None)
-            if lifeform.prefers_meat()
-            else None
-        )
-
-        if lifeform.should_seek_food() and not (
-            plant_viable or prey_viable or carrion_viable
-        ):
-            search_vec = _ensure_search_vector(lifeform)
-            desired = desired.lerp(search_vec, 0.35)
-            if desired.length_squared() == 0:
-                desired = search_vec
-            desired = desired.normalize()
-        elif (
-            lifeform.should_seek_partner()
-            and not lifeform.closest_partner
-            and not getattr(lifeform, "_search_partner_vector", None)
-        ):
-            search_vec = _ensure_search_vector(lifeform)
-            desired = desired.lerp(search_vec, 0.3)
-            if desired.length_squared() == 0:
-                desired = search_vec
-            desired = desired.normalize()
-        else:
-            lifeform._search_vector_timer = 0
-
     locomotion = getattr(lifeform, "locomotion_profile", None)
 
     physics_body: PhysicsBody | None = getattr(lifeform, "physics_body", None)
@@ -328,12 +196,6 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         return
 
     max_swim_speed = max(1.0, getattr(lifeform, "max_swim_speed", 120.0))
-
-    drift_bias = getattr(lifeform, "drift_preference", 0.0)
-    if drift_bias > 0 and lifeform.last_fluid_properties is not None:
-        current = lifeform.last_fluid_properties.current
-        if current.length_squared() > 0:
-            desired = desired.lerp(current.normalize(), min(0.95, drift_bias))
 
     # --------------------------------------------------
     # Physics & Thrust Calculation
@@ -346,17 +208,12 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     # 1. Determine Desired State
     # --------------------------
     
-    # Calculate behavioral intent
-    command_ratio = _behavioral_thrust_ratio(lifeform)
-    frequency_ratio = _behavioral_frequency_ratio(lifeform)
+    command_ratio = _command_thrust_ratio(lifeform)
+    frequency_ratio = _command_frequency_ratio(lifeform, command_ratio)
     
     # Update animation state (for visual oscillation of tentacles/fins)
     base_freq = 3.0
     frequency = base_freq + frequency_ratio * 5.0
-    mode = getattr(lifeform, "current_behavior_mode", "idle")
-    if mode in ("flee", "hunt"):
-        frequency *= 1.45
-        
     lifeform.thrust_phase += frequency * dt
     if lifeform.thrust_phase > 6.28318:
         lifeform.thrust_phase -= 6.28318
@@ -419,12 +276,8 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     # Tuning weights for the mixer
     k_linear = 2.0
     k_angular = 6.0 # Prioritize turning
-    
-    # Burst Mode Logic
+
     burst_multiplier = 1.0
-    mode = getattr(lifeform, "current_behavior_mode", "idle")
-    if mode in ("flee", "hunt") and lifeform.energy_now > 25.0:
-        burst_multiplier = 5.0
 
     for thruster in physics_body.thrusters:
         # Thruster properties

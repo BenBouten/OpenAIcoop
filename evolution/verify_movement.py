@@ -7,7 +7,7 @@ import os
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../")))
 
-from evolution.entities.lifeform import Lifeform, BehaviorMode
+from evolution.entities.lifeform import Lifeform
 from evolution.entities import movement, ai
 from evolution.simulation.state import SimulationState
 
@@ -85,7 +85,6 @@ def test_movement():
     creature = Lifeform(state, 500, 500, dna, 1)
     state.lifeforms.append(creature)
     
-    log(f"Initial Mode: {creature.current_behavior_mode}")
     log(f"Initial Thrust Phase: {creature.thrust_phase}")
     if hasattr(creature, "physics_body"):
         pb = creature.physics_body
@@ -94,81 +93,22 @@ def test_movement():
     else:
         log("PhysicsBody NOT FOUND")
     
-    # Simulate a few frames
+    # Simulate a few frames driven only by the neural controller
     dt = 0.016 # 60 FPS
-    for i in range(60):
+    initial_position = Vector2(creature.x, creature.y)
+    for i in range(120):
         ai.update_brain(creature, state, dt)
         movement.update_movement(creature, state, dt)
-        
-        if i % 10 == 0:
-            log(f"Frame {i}: Mode={creature.current_behavior_mode}, Speed={creature.speed:.2f}, Phase={creature.thrust_phase:.2f}, Adrenaline={creature.adrenaline_factor:.2f}")
-            
-    # Test Flee Mode (Adrenaline)
-    log("\n--- Testing Flee Mode ---")
-    creature.current_behavior_mode = BehaviorMode.FLEE
-    # Mock a threat
-    class MockThreat:
-        def __init__(self):
-            self.health_now = 100
-            self.x = 490
-            self.y = 490
-            self.rect = pygame.Rect(490, 490, 10, 10)
-            self.attack_power_now = 1000
-            self.id = "threat"
-            self.dna_id = "predator"
-            self.defence_power_now = 10
-            self.energy = 100
-            self.energy_now = 100
-            self.wounded = 0
-            
-    creature.closest_enemy = MockThreat()
-    creature.update_targets = lambda: None
-    
-    for i in range(60):
-        ai.update_brain(creature, state, dt)
-        movement.update_movement(creature, state, dt)
-        
-        if i % 10 == 0:
-             log(f"Frame {i}: Mode={creature.current_behavior_mode}, Phase={creature.thrust_phase:.2f}, Adrenaline={creature.adrenaline_factor:.2f}")
 
-    if creature.adrenaline_factor > 0.1:
-        log("SUCCESS: Adrenaline increased in Flee mode.")
-    else:
-        log("FAILURE: Adrenaline did not increase.")
+        if i % 20 == 0:
+            log(f"Frame {i}: Speed={creature.speed:.2f}, Phase={creature.thrust_phase:.2f}")
 
-    # Test Vertical Movement (Diving)
-    log("\n--- Testing Vertical Movement ---")
-    creature.current_behavior_mode = BehaviorMode.SEARCH
-    creature.closest_enemy = None
-    creature.y = 100
-    creature.x = 500
-    # Mock food at depth
-    class MockFood:
-        def __init__(self):
-            self.x = 500
-            self.y = 500
-            self.rect = pygame.Rect(500, 500, 10, 10)
-            self.resource = 100
-            self.id = "food"
-            
-    creature.closest_plant = MockFood()
-    creature.hunger = 1000 # Starving
-    
-    # Monkeypatch update_targets again to persist food
-    creature.update_targets = lambda: None
-    
-    initial_y = creature.y
-    for i in range(300):
-        ai.update_brain(creature, state, dt)
-        movement.update_movement(creature, state, dt)
-        if i % 10 == 0:
-            log(f"Frame {i}: Dir=({creature.x_direction:.2f}, {creature.y_direction:.2f}), Hunger={creature.hunger}")
-        
-    log(f"Initial Y: {initial_y}, Final Y: {creature.y}")
-    if creature.y > initial_y + 10:
-        log("SUCCESS: Creature dived towards food.")
+    displacement = Vector2(creature.x, creature.y) - initial_position
+    log(f"Neural displacement: {displacement.length():.2f} (dx={displacement.x:.2f}, dy={displacement.y:.2f})")
+    if displacement.length() > 1.0:
+        log("SUCCESS: Neural controller produced movement without scripted behavior.")
     else:
-        log("FAILURE: Creature did not dive.")
+        log("FAILURE: Neural controller did not move the creature.")
 
 if __name__ == "__main__":
     test_movement()
