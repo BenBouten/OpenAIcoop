@@ -83,6 +83,9 @@ MODULE_SPRITE_SCALE = float(os.getenv("EVOLUTION_MODULE_SPRITE_SCALE", "0.22"))
 MODULE_SPRITE_MIN_PX = float(os.getenv("EVOLUTION_MODULE_SPRITE_MIN_PX", "6.0"))
 MODULE_SPRITE_MIN_LENGTH = float(os.getenv("EVOLUTION_MODULE_SPRITE_MIN_LENGTH", "4.0"))
 MODULE_SPRITE_MIN_HEIGHT = float(os.getenv("EVOLUTION_MODULE_SPRITE_MIN_HEIGHT", "4.0"))
+THRUST_SCALE_EXPONENT = float(os.getenv("EVOLUTION_THRUST_SCALE_EXPONENT", "0.5"))
+THRUST_BASE_MULTIPLIER = float(os.getenv("EVOLUTION_THRUST_BASE_MULTIPLIER", "2.0"))
+DRAG_COEFFICIENT_MULTIPLIER = float(os.getenv("EVOLUTION_DRAG_COEFFICIENT_MULTIPLIER", "0.15"))
 MIN_MATURITY = 50
 MAX_MATURITY = 150
 VISION_MIN = 10
@@ -105,6 +108,7 @@ HUNGER_CRITICAL_THRESHOLD = 520
 ENERGY_REPRODUCTION_THRESHOLD = 0.68
 PLANT_BITE_NUTRITION_TARGET = 18.0
 PLANT_HUNGER_SATIATION_PER_NUTRITION = 2.4
+REPRODUCTION_DISTANCE_MULTIPLIER = float(os.getenv("EVOLUTION_REPRODUCTION_DISTANCE_MULTIPLIER", "2.5"))
 
 WANDER_JITTER_DEGREES = 28
 WANDER_INTERVAL_MS = 700
@@ -170,6 +174,8 @@ class SimulationSettings:
     MAX_MATURITY: int = MAX_MATURITY
     VISION_MIN: int = VISION_MIN
     VISION_MAX: int = VISION_MAX
+    REPRODUCTION_DISTANCE_MULTIPLIER: float = REPRODUCTION_DISTANCE_MULTIPLIER
+    DNA_CHANGE_THRESHOLD: float = DNA_CHANGE_THRESHOLD
 
     def with_updates(self, overrides: Dict[str, Any]) -> "SimulationSettings":
         merged = asdict(self)
@@ -385,6 +391,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--module-sprite-min-px", type=float, help="Minimum pixel span for module sprites")
     parser.add_argument("--module-sprite-min-length", type=float, help="Minimum pixel length for modules")
     parser.add_argument("--module-sprite-min-height", type=float, help="Minimum pixel height for modules")
+    parser.add_argument("--thrust-scale-exponent", type=float, help="Exponent for scaling thrust with size")
+    parser.add_argument("--thrust-base-multiplier", type=float, help="Base multiplier for thrust")
+    parser.add_argument("--drag-coefficient-multiplier", type=float, help="Multiplier for drag coefficient")
+    parser.add_argument("--reproduction-distance-multiplier", type=float, help="Multiplier for reproduction distance threshold")
+    parser.add_argument("--dna-change-threshold", type=float, help="Threshold for creating new DNA ID")
     parser.add_argument(
         "--thrust-scale-exponent",
         type=float,

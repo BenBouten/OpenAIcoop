@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Tuple
 
-from ..body.body_graph import BodyGraph, SteeringSurface
+from ..body.body_graph import BodyGraph, SteeringSurface, ThrusterData
 
 
 @dataclass(frozen=True)
@@ -13,6 +13,8 @@ class PhysicsBody:
     """Compact representation of hydrodynamic properties for simulation."""
 
     mass: float
+    center_of_mass: Tuple[float, float]
+    moment_of_inertia: float
     volume: float
     density: float
     frontal_area: float
@@ -31,6 +33,7 @@ class PhysicsBody:
     tentacle_reach: float = 0.0
     tentacle_count: int = 0
     steering_surfaces: Tuple[SteeringSurface, ...] = ()
+    thrusters: Tuple[ThrusterData, ...] = ()
     vectoring_limit: float = 18.0
 
     def propulsion_acceleration(self, effort: float) -> float:
@@ -63,6 +66,8 @@ def build_physics_body(graph: BodyGraph) -> PhysicsBody:
     vectoring_limit = 14.0 + min(10.0, aggregation.lift_modules * 1.2)
     return PhysicsBody(
         mass=mass,
+        center_of_mass=aggregation.center_of_mass,
+        moment_of_inertia=aggregation.moment_of_inertia,
         volume=volume,
         density=density,
         frontal_area=aggregation.frontal_area,
@@ -81,5 +86,6 @@ def build_physics_body(graph: BodyGraph) -> PhysicsBody:
         tentacle_reach=aggregation.tentacle_reach,
         tentacle_count=aggregation.tentacle_count,
         steering_surfaces=aggregation.steering_surfaces,
+        thrusters=aggregation.thrusters,
         vectoring_limit=vectoring_limit,
     )

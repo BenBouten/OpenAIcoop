@@ -60,13 +60,35 @@ class ModularLifeformRenderer:
         )
         base_width = max(1, getattr(lifeform, "base_width", lifeform.width))
         base_height = max(1, getattr(lifeform, "base_height", lifeform.height))
-        # Increase margin significantly to allow for long tentacles (e.g. 6.0 length * 36 scale ~ 200px)
-        margin = int(self.pixel_scale * 8.0) 
+        
+        # Calculate dynamic margin based on morphology
+        # Default small margin for standard creatures
+        margin_factor = 1.5
+        
+        # Check for tentacles or long limbs in the graph
+        has_long_limbs = False
+        if state.graph:
+            for module in state.graph.iter_modules():
+                m_type = getattr(module, "module_type", "")
+                if m_type in ("tentacle", "tail", "propulsion"):
+                    has_long_limbs = True
+                    # Tentacles can be very long, check size if possible, otherwise assume large
+                    margin_factor = max(margin_factor, 8.0)
+                    break
+                elif m_type == "limb":
+                    margin_factor = max(margin_factor, 3.0)
+        
+        margin = int(self.pixel_scale * margin_factor)
         surf_width = base_width + margin * 2
         surf_height = base_height + margin * 2
-        surface = pygame.Surface(
-            (surf_width, surf_height), flags=pygame.SRCALPHA, depth=32
-        ).convert_alpha()
+        
+        surface = state.cached_surface
+        if surface is None or surface.get_width() != surf_width or surface.get_height() != surf_height:
+            surface = pygame.Surface(
+                (surf_width, surf_height), flags=pygame.SRCALPHA, depth=32
+            ).convert_alpha()
+            state.cached_surface = surface
+            
         surface.fill((0, 0, 0, 0))
         renderer = _get_renderer(surface, lifeform.body_color)
         renderer.set_debug_overlays(False)

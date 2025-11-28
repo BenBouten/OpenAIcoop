@@ -232,7 +232,7 @@ class Lifeform:
         self.size = 0.0
         self.speed = 0.0
         self.angle = 0.0
-        self.angular_velocity = max(0.05, self.turn_rate * 0.85)
+        self.angular_velocity = 0.0 # Physics state, starts at rest
 
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
@@ -916,6 +916,8 @@ class Lifeform:
             if getattr(module, "module_type", "") == "mouth":
                 bite_damage += getattr(module, "bite_damage", 0.0)
 
+        bite_bonus = max(0.0, self.bite_force * 0.35)
+
         tentacle_control = (
             self.tentacle_grip_bonus * 0.35
             + self.tentacle_reach * 0.08
@@ -925,13 +927,14 @@ class Lifeform:
         self.grapple_power = max(0.0, tentacle_control)
 
         self.attack_power = max(
-            1.0, thrust_factor + grip_factor + mass_impact + bite_damage + self.grapple_power
+            1.0,
+            thrust_factor + grip_factor + mass_impact + bite_damage + bite_bonus + self.grapple_power,
         )
 
         # Defence: Integrity (health) + Mass (bulk) + Density (armor)
         integrity_factor = self.health * 0.1
         bulk_factor = self.physics_body.mass * 0.2
-        armor_factor = self.physics_body.density * 5.0
+        armor_factor = self.physics_body.density * 5.0 + self.tissue_hardness * 4.0
         self.defence_power = max(
             1.0, integrity_factor + bulk_factor + armor_factor + self.grapple_power * 0.6
         )

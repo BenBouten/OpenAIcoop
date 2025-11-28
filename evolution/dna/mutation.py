@@ -134,10 +134,16 @@ def mutate_adjust_size(
     node = graph.get_node(gene_id)
 
     current_size = tuple(node.module.size)
-    axis = rng.randrange(3)
-    delta = rng.uniform(-0.2, 0.2)
-    mutated_size = list(current_size)
-    mutated_size[axis] = max(0.2, round(mutated_size[axis] * (1.0 + delta), 3))
+    
+    # 50% chance to scale uniformly (all axes), 50% chance to scale a single axis
+    if rng.random() < 0.5:
+        delta = rng.uniform(-0.2, 0.2)
+        mutated_size = [max(0.2, round(s * (1.0 + delta), 3)) for s in current_size]
+    else:
+        axis = rng.randrange(3)
+        delta = rng.uniform(-0.2, 0.2)
+        mutated_size = list(current_size)
+        mutated_size[axis] = max(0.2, round(mutated_size[axis] * (1.0 + delta), 3))
 
     genes = dict(genome.genes)
     gene = genes[gene_id]
