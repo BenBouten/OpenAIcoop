@@ -79,6 +79,10 @@ class SeaweedStrand:
 
     surface: pygame.Surface = field(init=False, repr=False)
     rect: pygame.Rect = field(init=False)
+    width: int = field(init=False)
+    height: int = field(init=False)
+    x: float = field(init=False)
+    y: float = field(init=False)
     resource: float = field(init=False)
     _rng: random.Random = field(init=False, repr=False)
     _dirty: bool = field(init=False, repr=False)
@@ -108,6 +112,10 @@ class SeaweedStrand:
         self.cells = cell_map
         self.surface = pygame.Surface((0, 0), pygame.SRCALPHA)
         self.rect = pygame.Rect(0, 0, 0, 0)
+        self.width = 0
+        self.height = 0
+        self.x = 0.0
+        self.y = 0.0
         self._base_rect = self.rect
         self.resource = 0.0
         self._dirty = True
@@ -139,6 +147,10 @@ class SeaweedStrand:
     def _update_rect(self) -> None:
         if not self.cells:
             self.rect = pygame.Rect(0, 0, 0, 0)
+            self.width = 0
+            self.height = 0
+            self.x = 0.0
+            self.y = 0.0
             self._base_rect = self.rect
             return
         min_x = min(cell[0] for cell in self.cells)
@@ -153,6 +165,27 @@ class SeaweedStrand:
         )
         self._base_rect = base
         self.rect = base.move(int(self._offset.x), int(self._offset.y))
+        self.width = self.rect.width
+        self.height = self.rect.height
+        self.x = float(self.rect.x)
+        self.y = float(self.rect.y)
+
+    def set_size(self) -> None:
+        """Compatibility helper used by the simulation bootstrap."""
+        if not self.cells:
+            self.rect = pygame.Rect(0, 0, 0, 0)
+            self.width = 0
+            self.height = 0
+            self.x = 0.0
+            self.y = 0.0
+            self._base_rect = self.rect
+            self.surface = pygame.Surface((0, 0), pygame.SRCALPHA)
+            self._dirty = False
+            return
+
+        self._update_rect()
+        # Surface will be resized lazily on the next draw call.
+        self._dirty = True
 
     def set_size(self) -> None:
         """Compatibility helper used by the simulation bootstrap."""
@@ -176,6 +209,10 @@ class SeaweedStrand:
         self._sway_phase += STRAND_SWAY_SPEED * dt
         self._offset = Vector2(props.current.x * 0.1 + sway, props.current.y * 0.05)
         self.rect = self._base_rect.move(int(self._offset.x), int(self._offset.y))
+        self.width = self.rect.width
+        self.height = self.rect.height
+        self.x = float(self.rect.x)
+        self.y = float(self.rect.y)
 
     def draw(self, surface: pygame.Surface) -> None:
         if not self.cells:
