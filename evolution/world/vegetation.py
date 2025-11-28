@@ -557,20 +557,29 @@ def _generate_seed_cells(
     min_cells: int,
     max_cells: int,
     rng: Optional[random.Random] = None,
+    allowed_biomes: Optional[Set[str]] = None,
 ) -> Optional[Set[GridCell]]:
     rng = rng or random.Random()
     cell_size = MossCluster.CELL_SIZE
     max_attempts = 240
     attempts = 0
 
+    seed_mask: Optional[pygame.Rect] = None
+
     while attempts < max_attempts:
         attempts += 1
-        gx = rng.randrange(0, world.width // cell_size)
-        gy = rng.randrange(0, world.height // cell_size)
+        origin = _select_seed_origin(world, rng, cell_size, allowed_biomes)
+        if origin is not None:
+            gx, gy, seed_mask = origin
+        else:
+            gx = rng.randrange(0, world.width // cell_size)
+            gy = rng.randrange(0, world.height // cell_size)
         if (gx, gy) in existing_cells:
             continue
         rect = pygame.Rect(gx * cell_size, gy * cell_size, cell_size, cell_size)
         if world.is_blocked(rect):
+            continue
+        if seed_mask and not seed_mask.contains(rect):
             continue
 
         cells: Set[GridCell] = {(gx, gy)}
@@ -596,6 +605,8 @@ def _generate_seed_cells(
                 continue
             if world.is_blocked(candidate_rect):
                 continue
+            if seed_mask and not seed_mask.contains(candidate_rect):
+                continue
             cells.add(candidate)
             stagnation = 0
 
@@ -603,6 +614,33 @@ def _generate_seed_cells(
             return cells
 
     return None
+
+
+def _select_seed_origin(
+    world: "World",
+    rng: random.Random,
+    cell_size: int,
+    allowed_biomes: Optional[Set[str]] = None,
+) -> Optional[Tuple[int, int, pygame.Rect]]:
+    """Choose a seed cell constrained to vegetation masks and biomes."""
+
+    if not getattr(world, "vegetation_masks", None):
+        return None
+    masks = list(world.vegetation_masks)
+    if allowed_biomes:
+        filtered: List[pygame.Rect] = []
+        for mask in masks:
+            biome = world.get_biome_at(mask.centerx, mask.centery)
+            if biome and biome.name in allowed_biomes:
+                filtered.append(mask)
+        if filtered:
+            masks = filtered
+    if not masks:
+        return None
+    mask = rng.choice(masks)
+    px = rng.randint(mask.left, max(mask.left, mask.right - cell_size))
+    py = rng.randint(mask.top, max(mask.top, mask.bottom - cell_size))
+    return px // cell_size, py // cell_size, mask
 
 
 def create_cluster_from_brush(
@@ -673,6 +711,7 @@ def create_initial_clusters(
             min_cells=min_cells,
             max_cells=max_cells,
             rng=rng,
+            allowed_biomes={"Surface", "Sunlit"},
         )
         if not cells:
             break
@@ -688,4 +727,5 @@ __all__ = [
     "MossCluster",
     "create_initial_clusters",
     "create_cluster_from_brush",
+    "create_initial_strands",
 ]
