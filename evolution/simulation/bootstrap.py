@@ -9,7 +9,6 @@ from typing import Callable, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 from ..config import settings
 from ..body.body_graph import BodyGraph
-from ..body.modules import catalogue_jellyfish_modules
 from ..dna.blueprints import generate_modular_blueprint
 from ..dna.development import generate_development_plan
 from ..dna.factory import build_body_graph, serialize_body_graph
@@ -104,18 +103,21 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
     state.dna_profiles.clear()
     state.dna_home_biome.clear()
 
-    base_keys = list(base_form_keys())
+    base_keys = _select_starter_base_keys()
+    additional_keys = list(base_form_keys())
+    base_keys = base_keys[:settings.STARTER_BASE_FORM_LIMIT]
+
+    # Limit the number of profiles to the starter limit
+    profile_count = settings.STARTER_BASE_FORM_LIMIT
     
-    # Ensure we have at least one of each base form if N_DNA_PROFILES allows
-    for i in range(settings.N_DNA_PROFILES):
+    for i in range(profile_count):
         dna_id = i
-        
-        # Cycle through base forms for the first N, then random
+
         if i < len(base_keys):
             base_key = base_keys[i]
         else:
-            base_key = random.choice(base_keys)
-            
+            base_key = random.choice(additional_keys)
+
         base_def = BASE_FORMS[base_key]
         
         # Use base form defaults for diet if possible, or randomize based on form
@@ -224,14 +226,15 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             home = None
         state.dna_home_biome[dna_profile["dna_id"]] = home
 
-    jelly_profile = _build_jellyfish_profile(len(state.dna_profiles))
-    state.dna_profiles.append(jelly_profile)
-
-    if world.biomes:
-        jelly_home = determine_home_biome(jelly_profile, world.biomes)
-    else:
-        jelly_home = None
-    state.dna_home_biome[jelly_profile["dna_id"]] = jelly_home
+    # Jellyfish profile is no longer needed if we want strict starter limits
+    # jelly_profile = _build_jellyfish_profile(len(state.dna_profiles))
+    # state.dna_profiles.append(jelly_profile)
+    #
+    # if world.biomes:
+    #     jelly_home = determine_home_biome(jelly_profile, world.biomes)
+    # else:
+    #     jelly_home = None
+    # state.dna_home_biome[jelly_profile["dna_id"]] = jelly_home
 
 
 def spawn_lifeforms(state: SimulationState, world: World) -> None:
@@ -459,44 +462,11 @@ def _normalize(value: float, minimum: float, maximum: float) -> float:
     return max(0.0, min(1.0, (value - minimum) / (maximum - minimum)))
 
 
-def _build_jellyfish_profile(dna_id: int) -> dict:
-    """Seed a bell-and-tentacle drifter that always spawns at startup."""
 
-    rng = random.Random()
-    modules = catalogue_jellyfish_modules()
-    graph = BodyGraph("bell_core", modules["bell_core"])
-    graph.add_module("bell_siphon", modules["bell_siphon"], "bell_core", "siphon_nozzle")
-    graph.add_module("bell_sensor", modules["bell_sensor"], "bell_core", "umbrella_sensor")
-    graph.add_module("tentacle_front", modules["tentacle_front"], "bell_core", "tentacle_socket_front")
-    graph.add_module("tentacle_left", modules["tentacle_left"], "bell_core", "tentacle_socket_left")
-    graph.add_module("tentacle_right", modules["tentacle_right"], "bell_core", "tentacle_socket_right")
-    graph.add_module("tentacle_rear", modules["tentacle_rear"], "bell_core", "tentacle_socket_rear")
 
-    genome = serialize_body_graph(graph).to_dict()
 
-    return {
-        "dna_id": dna_id,
-        "width": rng.randint(settings.MIN_WIDTH + 1, settings.MAX_WIDTH - 2),
-        "height": rng.randint(settings.MIN_HEIGHT + 1, settings.MAX_HEIGHT - 1),
-        "color": (
-            rng.randint(120, 220),
-            rng.randint(160, 255),
-            rng.randint(180, 255),
-        ),
-        "health": rng.randint(70, 130),
-        "maturity": rng.randint(settings.MIN_MATURITY + 40, settings.MAX_MATURITY - 30),
-        "vision": rng.randint(settings.VISION_MIN + 10, settings.VISION_MAX - 6),
-        "defence_power": rng.randint(22, 60),
-        "attack_power": rng.randint(12, 40),
-        "energy": rng.randint(90, 120),
-        "longevity": rng.randint(2200, 5200),
-        "diet": "omnivore",
-        "social": rng.uniform(0.35, 0.8),
-        "boid_tendency": rng.uniform(0.35, 0.85),
-        "risk_tolerance": rng.uniform(0.35, 0.75),
-        "restlessness": rng.uniform(0.28, 0.62),
-        "morphology": MorphologyGenotype.random().to_dict(),
-        "development": generate_development_plan("omnivore"),
-        "genome": genome,
-        "guaranteed_spawn": True,
-    }
+def _select_starter_base_keys() -> List[str]:
+    from ..dna.base_forms import base_form_keys
+
+    keys = list(base_form_keys())
+    return keys[:2]

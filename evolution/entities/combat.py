@@ -167,7 +167,7 @@ def resolve_close_interactions(lifeform: "Lifeform") -> None:
                     lifeform.state.carcasses.remove(carcass)
 
     partner = lifeform.closest_partner
-    partner_range = max(3.0, lifeform.reach * 0.6)
+    partner_range = max(10.0, lifeform.reach * settings.REPRODUCTION_DISTANCE_MULTIPLIER)
     if (
         partner
         and partner.health_now > 0

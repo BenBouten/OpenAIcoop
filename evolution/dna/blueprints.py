@@ -113,12 +113,7 @@ def _attach_module(
     return gene_id
 
 
-def _seed_core_structure(genes: Dict[str, ModuleGene]) -> Dict[str, str]:
-    core_id = "core"
-    genes[core_id] = ModuleGene(core_id, "core", {})
-    head_id = _attach_module(genes, "head", core_id, "head_socket")
-    thruster_id = _attach_module(genes, "propulsion", core_id, "ventral_core")
-    return {"core": core_id, "head": head_id, "thrusters": thruster_id}
+
 
 
 def generate_modular_blueprint(
@@ -134,22 +129,19 @@ def generate_modular_blueprint(
 
     # Default to a random base form if none provided
     if not base_form:
-        base_form = rng.choice(["streamliner", "drifter", "burrower", "tentacle_core", "bastion"])
+        # Weighted choice favoring simple starters
+        choices = ["starter_swimmer", "starter_drifter"]
+        weights = [0.5, 0.5]
+        base_form = rng.choices(choices, weights=weights, k=1)[0]
 
     # Dispatch to specific builders
-    if base_form == "drifter":
-        _build_drifter(genes, diet, rng)
-    elif base_form == "burrower":
-        _build_burrower(genes, diet, rng)
-    elif base_form == "streamliner":
-        _build_streamliner(genes, diet, rng)
-    elif base_form == "tentacle_core":
-        _build_tentacle_core(genes, diet, rng)
-    elif base_form == "bastion":
-        _build_bastion(genes, diet, rng)
+    if base_form == "starter_swimmer":
+        _build_starter_swimmer(genes, diet, rng)
+    elif base_form == "starter_drifter":
+        _build_starter_drifter(genes, diet, rng)
     else:
-        # Fallback to generic streamliner-ish
-        _build_streamliner(genes, diet, rng)
+        # Fallback to starter swimmer
+        _build_starter_swimmer(genes, diet, rng)
 
     # Calculate nerve load and constraints
     estimated_load = 0.0
@@ -164,118 +156,49 @@ def generate_modular_blueprint(
     return genome.to_dict()
 
 
-def _build_drifter(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
-    """Jellyfish-like: Bell core, hanging tentacles."""
+def _build_starter_swimmer(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
+    """Simple fish-like starter: Scaled down Core, Head, 2 Fins, Jet."""
     core_id = "core"
-    # Use RoundCore for Drifter for a more compact, jelly-like body
-    genes[core_id] = ModuleGene(core_id, "round_core", {"variant": "gelatinous"})
+    # Use TrunkCore but scaled down
+    genes[core_id] = ModuleGene(core_id, "core", {"size_scale": 0.4})
     
-    # Bell / Umbrella
-    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "dome"})
-    
-    # Hanging tentacles from ventral
-    tentacle_count = rng.randint(4, 8)
-    for i in range(tentacle_count):
-        # RoundCore has ventral_socket and radial slots.
-        # For a drifter, we want them hanging down.
-        # We can attach one main chain to ventral, and others to radials but angled down?
-        # Or just attach to radials.
-        
-        slot = "ventral_socket" if i == 0 else f"radial_{((i-1)%4)+1}"
-        
-        # Use "tentacle" module type for TentacleLimb
-        root = _attach_module(genes, "tentacle", core_id, slot, parameters={"variant": "tentacle"})
-        _random_limb_chain(genes, root, "distal_tip", rng, length_bias=3, module_type="tentacle")
-
-    # Sensors on rim (head)
-    _attach_sensors(genes, head_id, ["cranial_sensor"], diet, rng)
-    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
-
-def _build_burrower(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
-    """Worm-like: Segmented chain."""
-    core_id = "core"
-    genes[core_id] = ModuleGene(core_id, "core", {"variant": "segmented"})
-    
-    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "conical"})
+    # Head
+    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "simple", "size_scale": 0.5})
     _attach_sensors(genes, head_id, ["cranial_sensor"], diet, rng)
     _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
     
-    # Long chain of segments
-    segments = rng.randint(4, 8)
-    current_parent = core_id
-    current_slot = "tail_socket" # Assuming core has a tail socket
+    # Propulsion: Jet on tail
+    _attach_module(genes, "propulsion", core_id, "ventral_core", parameters={"size_scale": 0.5})
     
-    # We need to ensure core has a tail socket or similar. 
-    # The default core usually has 'ventral_core', 'head_socket', 'lateral_mount_left/right'.
-    # Let's use 'ventral_core' as the "back" for now, or assume a 'tail' slot exists.
-    # If not, we chain from ventral.
-    
-    last_id = core_id
-    for i in range(segments):
-        seg_id = _next_gene_id(f"segment_{i}", genes)
-        genes[seg_id] = ModuleGene(seg_id, "propulsion", {}, parent=last_id, slot="ventral_core" if i==0 else "tail_socket")
-        # Add small legs/bristles
-        if rng.random() < 0.7:
-            _attach_module(genes, "limb", seg_id, "lateral_mount_left", parameters={"variant": "bristle"})
-            _attach_module(genes, "limb", seg_id, "lateral_mount_right", parameters={"variant": "bristle"})
-        last_id = seg_id
+    # Stability: Two side fins
+    _attach_module(genes, "limb", core_id, "lateral_mount_left", parameters={"variant": "fin", "size_scale": 0.4})
+    _attach_module(genes, "limb", core_id, "lateral_mount_right", parameters={"variant": "fin", "size_scale": 0.4})
 
 
-def _build_streamliner(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
-    """Fish-like: Head, Core, Tail, Fins."""
-    anchors = _seed_core_structure(genes)
-    core_id = anchors["core"]
-    head_id = anchors["head"]
-    thruster_id = anchors["thrusters"]
+def _build_starter_drifter(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
+    """Simple jellyfish-like starter: Scaled down Core, Head, Hanging Tentacles."""
+    core_id = "core"
+    # Use RoundCore scaled down
+    genes[core_id] = ModuleGene(core_id, "round_core", {"variant": "gelatinous", "size_scale": 0.4})
     
-    # Fins
-    _attach_module(genes, "limb", core_id, "lateral_mount_left", parameters={"variant": "fin"})
-    _attach_module(genes, "limb", core_id, "lateral_mount_right", parameters={"variant": "fin"})
-    
-    # Dorsal fin
-    _attach_module(genes, "limb", core_id, "dorsal_mount", parameters={"variant": "fin_dorsal"})
-    
-    # Sensors
-    # Sensors
+    # Head
+    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "simple", "size_scale": 0.5})
     _attach_sensors(genes, head_id, ["cranial_sensor"], diet, rng)
     _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
-
-def _build_tentacle_core(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
-    """Octopus-like: Central core, radial arms."""
-    core_id = "core"
-    # Use RoundCore for spherical body
-    genes[core_id] = ModuleGene(core_id, "round_core", {"variant": "spherical"})
-    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "bulbous"})
-    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
     
-    # Arms
-    arm_count = rng.randint(4, 8)
-    for i in range(arm_count):
-        # Use RoundCore's radial slots
-        slot = f"radial_{(i%4)+1}"
-        
-        # Use "tentacle" module type
-        arm_root = _attach_module(genes, "tentacle", core_id, slot, parameters={"variant": "tentacle"})
-        _random_limb_chain(genes, arm_root, "distal_tip", rng, length_bias=3, module_type="tentacle")
+    # Propulsion/Drift: Hanging tentacles
+    # RoundCore has radial slots.
+    
+    # Attach tentacles to radials
+    for i in range(1, 4):
+        slot = f"radial_{i}"
+        _attach_module(genes, "tentacle", core_id, slot, parameters={"variant": "tentacle", "size_scale": 0.3})
+    
+    # And one on ventral
+    _attach_module(genes, "tentacle", core_id, "ventral_socket", parameters={"variant": "tentacle", "size_scale": 0.4})
 
 
-def _build_bastion(genes: Dict[str, ModuleGene], diet: str, rng: random.Random) -> None:
-    """Crab/Turtle-like: Armored core, legs."""
-    core_id = "core"
-    genes[core_id] = ModuleGene(core_id, "core", {"variant": "armored"})
-    genes[core_id] = ModuleGene(core_id, "core", {"variant": "armored"})
-    head_id = _attach_module(genes, "head", core_id, "head_socket", parameters={"variant": "armored_visored"})
-    _attach_mouth(genes, head_id, "mouth_socket", diet, rng)
-    
-    # Shell - represented as rigid limbs/plates
-    _attach_module(genes, "limb", core_id, "dorsal_mount", parameters={"variant": "shell_plate"})
-    
-    # Legs
-    _attach_module(genes, "limb", core_id, "lateral_mount_left", parameters={"variant": "leg_armored"})
-    _attach_module(genes, "limb", core_id, "lateral_mount_right", parameters={"variant": "leg_armored"})
-    
-    # Tail shield
-    _attach_module(genes, "limb", core_id, "ventral_core", parameters={"variant": "tail_plate"})
+
 
 
 def _attach_sensors(genes: Dict[str, ModuleGene], parent: str, slots: Sequence[str], diet: str, rng: random.Random) -> None:
@@ -302,7 +225,6 @@ def _attach_mouth(genes: Dict[str, ModuleGene], parent: str, slot: str, diet: st
     # _attach_module doesn't check slot existence in the gene dict, only when building graph.
     # So it's safe to add the gene.
     _attach_module(genes, "mouth", parent, slot, parameters={"jaw_type": jaw_type})
-
 
 
 def _random_limb_chain(

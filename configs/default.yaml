@@ -18,3 +18,8 @@ log_directory: "logs"
 debug_log_file: "simulation_debug.log"
 debug_log_level: "INFO"
 use_bodygraph_size: true
+thrust_scale_exponent: 0.5
+thrust_base_multiplier: 6.0
+drag_coefficient_multiplier: 0.15
+reproduction_distance_multiplier: 2.5
+dna_change_threshold: 0.6

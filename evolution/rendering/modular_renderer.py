@@ -95,6 +95,7 @@ class ModularRendererState:
     torso_color: Color
     poses: Dict[str, AnimatedModule] = field(default_factory=dict)
     dirty: bool = True
+    cached_surface: Optional[Surface] = None
 
     def refresh(self) -> None:
         if not self.dirty:

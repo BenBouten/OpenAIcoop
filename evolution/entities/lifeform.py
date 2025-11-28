@@ -221,7 +221,7 @@ class Lifeform:
         self.size = 0.0
         self.speed = 0.0
         self.angle = 0.0
-        self.angular_velocity = max(0.05, self.turn_rate * 0.85)
+        self.angular_velocity = 0.0 # Physics state, starts at rest
 
         self.rect = pygame.Rect(int(self.x), int(self.y), self.width, self.height)
 
