@@ -116,17 +116,6 @@ class Lifeform:
         self.lum_intensity = 0.0
         self.lum_pattern_mod = 0.0
 
-        # Feeding traits
-        self.digest_efficiency_plants = float(
-            dna_profile.get("digest_efficiency_plants", 1.0)
-        )
-        self.digest_efficiency_meat = float(dna_profile.get("digest_efficiency_meat", 1.0))
-        self.bite_force = float(
-            dna_profile.get("bite_force", settings.PLANT_BITE_NUTRITION_TARGET)
-        )
-        self.tissue_hardness = float(dna_profile.get("tissue_hardness", 0.6))
-        self.bite_intent = 0.0
-
         # Derive physical stats from the body graph
         self._derive_stats_from_body()
 

@@ -22,10 +22,6 @@ _FLOAT_FIELDS = {
     "MODULE_SPRITE_MIN_LENGTH",
     "MODULE_SPRITE_MIN_HEIGHT",
     "THRUST_SCALE_EXPONENT",
-    "THRUST_BASE_MULTIPLIER",
-    "DRAG_COEFFICIENT_MULTIPLIER",
-    "REPRODUCTION_DISTANCE_MULTIPLIER",
-    "DNA_CHANGE_THRESHOLD",
 }
 
 WORLD_WIDTH = DEFAULTS["WORLD_WIDTH"]
@@ -117,6 +113,11 @@ REPRODUCTION_DISTANCE_MULTIPLIER = float(os.getenv("EVOLUTION_REPRODUCTION_DISTA
 WANDER_JITTER_DEGREES = 28
 WANDER_INTERVAL_MS = 700
 
+# Exponent applied when scaling thruster output relative to control signals.
+# A value of 1.0 preserves linear scaling, while values >1.0 emphasize strong
+# thrust commands and values <1.0 smooth them out.
+THRUST_SCALE_EXPONENT = float(os.getenv("EVOLUTION_THRUST_SCALE_EXPONENT", "1.0"))
+
 STUCK_FRAMES_THRESHOLD = 18
 ESCAPE_OVERRIDE_FRAMES = 24
 ESCAPE_FORCE = 1.8
@@ -167,6 +168,7 @@ class SimulationSettings:
     MODULE_SPRITE_MIN_PX: float = MODULE_SPRITE_MIN_PX
     MODULE_SPRITE_MIN_LENGTH: float = MODULE_SPRITE_MIN_LENGTH
     MODULE_SPRITE_MIN_HEIGHT: float = MODULE_SPRITE_MIN_HEIGHT
+    THRUST_SCALE_EXPONENT: float = THRUST_SCALE_EXPONENT
     INITIAL_BASEFORM_COUNT: int = INITIAL_BASEFORM_COUNT
     MIN_MATURITY: int = MIN_MATURITY
     MAX_MATURITY: int = MAX_MATURITY
@@ -199,6 +201,7 @@ _ENV_VARS: Dict[str, str] = {
     "MODULE_SPRITE_MIN_PX": "EVOLUTION_MODULE_SPRITE_MIN_PX",
     "MODULE_SPRITE_MIN_LENGTH": "EVOLUTION_MODULE_SPRITE_MIN_LENGTH",
     "MODULE_SPRITE_MIN_HEIGHT": "EVOLUTION_MODULE_SPRITE_MIN_HEIGHT",
+    "THRUST_SCALE_EXPONENT": "EVOLUTION_THRUST_SCALE_EXPONENT",
     "INITIAL_BASEFORM_COUNT": "EVOLUTION_INITIAL_BASEFORMS",
 }
 
@@ -220,10 +223,6 @@ def _coerce(value: str, field: str) -> Any:
         "MODULE_SPRITE_MIN_LENGTH",
         "MODULE_SPRITE_MIN_HEIGHT",
         "THRUST_SCALE_EXPONENT",
-        "THRUST_BASE_MULTIPLIER",
-        "DRAG_COEFFICIENT_MULTIPLIER",
-        "REPRODUCTION_DISTANCE_MULTIPLIER",
-        "DNA_CHANGE_THRESHOLD",
     }:
         return float(value)
     return int(value)
@@ -289,10 +288,7 @@ _NUMERIC_BOUNDS: Dict[str, tuple[float, float]] = {
     "MODULE_SPRITE_MIN_PX": (1.0, 64.0),
     "MODULE_SPRITE_MIN_LENGTH": (1.0, 128.0),
     "MODULE_SPRITE_MIN_HEIGHT": (1.0, 128.0),
-    "THRUST_SCALE_EXPONENT": (0.1, 2.0),
-    "THRUST_BASE_MULTIPLIER": (0.1, 100.0),
-    "DRAG_COEFFICIENT_MULTIPLIER": (0.01, 10.0),
-    "DNA_CHANGE_THRESHOLD": (0.0, 1.0),
+    "THRUST_SCALE_EXPONENT": (0.1, 5.0),
     "MIN_MATURITY": (1, 200),
     "MAX_MATURITY": (1, 400),
     "VISION_MIN": (1, 1000),
@@ -401,6 +397,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--reproduction-distance-multiplier", type=float, help="Multiplier for reproduction distance threshold")
     parser.add_argument("--dna-change-threshold", type=float, help="Threshold for creating new DNA ID")
     parser.add_argument(
+        "--thrust-scale-exponent",
+        type=float,
+        help="Exponent to apply when mapping thrust intent to propulsion output",
+    )
+    parser.add_argument(
         "--use-bodygraph-size",
         dest="use_bodygraph_size",
         action="store_true",
@@ -443,10 +444,6 @@ def load_runtime_settings(args: Sequence[str] | None = None, env: Mapping[str, s
         "MODULE_SPRITE_MIN_LENGTH": parsed.module_sprite_min_length,
         "MODULE_SPRITE_MIN_HEIGHT": parsed.module_sprite_min_height,
         "THRUST_SCALE_EXPONENT": parsed.thrust_scale_exponent,
-        "THRUST_BASE_MULTIPLIER": parsed.thrust_base_multiplier,
-        "DRAG_COEFFICIENT_MULTIPLIER": parsed.drag_coefficient_multiplier,
-        "REPRODUCTION_DISTANCE_MULTIPLIER": parsed.reproduction_distance_multiplier,
-        "DNA_CHANGE_THRESHOLD": parsed.dna_change_threshold,
     }
     overrides.update({k: v for k, v in cli_mapping.items() if v is not None})
     return _ACTIVE_SETTINGS.with_updates(overrides)
@@ -459,8 +456,7 @@ def apply_runtime_settings(new_settings: SimulationSettings) -> SimulationSettin
     global LOG_DIRECTORY, DEBUG_LOG_FILE, DEBUG_LOG_LEVEL, TELEMETRY_ENABLED
     global BODY_PIXEL_SCALE, USE_BODYGRAPH_SIZE
     global MODULE_SPRITE_SCALE, MODULE_SPRITE_MIN_PX, MODULE_SPRITE_MIN_LENGTH, MODULE_SPRITE_MIN_HEIGHT
-    global THRUST_SCALE_EXPONENT, THRUST_BASE_MULTIPLIER, DRAG_COEFFICIENT_MULTIPLIER
-    global REPRODUCTION_DISTANCE_MULTIPLIER, DNA_CHANGE_THRESHOLD
+    global THRUST_SCALE_EXPONENT
 
     _ACTIVE_SETTINGS = new_settings
     WORLD_WIDTH = new_settings.WORLD_WIDTH
@@ -483,10 +479,6 @@ def apply_runtime_settings(new_settings: SimulationSettings) -> SimulationSettin
     MODULE_SPRITE_MIN_LENGTH = new_settings.MODULE_SPRITE_MIN_LENGTH
     MODULE_SPRITE_MIN_HEIGHT = new_settings.MODULE_SPRITE_MIN_HEIGHT
     THRUST_SCALE_EXPONENT = new_settings.THRUST_SCALE_EXPONENT
-    THRUST_BASE_MULTIPLIER = new_settings.THRUST_BASE_MULTIPLIER
-    DRAG_COEFFICIENT_MULTIPLIER = new_settings.DRAG_COEFFICIENT_MULTIPLIER
-    REPRODUCTION_DISTANCE_MULTIPLIER = new_settings.REPRODUCTION_DISTANCE_MULTIPLIER
-    DNA_CHANGE_THRESHOLD = new_settings.DNA_CHANGE_THRESHOLD
     return _ACTIVE_SETTINGS
 
 

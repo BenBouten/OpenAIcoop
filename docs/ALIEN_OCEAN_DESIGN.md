@@ -25,6 +25,12 @@
 - Outputs gaan uitsluitend naar actuatoren: staart- en fin-thrust, verticale thrust, bijtintentie en bioluminescentie-intensiteit/patroon; de waardes worden rechtstreeks gebruikt door de physicslaag en sturen geen posities of doelen aan.【F:evolution/entities/ai.py†L40-L71】【F:evolution/entities/ai.py†L112-L142】
 - Tijdens reproductie worden de gewichten gemiddeld tussen ouders en vervolgens met kleine Gaussische noise gemuteerd zodat gedrag kan evolueren zonder nieuwe logica te coderen.【F:evolution/entities/reproduction.py†L55-L98】【F:evolution/entities/reproduction.py†L210-L243】
 
+### Neuraal gedrag
+- Elke lifeform krijgt een vaste feedforward-controller (10 inputs → 12 verborgen neuronen → 7 outputs) waarvan alle gewichten als vlakke floatlijst in het DNA zitten.【F:evolution/entities/neural_controller.py†L1-L82】
+- Inputs omvatten lokale voedsel-densiteit voorwaarts/links/rechts, genormaliseerde diepte, energieratio, buurtdichtheid, verticale snelheid, actuele snelheid, ruis en een simpele drijfvermogen-bias.【F:evolution/entities/ai.py†L84-L110】
+- Outputs gaan uitsluitend naar actuatoren: staart- en fin-thrust, verticale thrust, bijtintentie en bioluminescentie-intensiteit/patroon; de waardes worden rechtstreeks gebruikt door de physicslaag en sturen geen posities of doelen aan.【F:evolution/entities/ai.py†L40-L71】【F:evolution/entities/ai.py†L112-L142】
+- Tijdens reproductie worden de gewichten gemiddeld tussen ouders en vervolgens met kleine Gaussische noise gemuteerd zodat gedrag kan evolueren zonder nieuwe logica te coderen.【F:evolution/entities/reproduction.py†L55-L98】【F:evolution/entities/reproduction.py†L210-L243】
+
 ## Modulair lichaamssysteem
 
 Het nieuwe lijf wordt niet langer beschreven door vlakke `width/height`-velden maar door een modulair “lego” systeem:

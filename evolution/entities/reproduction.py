@@ -293,6 +293,16 @@ def _apply_mutations(profile: Dict[str, object]) -> None:
         mutation_rate=0.2,
     )
 
+    weights = profile.get("brain_weights")
+    if not isinstance(weights, list) or len(weights) != expected_weight_count():
+        weights = initialize_brain_weights()
+    profile["brain_weights"] = mutate_brain_weights(
+        weights,
+        rng=random,
+        sigma=0.08,
+        mutation_rate=0.2,
+    )
+
     mutate_profile_morphology(profile)
     mutate_profile_development(profile)
 
