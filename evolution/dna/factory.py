@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import MISSING, fields, replace
 from typing import Callable, Dict, Iterable, Mapping, Optional, Type
 
 from ..body.body_graph import BodyGraph
@@ -11,6 +12,7 @@ from ..body.modules import (
     HydroFin,
     JellyBell,
     PulseSiphon,
+    ModuleStats,
     SensorPod,
     SensoryModule,
     TentacleLimb,
@@ -39,6 +41,15 @@ def _default_factory_for(cls: Type[BodyModule]) -> ModuleFactory:
     def _builder(key: str, parameters: Mapping[str, object]) -> BodyModule:
         kwargs = dict(parameters)
         kwargs.setdefault("key", key)
+        module_field_names = {f.name for f in fields(cls)}
+
+        stat_overrides: Dict[str, object] = {}
+        deferred_overrides: Optional[Dict[str, object]] = None
+        stat_fields = set(ModuleStats.__annotations__.keys())
+        for name in list(kwargs.keys()):
+            if name in stat_fields and name not in module_field_names:
+                stat_overrides[name] = kwargs.pop(name)
+
         # Ensure tuples for immutable sequence fields such as sensor spectrums.
         if "spectrum" in kwargs and not isinstance(kwargs["spectrum"], tuple):
             value = kwargs["spectrum"]
@@ -62,7 +73,6 @@ def _default_factory_for(cls: Type[BodyModule]) -> ModuleFactory:
             
             # Let's try to get the default size from the class if possible.
             # Most modules have a default size.
-            from dataclasses import fields
             for f in fields(cls):
                 if f.name == "size":
                     default_size = f.default
@@ -74,7 +84,35 @@ def _default_factory_for(cls: Type[BodyModule]) -> ModuleFactory:
                         )
                     break
         
-        return cls(**kwargs)
+        if stat_overrides:
+            if "stats" in kwargs and isinstance(kwargs["stats"], ModuleStats):
+                kwargs["stats"] = replace(kwargs["stats"], **stat_overrides)
+            else:
+                stats_field = next((f for f in fields(cls) if f.name == "stats"), None)
+                if stats_field is not None:
+                    if stats_field.default_factory is not MISSING:  # type: ignore[attr-defined]
+                        base_stats = stats_field.default_factory()
+                    elif stats_field.default is not MISSING:
+                        base_stats = stats_field.default
+                    else:
+                        base_stats = None
+
+                    if isinstance(base_stats, ModuleStats):
+                        kwargs["stats"] = replace(base_stats, **stat_overrides)
+                    else:
+                        # Fallback: defer overrides until after instantiation
+                        deferred_overrides = stat_overrides
+                else:
+                    deferred_overrides = stat_overrides
+        else:
+            deferred_overrides = None
+
+        module = cls(**kwargs)
+
+        if stat_overrides and "stats" not in kwargs and deferred_overrides:
+            module.stats = replace(module.stats, **deferred_overrides)
+
+        return module
 
     return _builder
 
