@@ -128,7 +128,7 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
         return
 
     rng = random.Random()
-    anchors = _select_nutrient_anchors(state.plants, rng)
+    anchors = _select_nutrient_anchors(world, state.plants, rng)
     occupied: List[Tuple[float, float]] = []
     max_spawns = min(settings.N_LIFEFORMS, len(state.dna_profiles))
 
@@ -153,34 +153,51 @@ def spawn_lifeforms(state: SimulationState, world: World) -> None:
 
 
 def _select_nutrient_anchors(
-    plants: List[MossCluster] | None, rng: random.Random, target: int = 3
+    world: World,
+    plants: List[MossCluster] | None,
+    rng: random.Random,
+    depth_buckets: int = 3,
 ) -> List[Tuple[float, float]]:
-    anchors: List[Tuple[float, float]] = []
+    """Pick anchor points around nutrient patches spanning multiple depths."""
+
+    plant_anchors: List[Tuple[float, float]] = []
     if plants:
-        anchors = [
+        plant_anchors = [
             (float(cluster.rect.centerx), float(cluster.rect.centery))
             for cluster in plants
             if getattr(cluster, "rect", None) is not None
         ]
 
-    anchors.sort(key=lambda pt: pt[1])
-    if not anchors:
-        return []
-    if len(anchors) <= target:
-        return anchors
+    plant_anchors.sort(key=lambda pt: pt[1])
+    bucket_height = world.height / float(max(1, depth_buckets))
 
-    selections: List[Tuple[float, float]] = []
-    stride = len(anchors) / float(target)
-    seen: set[Tuple[float, float]] = set()
-    for idx in range(target):
-        base_index = int(idx * stride)
-        offset = rng.randint(0, max(0, int(stride) - 1)) if stride > 1 else 0
-        choice = anchors[min(len(anchors) - 1, base_index + offset)]
-        if choice in seen:
-            continue
-        selections.append(choice)
-        seen.add(choice)
-    return selections or anchors
+    def _pop_closest(target_y: float, candidates: List[Tuple[float, float]]):
+        best_idx = None
+        best_distance = float("inf")
+        for idx, (_, y) in enumerate(candidates):
+            distance = abs(y - target_y)
+            if distance < best_distance:
+                best_distance = distance
+                best_idx = idx
+        if best_idx is None:
+            return None
+        return candidates.pop(best_idx)
+
+    anchors: List[Tuple[float, float]] = []
+    candidates = list(plant_anchors)
+
+    for bucket_idx in range(depth_buckets):
+        target_depth = bucket_height * (bucket_idx + 0.5)
+        anchor = _pop_closest(target_depth, candidates)
+        if anchor is None:
+            jitter = rng.uniform(-bucket_height * 0.25, bucket_height * 0.25)
+            anchor = (
+                rng.uniform(world.width * 0.2, world.width * 0.8),
+                min(world.height - 1.0, max(0.0, target_depth + jitter)),
+            )
+        anchors.append(anchor)
+
+    return anchors
 
 
 def _spawn_near_anchor_or_random(

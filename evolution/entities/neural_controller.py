@@ -51,7 +51,7 @@ def expected_weight_count() -> int:
 
 def initialize_brain_weights(rng: random.Random | None = None) -> List[float]:
     rng = rng or random
-    scale = 0.5
+    scale = 0.25
     return [rng.gauss(0.0, scale) for _ in range(expected_weight_count())]
 
 

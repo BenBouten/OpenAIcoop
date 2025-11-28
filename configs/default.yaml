@@ -18,4 +18,4 @@ log_directory: "logs"
 debug_log_file: "simulation_debug.log"
 debug_log_level: "INFO"
 use_bodygraph_size: true
-initial_baseform_count: 3
+initial_baseform_count: 1
