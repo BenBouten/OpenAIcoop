@@ -816,8 +816,8 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
     def _initialise_population() -> None:
         global latest_stats
         bootstrap.generate_dna_profiles(state, world)
-        bootstrap.spawn_lifeforms(state, world)
         bootstrap.seed_vegetation(state, world)
+        bootstrap.spawn_lifeforms(state, world)
         environment.sync_food_abundance(state)
         environment.sync_moss_growth_speed(state)
         latest_stats = None

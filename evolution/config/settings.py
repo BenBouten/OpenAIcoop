@@ -21,6 +21,7 @@ _FLOAT_FIELDS = {
     "MODULE_SPRITE_MIN_PX",
     "MODULE_SPRITE_MIN_LENGTH",
     "MODULE_SPRITE_MIN_HEIGHT",
+    "THRUST_SCALE_EXPONENT",
 }
 
 WORLD_WIDTH = DEFAULTS["WORLD_WIDTH"]
@@ -41,6 +42,7 @@ N_VEGETATION = 100
 N_DNA_PROFILES = 10
 MAX_LIFEFORMS = 150
 STARTING_SPECIES_COUNT = 5
+INITIAL_BASEFORM_COUNT = int(os.getenv("EVOLUTION_INITIAL_BASEFORMS", "1"))
 MUTATION_CHANCE = 5
 MOSS_MUTATION_CHANCE = 0.2
 MOSS_MUTATION_STRENGTH = 0.25
@@ -107,6 +109,11 @@ PLANT_HUNGER_SATIATION_PER_NUTRITION = 2.4
 WANDER_JITTER_DEGREES = 28
 WANDER_INTERVAL_MS = 700
 
+# Exponent applied when scaling thruster output relative to control signals.
+# A value of 1.0 preserves linear scaling, while values >1.0 emphasize strong
+# thrust commands and values <1.0 smooth them out.
+THRUST_SCALE_EXPONENT = float(os.getenv("EVOLUTION_THRUST_SCALE_EXPONENT", "1.0"))
+
 STUCK_FRAMES_THRESHOLD = 18
 ESCAPE_OVERRIDE_FRAMES = 24
 ESCAPE_FORCE = 1.8
@@ -157,6 +164,8 @@ class SimulationSettings:
     MODULE_SPRITE_MIN_PX: float = MODULE_SPRITE_MIN_PX
     MODULE_SPRITE_MIN_LENGTH: float = MODULE_SPRITE_MIN_LENGTH
     MODULE_SPRITE_MIN_HEIGHT: float = MODULE_SPRITE_MIN_HEIGHT
+    THRUST_SCALE_EXPONENT: float = THRUST_SCALE_EXPONENT
+    INITIAL_BASEFORM_COUNT: int = INITIAL_BASEFORM_COUNT
     MIN_MATURITY: int = MIN_MATURITY
     MAX_MATURITY: int = MAX_MATURITY
     VISION_MIN: int = VISION_MIN
@@ -186,6 +195,8 @@ _ENV_VARS: Dict[str, str] = {
     "MODULE_SPRITE_MIN_PX": "EVOLUTION_MODULE_SPRITE_MIN_PX",
     "MODULE_SPRITE_MIN_LENGTH": "EVOLUTION_MODULE_SPRITE_MIN_LENGTH",
     "MODULE_SPRITE_MIN_HEIGHT": "EVOLUTION_MODULE_SPRITE_MIN_HEIGHT",
+    "THRUST_SCALE_EXPONENT": "EVOLUTION_THRUST_SCALE_EXPONENT",
+    "INITIAL_BASEFORM_COUNT": "EVOLUTION_INITIAL_BASEFORMS",
 }
 
 
@@ -205,6 +216,7 @@ def _coerce(value: str, field: str) -> Any:
         "MODULE_SPRITE_MIN_PX",
         "MODULE_SPRITE_MIN_LENGTH",
         "MODULE_SPRITE_MIN_HEIGHT",
+        "THRUST_SCALE_EXPONENT",
     }:
         return float(value)
     return int(value)
@@ -262,6 +274,7 @@ _NUMERIC_BOUNDS: Dict[str, tuple[float, float]] = {
     "WINDOW_HEIGHT": (200, 4320),
     "N_LIFEFORMS": (1, 2000),
     "MAX_LIFEFORMS": (50, 4000),
+    "INITIAL_BASEFORM_COUNT": (1, 10),
     "MUTATION_CHANCE": (0, 100),
     "FPS": (1, 360),
     "BODY_PIXEL_SCALE": (1.0, 50.0),
@@ -269,6 +282,7 @@ _NUMERIC_BOUNDS: Dict[str, tuple[float, float]] = {
     "MODULE_SPRITE_MIN_PX": (1.0, 64.0),
     "MODULE_SPRITE_MIN_LENGTH": (1.0, 128.0),
     "MODULE_SPRITE_MIN_HEIGHT": (1.0, 128.0),
+    "THRUST_SCALE_EXPONENT": (0.1, 5.0),
     "MIN_MATURITY": (1, 200),
     "MAX_MATURITY": (1, 400),
     "VISION_MIN": (1, 1000),
@@ -362,6 +376,7 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--window-height", type=int, help="Viewport height")
     parser.add_argument("--n-lifeforms", type=int, help="Initial lifeform count")
     parser.add_argument("--max-lifeforms", type=int, help="Population cap")
+    parser.add_argument("--initial-baseforms", type=int, help="Seed baseform templates")
     parser.add_argument("--mutation-chance", type=int, help="Mutation percentage")
     parser.add_argument("--fps", type=int, help="Target frames per second")
     parser.add_argument("--telemetry-enabled", type=int, help="Enable telemetry (1 or 0)")
@@ -370,6 +385,11 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--module-sprite-min-px", type=float, help="Minimum pixel span for module sprites")
     parser.add_argument("--module-sprite-min-length", type=float, help="Minimum pixel length for modules")
     parser.add_argument("--module-sprite-min-height", type=float, help="Minimum pixel height for modules")
+    parser.add_argument(
+        "--thrust-scale-exponent",
+        type=float,
+        help="Exponent to apply when mapping thrust intent to propulsion output",
+    )
     parser.add_argument(
         "--use-bodygraph-size",
         dest="use_bodygraph_size",
@@ -402,6 +422,7 @@ def load_runtime_settings(args: Sequence[str] | None = None, env: Mapping[str, s
         "WINDOW_HEIGHT": parsed.window_height,
         "N_LIFEFORMS": parsed.n_lifeforms,
         "MAX_LIFEFORMS": parsed.max_lifeforms,
+        "INITIAL_BASEFORM_COUNT": parsed.initial_baseforms,
         "MUTATION_CHANCE": parsed.mutation_chance,
         "FPS": parsed.fps,
         "TELEMETRY_ENABLED": None if parsed.telemetry_enabled is None else bool(parsed.telemetry_enabled),
@@ -411,6 +432,7 @@ def load_runtime_settings(args: Sequence[str] | None = None, env: Mapping[str, s
         "MODULE_SPRITE_MIN_PX": parsed.module_sprite_min_px,
         "MODULE_SPRITE_MIN_LENGTH": parsed.module_sprite_min_length,
         "MODULE_SPRITE_MIN_HEIGHT": parsed.module_sprite_min_height,
+        "THRUST_SCALE_EXPONENT": parsed.thrust_scale_exponent,
     }
     overrides.update({k: v for k, v in cli_mapping.items() if v is not None})
     return _ACTIVE_SETTINGS.with_updates(overrides)
@@ -419,10 +441,11 @@ def load_runtime_settings(args: Sequence[str] | None = None, env: Mapping[str, s
 def apply_runtime_settings(new_settings: SimulationSettings) -> SimulationSettings:
     global _ACTIVE_SETTINGS
     global WORLD_WIDTH, WORLD_HEIGHT, WINDOW_WIDTH, WINDOW_HEIGHT
-    global N_LIFEFORMS, MAX_LIFEFORMS, MUTATION_CHANCE, FPS
+    global N_LIFEFORMS, MAX_LIFEFORMS, INITIAL_BASEFORM_COUNT, MUTATION_CHANCE, FPS
     global LOG_DIRECTORY, DEBUG_LOG_FILE, DEBUG_LOG_LEVEL, TELEMETRY_ENABLED
     global BODY_PIXEL_SCALE, USE_BODYGRAPH_SIZE
     global MODULE_SPRITE_SCALE, MODULE_SPRITE_MIN_PX, MODULE_SPRITE_MIN_LENGTH, MODULE_SPRITE_MIN_HEIGHT
+    global THRUST_SCALE_EXPONENT
 
     _ACTIVE_SETTINGS = new_settings
     WORLD_WIDTH = new_settings.WORLD_WIDTH
@@ -431,6 +454,7 @@ def apply_runtime_settings(new_settings: SimulationSettings) -> SimulationSettin
     WINDOW_HEIGHT = new_settings.WINDOW_HEIGHT
     N_LIFEFORMS = new_settings.N_LIFEFORMS
     MAX_LIFEFORMS = new_settings.MAX_LIFEFORMS
+    INITIAL_BASEFORM_COUNT = new_settings.INITIAL_BASEFORM_COUNT
     MUTATION_CHANCE = new_settings.MUTATION_CHANCE
     FPS = new_settings.FPS
     LOG_DIRECTORY = new_settings.LOG_DIRECTORY
@@ -443,6 +467,7 @@ def apply_runtime_settings(new_settings: SimulationSettings) -> SimulationSettin
     MODULE_SPRITE_MIN_PX = new_settings.MODULE_SPRITE_MIN_PX
     MODULE_SPRITE_MIN_LENGTH = new_settings.MODULE_SPRITE_MIN_LENGTH
     MODULE_SPRITE_MIN_HEIGHT = new_settings.MODULE_SPRITE_MIN_HEIGHT
+    THRUST_SCALE_EXPONENT = new_settings.THRUST_SCALE_EXPONENT
     return _ACTIVE_SETTINGS
 
 
