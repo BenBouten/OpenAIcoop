@@ -34,12 +34,14 @@ class World:
         self.rad_vents: List[RadVentField] = []
         self.bubble_columns: List[BubbleColumn] = []
         self.vegetation_masks: List[pygame.Rect] = []
+        self.carcasses: List[object] = []
         self.environment_modifiers = environment_modifiers
         self.world_type = "Alien Ocean"
         self.ocean = OceanPhysics(self.width, self.height)
         self._background_surface: Optional[pygame.Surface] = None
         self._label_font: Optional[pygame.font.Font] = None
         self._time_seconds: float = 0.0
+        self._layer_lookup: List[Tuple[int, int, DepthLayer]] = []
 
         # 🌊 Nieuwe renderer voor de volledige oceaanachtergrond
         self._renderer = OceanRenderer(self.width, self.height)
@@ -76,6 +78,7 @@ class World:
         self.bubble_columns = list(blueprint.bubble_columns)
         self.ocean = OceanPhysics(self.width, self.height)
         self._background_surface = self._render_background()
+        self._rebuild_layer_lookup()
         self._last_update_ms = None
 
     def regenerate(self) -> None:
@@ -124,7 +127,7 @@ class World:
                     (0, y),
                     (rect.width, y),
                     2,
-                )
+            )
             surface.blit(overlay, rect.topleft, special_flags=pygame.BLEND_RGB_ADD)
 
     def _draw_light_shafts(self, surface: pygame.Surface) -> None:
@@ -258,6 +261,15 @@ class World:
 
         self._draw_layer_labels(surface, offset=offset, viewport=viewport)
 
+    def _rebuild_layer_lookup(self) -> None:
+        """Cache y-ranges for each layer for fast biome queries."""
+
+        self._layer_lookup = []
+        for layer in self.layers:
+            rect = layer.biome.rect
+            self._layer_lookup.append((rect.top, rect.bottom, layer))
+        self._layer_lookup.sort(key=lambda item: item[0])
+
     def draw(
         self,
         surface: pygame.Surface,
@@ -307,13 +319,24 @@ class World:
     # ------------------------------------------------------------------ #
 
     def get_biome_at(self, x: float, y: float) -> Optional[BiomeRegion]:
-        point = (int(x), int(y))
-        for biome in self.biomes:
-            if biome.contains(point[0], point[1]):
+        layer = self.get_layer_at(y)
+        if layer:
+            biome = layer.biome
+            if biome.contains(x, y):
                 return biome
         if self.biomes:
             return self.biomes[0]
         return None
+
+    def get_layer_at(self, y: float) -> Optional[DepthLayer]:
+        """Return the depth layer intersecting a vertical coordinate."""
+
+        if not self._layer_lookup:
+            return self.layers[0] if self.layers else None
+        for top, bottom, layer in self._layer_lookup:
+            if top <= y < bottom:
+                return layer
+        return self._layer_lookup[-1][2]
 
     def get_environment_context(self, x: float, y: float) -> Tuple[Optional[BiomeRegion], Dict[str, float | int | str]]:
         biome = self.get_biome_at(x, y)
@@ -347,6 +370,52 @@ class World:
             effects["health"] = 0.0 + health * intensity
         self.ocean.enrich_effects(effects, y)
         return biome, effects
+
+    def get_mutation_multiplier(self, x: float, y: float) -> float:
+        """Return a distance-weighted mutation multiplier based on nearby vents."""
+
+        multiplier = 1.0
+        for vent in self.rad_vents:
+            dx = x - vent.center[0]
+            dy = y - vent.center[1]
+            dist = math.hypot(dx, dy)
+            if dist >= vent.radius or vent.radius <= 0:
+                continue
+            influence = 1.0 - (dist / vent.radius)
+            multiplier += vent.mutation_bonus * max(0.0, influence)
+        return min(multiplier, 4.0)
+
+    def sample_environment(self, x: float, y: float) -> Dict[str, float]:
+        """Collect sensory-friendly environment data for the given coordinate."""
+
+        depth = max(0.0, min(float(self.height), float(y)))
+        biome, biome_effects = self.get_environment_context(x, depth)
+        fluid = self.ocean.properties_at(depth) if self.ocean else None
+        mutation_mult = self.get_mutation_multiplier(x, y)
+
+        data = {
+            "depth_norm": depth / float(self.height) if self.height else 0.0,
+            "biome_movement": float(biome_effects.get("movement", 1.0)),
+            "biome_hunger": float(biome_effects.get("hunger", 1.0)),
+            "biome_regrowth": float(biome_effects.get("regrowth", 1.0)),
+            "biome_health": float(biome_effects.get("health", 0.0)),
+            "mutation_multiplier": float(mutation_mult),
+        }
+
+        if fluid:
+            data.update(
+                {
+                    "density": float(fluid.density),
+                    "drag": float(fluid.drag),
+                    "light": float(fluid.light),
+                    "current_x": float(fluid.current.x),
+                    "current_y": float(fluid.current.y),
+                    "temperature": float(fluid.temperature),
+                    "pressure": float(fluid.pressure),
+                }
+            )
+
+        return data
 
     def apply_fluid_dynamics(
         self, lifeform, thrust: Vector2, dt: float, *, max_speed: float
