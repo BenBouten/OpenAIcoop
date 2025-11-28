@@ -156,6 +156,10 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             risk_tolerance = random.uniform(0.6, 1.0)
             restlessness_range = (0.55, 0.95)
             boid_range = (0.25, 0.7)
+            digest_plants = random.uniform(0.35, 0.8)
+            digest_meat = random.uniform(0.95, 1.35)
+            bite_force = random.uniform(16.0, 32.0)
+            tissue_hardness = random.uniform(0.8, 1.8)
         else:
             attack_power = random.randint(30, 85)
             defence_power = random.randint(25, 75)
@@ -169,6 +173,16 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             risk_tolerance = random.uniform(0.4, 0.8)
             restlessness_range = (0.32, 0.78)
             boid_range = (0.45, 0.9)
+            digest_plants = random.uniform(0.75, 1.15)
+            digest_meat = random.uniform(0.75, 1.15)
+            bite_force = random.uniform(12.0, 24.0)
+            tissue_hardness = random.uniform(0.6, 1.6)
+
+        if diet == "herbivore":
+            digest_plants = random.uniform(0.95, 1.3)
+            digest_meat = random.uniform(0.35, 0.75)
+            bite_force = random.uniform(10.0, 20.0)
+            tissue_hardness = random.uniform(0.6, 1.4)
 
         morphology = MorphologyGenotype.random()
         development = generate_development_plan(diet)
@@ -204,6 +218,10 @@ def generate_dna_profiles(state: SimulationState, world: World) -> None:
             "boid_tendency": boid_tendency,
             "risk_tolerance": risk_tolerance,
             "restlessness": restlessness,
+            "digest_efficiency_plants": digest_plants,
+            "digest_efficiency_meat": digest_meat,
+            "bite_force": bite_force,
+            "tissue_hardness": tissue_hardness,
             "morphology": morphology.to_dict(),
             "development": development,
             "genome": genome_blueprint,
@@ -462,6 +480,51 @@ def _normalize(value: float, minimum: float, maximum: float) -> float:
     return max(0.0, min(1.0, (value - minimum) / (maximum - minimum)))
 
 
+def _build_jellyfish_profile(dna_id: int) -> dict:
+    """Seed a bell-and-tentacle drifter that always spawns at startup."""
+
+    rng = random.Random()
+    modules = catalogue_jellyfish_modules()
+    graph = BodyGraph("bell_core", modules["bell_core"])
+    graph.add_module("bell_siphon", modules["bell_siphon"], "bell_core", "siphon_nozzle")
+    graph.add_module("bell_sensor", modules["bell_sensor"], "bell_core", "umbrella_sensor")
+    graph.add_module("tentacle_front", modules["tentacle_front"], "bell_core", "tentacle_socket_front")
+    graph.add_module("tentacle_left", modules["tentacle_left"], "bell_core", "tentacle_socket_left")
+    graph.add_module("tentacle_right", modules["tentacle_right"], "bell_core", "tentacle_socket_right")
+    graph.add_module("tentacle_rear", modules["tentacle_rear"], "bell_core", "tentacle_socket_rear")
+
+    genome = serialize_body_graph(graph).to_dict()
+
+    return {
+        "dna_id": dna_id,
+        "width": rng.randint(settings.MIN_WIDTH + 1, settings.MAX_WIDTH - 2),
+        "height": rng.randint(settings.MIN_HEIGHT + 1, settings.MAX_HEIGHT - 1),
+        "color": (
+            rng.randint(120, 220),
+            rng.randint(160, 255),
+            rng.randint(180, 255),
+        ),
+        "health": rng.randint(70, 130),
+        "maturity": rng.randint(settings.MIN_MATURITY + 40, settings.MAX_MATURITY - 30),
+        "vision": rng.randint(settings.VISION_MIN + 10, settings.VISION_MAX - 6),
+        "defence_power": rng.randint(22, 60),
+        "attack_power": rng.randint(12, 40),
+        "energy": rng.randint(90, 120),
+        "longevity": rng.randint(2200, 5200),
+        "diet": "omnivore",
+        "social": rng.uniform(0.35, 0.8),
+        "boid_tendency": rng.uniform(0.35, 0.85),
+        "risk_tolerance": rng.uniform(0.35, 0.75),
+        "restlessness": rng.uniform(0.28, 0.62),
+        "digest_efficiency_plants": rng.uniform(0.9, 1.25),
+        "digest_efficiency_meat": rng.uniform(0.7, 1.05),
+        "bite_force": rng.uniform(12.0, 22.0),
+        "tissue_hardness": rng.uniform(0.6, 1.2),
+        "morphology": MorphologyGenotype.random().to_dict(),
+        "development": generate_development_plan("omnivore"),
+        "genome": genome,
+        "guaranteed_spawn": True,
+    }
 
 
 
