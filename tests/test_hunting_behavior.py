@@ -1,129 +1,96 @@
-'['
 import unittest
 import pygame
-import random
+
 from evolution.simulation.state import SimulationState
 from evolution.world.world import World
 from evolution.entities.lifeform import Lifeform
-from evolution.dna.genes import ensure_genome
 from evolution.dna.blueprints import generate_modular_blueprint
 from evolution.entities.combat import resolve_close_interactions
 from evolution.entities.ai import update_brain
-from evolution.entities.movement import update_movement
 
-class TestHuntingBehavior(unittest.TestCase):
+
+class TestNeuralBehaviors(unittest.TestCase):
     def setUp(self):
         pygame.init()
         pygame.display.set_mode((100, 100), pygame.HIDDEN)
         self.state = SimulationState()
         self.world = World(1000, 1000)
         self.state.world = self.world
-        
-        # Create Predator Genome (Carnivore)
-        pred_genome_data = generate_modular_blueprint("carnivore", base_form="streamliner")
-        pred_profile = {
+
+        carnivore_genome = generate_modular_blueprint("carnivore", base_form="streamliner")
+        herbivore_genome = generate_modular_blueprint("herbivore", base_form="streamliner")
+
+        carnivore_profile = {
             "dna_id": 1,
             "base_form": "streamliner",
             "base_form_label": "Streamliner",
-            "width": 100, "height": 40,
+            "width": 100,
+            "height": 40,
             "color": (255, 50, 50),
-            "health": 100, "maturity": 100,
-            "vision": 200, "defence_power": 20, "attack_power": 50,
-            "energy": 100, "longevity": 1000,
+            "health": 100,
+            "maturity": 100,
+            "vision": 200,
+            "defence_power": 20,
+            "attack_power": 50,
+            "energy": 120,
+            "longevity": 1000,
             "diet": "carnivore",
-            "social": 0.1, "boid_tendency": 0.1, "risk_tolerance": 0.9, "restlessness": 0.8,
-            "morphology": {}, "development": {},
-            "genome": pred_genome_data,
+            "genome": carnivore_genome,
         }
-        
-        # Create Prey Genome (Herbivore)
-        prey_genome_data = generate_modular_blueprint("herbivore", base_form="streamliner")
-        prey_profile = {
+
+        herbivore_profile = {
             "dna_id": 2,
             "base_form": "streamliner",
             "base_form_label": "Streamliner",
-            "width": 80, "height": 30,
+            "width": 80,
+            "height": 30,
             "color": (50, 255, 50),
-            "health": 50, "maturity": 100,
-            "vision": 100, "defence_power": 10, "attack_power": 5,
-            "energy": 100, "longevity": 1000,
+            "health": 80,
+            "maturity": 100,
+            "vision": 120,
+            "defence_power": 10,
+            "attack_power": 5,
+            "energy": 100,
+            "longevity": 1000,
             "diet": "herbivore",
-            "social": 0.8, "boid_tendency": 0.8, "risk_tolerance": 0.2, "restlessness": 0.4,
-            "morphology": {}, "development": {},
-            "genome": prey_genome_data,
+            "genome": herbivore_genome,
         }
 
-        self.predator = Lifeform(self.state, 500, 500, pred_profile, 1)
-        self.predator.energy_now = 50 # Hungry
-        self.predator.hunger = 80 # Very hungry
-        
-        self.prey = Lifeform(self.state, 520, 500, prey_profile, 1)
-        
-        self.state.lifeforms = [self.predator, self.prey]
-        
-        # Initialize stats
-        self.predator._derive_stats_from_body()
-        self.prey._derive_stats_from_body()
-        
-        # Ensure predator is stronger and has vision
-        self.predator.attack_power = max(20.0, self.predator.attack_power)
-        self.predator.vision = max(100.0, self.predator.vision)
-        self.predator.calculate_attack_power()
-        
-        self.prey.defence_power = 5.0
-        self.prey.attack_power = 1.0 # Nerf prey attack
-        self.prey.calculate_defence_power()
-        self.prey.calculate_attack_power()
+        self.hunter = Lifeform(self.state, 500, 500, carnivore_profile, 1)
+        self.hunter.energy_now = 50
+        self.hunter.hunger = 80
 
-    def test_target_detection(self):
-        # Update targets
-        self.predator.update_targets()
-        self.prey.update_targets()
-        
-        print(f"Predator Vision: {self.predator.vision}")
-        print(f"Distance to Prey: {self.predator.distance_to(self.prey)}")
-        print(f"Predator Attack Now: {self.predator.attack_power_now}")
-        print(f"Predator Defence Now: {self.predator.defence_power_now}")
-        print(f"Prey Attack Now: {self.prey.attack_power_now}")
-        print(f"Prey Defence Now: {self.prey.defence_power_now}")
-        
-        dx = self.prey.x - self.predator.x
-        dy = self.prey.y - self.predator.y
-        print(f"Delta: {dx}, {dy}")
-        
-        forward = pygame.math.Vector2(self.predator.x_direction, self.predator.y_direction)
-        if forward.length_squared() == 0: forward = pygame.math.Vector2(1, 0)
-        print(f"Forward: {forward}")
-        
-        self.assertIsNotNone(self.predator.closest_prey, "Predator should see prey")
-        self.assertEqual(self.predator.closest_prey, self.prey)
+        self.target = Lifeform(self.state, 520, 500, herbivore_profile, 1)
+        self.state.lifeforms = [self.hunter, self.target]
 
-    def test_hunting_behavior(self):
-        self.predator.update_targets()
-        update_brain(self.predator, self.state, 0.1)
-        
-        print(f"Behavior Mode: {self.predator.current_behavior_mode}")
-        self.assertEqual(self.predator.current_behavior_mode, "hunt")
-        
-        # Check adrenaline
-        update_movement(self.predator, self.state, 0.1)
-        print(f"Adrenaline: {self.predator.adrenaline_factor}")
-        self.assertGreater(self.predator.adrenaline_factor, 0.0)
+    def test_target_detection_tracks_neighbors(self):
+        self.hunter.update_targets()
+        self.assertIs(self.hunter.closest_neighbor, self.target)
+        self.assertIsNone(self.hunter.closest_prey)
+        self.assertIsNone(self.hunter.closest_enemy)
 
-    def test_combat_interaction(self):
-        self.predator.update_targets()
-        initial_health = self.prey.health_now
-        
-        # Force close distance
-        self.prey.x = 505
-        self.prey.y = 500
-        self.predator.rect.center = (500, 500)
-        self.prey.rect.center = (505, 500)
-        
-        resolve_close_interactions(self.predator)
-        
-        print(f"Prey Health: {initial_health} -> {self.prey.health_now}")
-        self.assertLess(self.prey.health_now, initial_health, "Prey should take damage")
+    def test_neural_controller_outputs(self):
+        update_brain(self.hunter, self.state, 0.1)
+        self.assertEqual(self.hunter.current_behavior_mode, "neural")
+        commands = getattr(self.hunter, "neural_commands", {})
+        for key in ("tail_thrust", "left_fin_thrust", "right_fin_thrust", "vertical_thrust", "bite_intent"):
+            self.assertIn(key, commands)
 
-if __name__ == '__main__':
+    def test_biomass_bite_draws_from_state(self):
+        self.hunter.bite_force = 15.0
+        self.hunter.attack_power_now = 10.0
+        self.hunter.bite_intent = 1.0
+        self.target.defence_power_now = 1.0
+
+        self.target.x = 505
+        self.target.y = 500
+        self.hunter.rect.center = (500, 500)
+        self.target.rect.center = (505, 500)
+
+        starting_health = self.target.health_now
+        resolve_close_interactions(self.hunter)
+        self.assertLess(self.target.health_now, starting_health)
+
+
+if __name__ == "__main__":
     unittest.main()
