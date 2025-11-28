@@ -11,7 +11,7 @@ import pygame
 
 from ..config import settings
 from ..entities.lifeform import Lifeform
-from ..world.vegetation import MossCluster, create_initial_clusters
+from ..world.vegetation import MossCluster, create_initial_clusters, create_initial_strands
 from ..world.world import BiomeRegion, World
 from ..systems.telemetry import enable_telemetry
 from .state import SimulationState
@@ -87,6 +87,7 @@ def reset_simulation(
     state.last_moss_growth_speed = state.environment_modifiers.get("moss_growth_speed", 1.0)
 
     world.set_environment_modifiers(state.environment_modifiers)
+    world.carcasses = state.carcasses
     camera.reset()
 
 
@@ -255,6 +256,12 @@ def seed_vegetation(state: SimulationState, world: World) -> None:
         cluster.set_capacity_multiplier(abundance)
         cluster.set_growth_speed_modifier(moss_growth)
         state.plants.append(cluster)
+
+    seaweed_strands = create_initial_strands(world, count=18)
+    for strand in seaweed_strands:
+        strand.set_capacity_multiplier(abundance)
+        strand.set_growth_speed_modifier(moss_growth * 0.9)
+        state.plants.append(strand)
 
 
 # ---------------------------------------------------------------------------

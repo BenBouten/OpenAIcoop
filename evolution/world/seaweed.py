@@ -79,6 +79,10 @@ class SeaweedStrand:
 
     surface: pygame.Surface = field(init=False, repr=False)
     rect: pygame.Rect = field(init=False)
+    width: int = field(init=False)
+    height: int = field(init=False)
+    x: float = field(init=False)
+    y: float = field(init=False)
     resource: float = field(init=False)
     _rng: random.Random = field(init=False, repr=False)
     _dirty: bool = field(init=False, repr=False)
@@ -108,6 +112,10 @@ class SeaweedStrand:
         self.cells = cell_map
         self.surface = pygame.Surface((0, 0), pygame.SRCALPHA)
         self.rect = pygame.Rect(0, 0, 0, 0)
+        self.width = 0
+        self.height = 0
+        self.x = 0.0
+        self.y = 0.0
         self._base_rect = self.rect
         self.resource = 0.0
         self._dirty = True
@@ -139,6 +147,10 @@ class SeaweedStrand:
     def _update_rect(self) -> None:
         if not self.cells:
             self.rect = pygame.Rect(0, 0, 0, 0)
+            self.width = 0
+            self.height = 0
+            self.x = 0.0
+            self.y = 0.0
             self._base_rect = self.rect
             return
         min_x = min(cell[0] for cell in self.cells)
@@ -153,6 +165,27 @@ class SeaweedStrand:
         )
         self._base_rect = base
         self.rect = base.move(int(self._offset.x), int(self._offset.y))
+        self.width = self.rect.width
+        self.height = self.rect.height
+        self.x = float(self.rect.x)
+        self.y = float(self.rect.y)
+
+    def set_size(self) -> None:
+        """Compatibility helper used by the simulation bootstrap."""
+        if not self.cells:
+            self.rect = pygame.Rect(0, 0, 0, 0)
+            self.width = 0
+            self.height = 0
+            self.x = 0.0
+            self.y = 0.0
+            self._base_rect = self.rect
+            self.surface = pygame.Surface((0, 0), pygame.SRCALPHA)
+            self._dirty = False
+            return
+
+        self._update_rect()
+        # Surface will be resized lazily on the next draw call.
+        self._dirty = True
 
     def update_current(self, world: "World", dt: float) -> None:
         ocean = getattr(world, "ocean", None)
@@ -163,13 +196,20 @@ class SeaweedStrand:
         self._sway_phase += STRAND_SWAY_SPEED * dt
         self._offset = Vector2(props.current.x * 0.1 + sway, props.current.y * 0.05)
         self.rect = self._base_rect.move(int(self._offset.x), int(self._offset.y))
+        self.width = self.rect.width
+        self.height = self.rect.height
+        self.x = float(self.rect.x)
+        self.y = float(self.rect.y)
 
-    def draw(self, surface: pygame.Surface) -> None:
+    def draw(self, surface: pygame.Surface, *, offset: Tuple[int, int] = (0, 0)) -> None:
         if not self.cells:
             return
         if self._dirty:
             self._rebuild_surface()
-        surface.blit(self.surface, self.rect.topleft)
+        surface.blit(
+            self.surface,
+            (self.rect.x - int(offset[0]), self.rect.y - int(offset[1])),
+        )
 
     def _rebuild_surface(self) -> None:
         if not self.cells:
@@ -228,6 +268,10 @@ class SeaweedStrand:
         gx = int(local.x) // self.CELL_SIZE
         gy = int(local.y) // self.CELL_SIZE
         return (gx, gy) in self.cells
+
+    def occupies_cell(self, cell: GridCell) -> bool:
+        """Compatibility helper so moss oxygen checks see seaweed occupancy."""
+        return cell in self.cells
 
     def decrement_resource(
         self, amount: float, *, eater: Optional["Lifeform"] = None
@@ -323,6 +367,7 @@ def create_initial_strands(
             min_cells=min_cells,
             max_cells=max_cells,
             rng=rng,
+            allowed_biomes={"Sunlit", "Twilight"},
         )
         if not cells:
             break
@@ -378,18 +423,26 @@ def _generate_seed_cells(
     min_cells: int,
     max_cells: int,
     rng: Optional[random.Random] = None,
+    allowed_biomes: Optional[Set[str]] = None,
 ) -> Optional[Set[GridCell]]:
     rng = rng or random.Random()
     cell_size = SeaweedStrand.CELL_SIZE
     attempts = 0
+    seed_mask: Optional[pygame.Rect] = None
     while attempts < 200:
         attempts += 1
-        gx = rng.randrange(0, world.width // cell_size)
-        gy = rng.randrange(0, world.height // cell_size)
+        origin = _select_seed_origin(world, rng, cell_size, allowed_biomes)
+        if origin is not None:
+            gx, gy, seed_mask = origin
+        else:
+            gx = rng.randrange(0, world.width // cell_size)
+            gy = rng.randrange(0, world.height // cell_size)
         if (gx, gy) in existing_cells:
             continue
         rect = pygame.Rect(gx * cell_size, gy * cell_size, cell_size, cell_size)
         if world.is_blocked(rect):
+            continue
+        if seed_mask and not seed_mask.contains(rect):
             continue
         cells: Set[GridCell] = {(gx, gy)}
         target = rng.randint(min_cells, max_cells)
@@ -402,7 +455,7 @@ def _generate_seed_cells(
             choices = _directional_neighbors(head, direction)
             placed = False
             for nx, ny in choices:
-                if (nx, ny) in cells或(nx, ny) in existing_cells:
+                if (nx, ny) in cells or (nx, ny) in existing_cells:
                     continue
                 px = nx * cell_size
                 py = ny * cell_size
@@ -414,6 +467,8 @@ def _generate_seed_cells(
                     or candidate.bottom > world.height
                     or world.is_blocked(candidate)
                 ):
+                    continue
+                if seed_mask and not seed_mask.contains(candidate):
                     continue
                 cells.add((nx, ny))
                 direction = Vector2(nx - head[0], ny - head[1]).normalize()
@@ -449,6 +504,31 @@ def _directional_neighbors(cell: GridCell, direction: Vector2) -> List[GridCell]
         neighbors.append((score, (cell[0] + dx, cell[1] + dy)))
     neighbors.sort(key=lambda item: item[0], reverse=True)
     return [cell for _, cell in neighbors]
+
+
+def _select_seed_origin(
+    world: "World",
+    rng: random.Random,
+    cell_size: int,
+    allowed_biomes: Optional[Set[str]] = None,
+) -> Optional[Tuple[int, int, pygame.Rect]]:
+    if not getattr(world, "vegetation_masks", None):
+        return None
+    masks = list(world.vegetation_masks)
+    if allowed_biomes:
+        filtered: List[pygame.Rect] = []
+        for mask in masks:
+            biome = world.get_biome_at(mask.centerx, mask.centery)
+            if biome and biome.name in allowed_biomes:
+                filtered.append(mask)
+        if filtered:
+            masks = filtered
+    if not masks:
+        return None
+    mask = rng.choice(masks)
+    px = rng.randint(mask.left, max(mask.left, mask.right - cell_size))
+    py = rng.randint(mask.top, max(mask.top, mask.bottom - cell_size))
+    return px // cell_size, py // cell_size, mask
 
 
 __all__ = [
