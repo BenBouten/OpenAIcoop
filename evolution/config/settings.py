@@ -391,7 +391,6 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--module-sprite-min-px", type=float, help="Minimum pixel span for module sprites")
     parser.add_argument("--module-sprite-min-length", type=float, help="Minimum pixel length for modules")
     parser.add_argument("--module-sprite-min-height", type=float, help="Minimum pixel height for modules")
-    parser.add_argument("--thrust-scale-exponent", type=float, help="Exponent for scaling thrust with size")
     parser.add_argument("--thrust-base-multiplier", type=float, help="Base multiplier for thrust")
     parser.add_argument("--drag-coefficient-multiplier", type=float, help="Multiplier for drag coefficient")
     parser.add_argument("--reproduction-distance-multiplier", type=float, help="Multiplier for reproduction distance threshold")

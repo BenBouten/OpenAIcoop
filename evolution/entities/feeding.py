@@ -35,59 +35,67 @@ def _lifeform_anchor(entity) -> tuple[float, float]:
 
 def _reachable_targets(lifeform) -> List[BiomassTarget]:
     candidates: List[BiomassTarget] = []
+    state = getattr(lifeform, "state", None)
+    if state is None:
+        return candidates
 
-    plant = getattr(lifeform, "closest_plant", None)
-    if plant is not None and plant.resource > 0:
-        distance = lifeform.distance_to_plant(plant)
-        position = (plant.rect.centerx, plant.rect.centery)
+    position = pygame.math.Vector2(lifeform.x, lifeform.y)
+    vision_sq = float(lifeform.vision) * float(lifeform.vision)
+
+    for plant in getattr(state, "plants", []):
+        if getattr(plant, "resource", 0) <= 0:
+            continue
+        center = pygame.math.Vector2(plant.rect.center)
+        distance_sq = (center - position).length_squared()
+        if distance_sq > vision_sq:
+            continue
+        distance = distance_sq ** 0.5
         hardness = max(0.1, getattr(plant, "density", 0.2))
         candidates.append(
             BiomassTarget(
                 target=plant,
                 tag="plant",
-                position=position,
+                position=(center.x, center.y),
                 distance=distance,
                 hardness=hardness,
                 is_dead=False,
             )
         )
 
-    carcass = getattr(lifeform, "closest_carcass", None)
-    if carcass is not None and getattr(carcass, "resource", 0) > 0:
-        distance = lifeform.distance_to_carcass(carcass)
-        position = (carcass.rect.centerx, carcass.rect.centery)
+    for carcass in getattr(state, "carcasses", []):
+        if getattr(carcass, "resource", 0) <= 0:
+            continue
+        center = pygame.math.Vector2(carcass.rect.center)
+        distance_sq = (center - position).length_squared()
+        if distance_sq > vision_sq:
+            continue
+        distance = distance_sq ** 0.5
         hardness = max(0.05, getattr(carcass, "body_density", 0.2))
         candidates.append(
             BiomassTarget(
                 target=carcass,
                 tag="meat",
-                position=position,
+                position=(center.x, center.y),
                 distance=distance,
                 hardness=hardness,
                 is_dead=True,
             )
         )
 
-    creature_targets: Iterable[Optional[object]] = (
-        getattr(lifeform, "closest_enemy", None),
-        getattr(lifeform, "closest_prey", None),
-        getattr(lifeform, "closest_partner", None),
-    )
-    seen: set[int] = set()
-    for creature in creature_targets:
-        if creature is None or creature.health_now <= 0:
+    for creature in getattr(state, "lifeforms", []):
+        if creature is lifeform or creature.health_now <= 0:
             continue
-        if id(creature) in seen:
+        center = pygame.math.Vector2(creature.rect.center)
+        distance_sq = (center - position).length_squared()
+        if distance_sq > vision_sq:
             continue
-        seen.add(id(creature))
-        distance = lifeform.distance_to(creature)
-        position = (creature.rect.centerx, creature.rect.centery)
+        distance = distance_sq ** 0.5
         hardness = float(getattr(creature, "tissue_hardness", 0.6))
         candidates.append(
             BiomassTarget(
                 target=creature,
                 tag="meat",
-                position=position,
+                position=(center.x, center.y),
                 distance=distance,
                 hardness=hardness,
                 is_lifeform=True,

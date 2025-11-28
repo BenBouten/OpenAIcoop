@@ -50,6 +50,7 @@ class BehaviorMode:
     HUNT = "hunt"
     FLOCK = "flock"
     INTERACT = "interact"
+    NEURAL = "neural"
 
 
 class Lifeform:
@@ -74,8 +75,9 @@ class Lifeform:
         # Movement / Physics state
         self.thrust_phase = random.uniform(0, 6.28)  # Random start phase for oscillation
         self.adrenaline_factor = 0.0
-        self.current_behavior_mode = BehaviorMode.IDLE
-        self.target_behavior_mode = BehaviorMode.IDLE
+        # Legacy behaviour modes are deprecated in favour of neural control.
+        self.current_behavior_mode = BehaviorMode.NEURAL
+        self.target_behavior_mode = BehaviorMode.NEURAL
 
 
         # Core DNA / stats
@@ -115,6 +117,8 @@ class Lifeform:
         self.bite_intent = 0.0
         self.lum_intensity = 0.0
         self.lum_pattern_mod = 0.0
+        self.bite_force = float(dna_profile.get("bite_force", 0.0))
+        self.tissue_hardness = float(dna_profile.get("tissue_hardness", 0.6))
 
         # Derive physical stats from the body graph
         self._derive_stats_from_body()
@@ -264,6 +268,7 @@ class Lifeform:
         self.closest_enemy: Optional[Lifeform] = None
         self.closest_partner: Optional[Lifeform] = None
         self.closest_follower: Optional[Lifeform] = None
+        self.closest_neighbor: Optional[Lifeform] = None
         self.closest_plant = None  # Vegetation instance
         self.closest_carcass: Optional[SinkingCarcass] = None
 
@@ -415,10 +420,7 @@ class Lifeform:
         return self.diet in ("carnivore", "omnivore")
 
     def should_seek_food(self) -> bool:
-        enemy_active = self.closest_enemy and self.closest_enemy.health_now > 0
-        if enemy_active:
-            self._foraging_focus = False
-            return False
+        """Determine if the creature should bias decisions toward finding food."""
 
         if self.hunger <= settings.HUNGER_SATIATED_THRESHOLD:
             self._foraging_focus = False
@@ -435,24 +437,19 @@ class Lifeform:
             self._foraging_focus = True
             return True
 
-        if self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
-            self._foraging_focus = True
+        if self.energy_now < self.energy * 0.55:
             return True
 
-        if self.energy_now < self.energy * 0.45:
+        if self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
+            self._foraging_focus = True
             return True
 
         return False
 
     def should_seek_partner(self) -> bool:
-        if not self.can_reproduce():
-            return False
-        partner = self.closest_partner
-        if partner and getattr(partner, "health_now", 0) > 0:
-            return False
         if getattr(self, "_escape_timer", 0) > 0:
             return False
-        return True
+        return self.can_reproduce()
 
     @property
     def is_foraging(self) -> bool:
@@ -462,10 +459,6 @@ class Lifeform:
         if self.reproduced_cooldown != 0:
             return False
         if not self.is_adult():
-            return False
-        if self.hunger > settings.HUNGER_SEEK_THRESHOLD:
-            return False
-        if self.closest_enemy and self.closest_enemy.health_now > 0:
             return False
         energy_ratio = self.energy_now / max(1, self.energy)
         return energy_ratio >= settings.ENERGY_REPRODUCTION_THRESHOLD
@@ -607,221 +600,69 @@ class Lifeform:
         return True
 
     def update_targets(self) -> None:
-        # Use cached sensor ranges
-        target_ranges = self._sensor_target_ranges
-        
-        creature_range = target_ranges.get("creatures", max(0.0, float(self.vision)))
-        plant_range = target_ranges.get("plants", creature_range)
-        carrion_range = target_ranges.get("carrion", plant_range)
-
-        self.sensory_range = max(creature_range, plant_range, carrion_range)
-        vision_range = creature_range
+        vision_range = max(0.0, float(self.vision))
+        self.sensory_range = vision_range
         if vision_range <= 0:
             self.closest_enemy = None
             self.closest_prey = None
             self.closest_partner = None
+            self.closest_neighbor = None
             self.closest_follower = None
             self.closest_plant = None
+            self.closest_carcass = None
             return
 
         vision_sq = vision_range * vision_range
-        plant_sq = plant_range * plant_range
-        carrion_sq = carrion_range * carrion_range
-        hearing_range = max(
-            vision_range, vision_range + max(0.0, self.hearing_range)
-        )
-        hearing_sq = max(vision_sq, hearing_range * hearing_range)
-        close_range = self.reach + max(self.width, self.height) * 0.5
-        close_range_sq = max(9.0, close_range * close_range)
-        forward = Vector2(self.velocity)
-        if forward.length_squared() < 1e-4:
-            forward = Vector2(self.x_direction, self.y_direction)
-        if forward.length_squared() == 0:
-            forward = Vector2(1, 0)
-        else:
-            forward = forward.normalize()
-        threshold = max(0.05, min(0.95, self.fov_threshold))
-        if getattr(self, "_energy_starved", False) or self.hunger >= settings.HUNGER_SEEK_THRESHOLD:
-            threshold = max(0.05, threshold * 0.8)
-        focused_threshold_sq = threshold * threshold
-        peripheral_threshold = max(0.05, threshold * 0.65)
-        peripheral_threshold_sq = peripheral_threshold * peripheral_threshold
-        peripheral_range = max(close_range * 1.5, vision_range * 0.7)
-        peripheral_sq = peripheral_range * peripheral_range
+        position = Vector2(self.rect.center)
 
-        enemy_candidate = None
-        prey_candidate = None
-        partner_candidate = None
-        follower_candidate = None
+        nearest_neighbor: Optional[Lifeform] = None
+        neighbor_distance = float("inf")
+        partner_candidate: Optional[Lifeform] = None
+        partner_distance = float("inf")
         plant_candidate = None
+        plant_distance = float("inf")
+        carcass_candidate: Optional[SinkingCarcass] = None
+        carcass_distance = float("inf")
 
-        enemy_distance = vision_sq
-        prey_distance = vision_sq
-        partner_distance = vision_sq
-        follower_distance = vision_sq
-        plant_distance = plant_sq
-        carcass_distance = carrion_sq
-        carcass_candidate = None
-
-        # --- Optimization: Use Spatial Grid if available ---
-        spatial_grid = getattr(self.state, "spatial_grid", None)
-        
-        if spatial_grid:
-            # Query candidates within the maximum sensory range
-            candidate_lifeforms = spatial_grid.query_lifeforms(self.x, self.y, self.sensory_range)
-            candidate_plants = spatial_grid.query_plants(self.x, self.y, self.sensory_range)
-        else:
-            # Fallback to full lists
-            candidate_lifeforms = self.state.lifeforms
-            candidate_plants = self.state.plants
-
-        for lifeform in candidate_lifeforms:
-            if lifeform is self:
+        for other in getattr(self.state, "lifeforms", []):
+            if other is self or other.health_now <= 0:
                 continue
-            if lifeform.health_now <= 0:
+            offset = Vector2(other.rect.center) - position
+            distance_sq = offset.length_squared()
+            if distance_sq >= vision_sq:
                 continue
+            if distance_sq < neighbor_distance:
+                neighbor_distance = distance_sq
+                nearest_neighbor = other
+            if self._can_partner_with(other) and distance_sq < partner_distance:
+                partner_distance = distance_sq
+                partner_candidate = other
 
-            if self._is_close_family(lifeform):
+        for plant in getattr(self.state, "plants", []):
+            if getattr(plant, "resource", 0) <= 0:
                 continue
-
-            dx = lifeform.rect.centerx - self.rect.centerx
-            dy = lifeform.rect.centery - self.rect.centery
-            distance_sq = float(dx * dx + dy * dy)
-            if distance_sq > hearing_sq:
-                continue
-
-            in_close = distance_sq <= close_range_sq
-            in_vision = distance_sq <= vision_sq
-            fov_ok = in_close
-            if not fov_ok and in_vision:
-                dot = forward.x * dx + forward.y * dy
-                if distance_sq <= 1e-6:
-                    fov_ok = True
-                else:
-                    cos_angle = dot / max(1e-6, distance_sq**0.5)
-                    if dot > 0 and dot * dot >= focused_threshold_sq * distance_sq:
-                        fov_ok = True
-                    elif (
-                        dot > 0
-                        and distance_sq <= peripheral_sq
-                        and dot * dot >= peripheral_threshold_sq * distance_sq
-                    ):
-                        fov_ok = True
-                    elif self.uses_signal_cones and cos_angle >= self.signal_cone_threshold:
-                        fov_ok = True
-
-            enemy_heard = False
-            if not fov_ok and lifeform.attack_power_now > self.defence_power_now:
-                enemy_heard = True
-
-            if not in_vision and not enemy_heard:
-                continue
-
-            if not self.is_leader and lifeform.is_leader and distance_sq < follower_distance:
-                if not fov_ok and not in_close:
-                    continue
-                follower_candidate = lifeform
-                follower_distance = distance_sq
-
-            if self._can_partner_with(lifeform):
-                if fov_ok and distance_sq < partner_distance:
-                    partner_candidate = lifeform
-                    partner_distance = distance_sq
-                continue
-
-            if lifeform.dna_id == self.dna_id:
-                # Avoid classifying the same species as prey or enemy.
-                continue
-
-            if lifeform.attack_power_now > self.defence_power_now:
-                if (fov_ok or enemy_heard) and distance_sq < enemy_distance:
-                    enemy_candidate = lifeform
-                    enemy_distance = distance_sq
-                continue
-
-            if lifeform.attack_power_now < self.defence_power_now:
-                if fov_ok and distance_sq < prey_distance:
-                    prey_candidate = lifeform
-                    prey_distance = distance_sq
-
-        for plant in candidate_plants:
-            if plant.resource <= 0:
-                continue
-
-            contact_x, contact_y = self.plant_contact_point(plant)
-            dx = contact_x - self.rect.centerx
-            dy = contact_y - self.rect.centery
-            distance_sq = float(dx * dx + dy * dy)
-            if distance_sq > plant_sq:
-                continue
-            in_close = distance_sq <= close_range_sq
-            if not in_close:
-                if distance_sq <= 1e-6:
-                    pass
-                else:
-                    dot = forward.x * dx + forward.y * dy
-                    cos_angle = dot / max(1e-6, distance_sq**0.5)
-                    within_cone = self.uses_signal_cones and cos_angle >= self.signal_cone_threshold
-                    within_periphery = (
-                        dot > 0
-                        and distance_sq <= peripheral_sq
-                        and dot * dot >= peripheral_threshold_sq * distance_sq
-                    )
-                    if not (dot > 0 and dot * dot >= focused_threshold_sq * distance_sq) and not within_cone and not within_periphery:
-                        continue
-            if distance_sq < plant_distance:
+            center = Vector2(plant.x + plant.width / 2, plant.y + plant.height / 2)
+            distance_sq = (center - position).length_squared()
+            if distance_sq < plant_distance and distance_sq < vision_sq:
                 plant_candidate = plant
                 plant_distance = distance_sq
 
         for carcass in getattr(self.state, "carcasses", []):
-            if getattr(carcass, "is_depleted", lambda: False)():
+            if getattr(carcass, "resource", 0) <= 0:
                 continue
-            dx = carcass.rect.centerx - self.rect.centerx
-            dy = carcass.rect.centery - self.rect.centery
-            distance_sq = float(dx * dx + dy * dy)
-            if distance_sq > carrion_sq:
-                continue
-            in_close = distance_sq <= close_range_sq
-            if not in_close:
-                if distance_sq <= 1e-6:
-                    pass
-                else:
-                    dot = forward.x * dx + forward.y * dy
-                    cos_angle = dot / max(1e-6, distance_sq**0.5)
-                    within_cone = self.uses_signal_cones and cos_angle >= self.signal_cone_threshold
-                    within_periphery = (
-                        dot > 0
-                        and distance_sq <= peripheral_sq
-                        and dot * dot >= peripheral_threshold_sq * distance_sq
-                    )
-                    if not (dot > 0 and dot * dot >= focused_threshold_sq * distance_sq) and not within_cone and not within_periphery:
-                        continue
-            if distance_sq < carcass_distance:
+            center = Vector2(carcass.rect.center)
+            distance_sq = (center - position).length_squared()
+            if distance_sq < carcass_distance and distance_sq < vision_sq:
                 carcass_candidate = carcass
                 carcass_distance = distance_sq
 
-        old_enemy = self.closest_enemy
-        old_prey = self.closest_prey
-
-        self.closest_enemy = enemy_candidate
-        self.closest_prey = prey_candidate
+        self.closest_neighbor = nearest_neighbor
         self.closest_partner = partner_candidate
-        self.closest_follower = follower_candidate if not self.is_leader else None
+        self.closest_follower = None
+        self.closest_enemy = None
+        self.closest_prey = None
         self.closest_plant = plant_candidate
         self.closest_carcass = carcass_candidate
-        
-        if self.closest_enemy is not old_enemy and self.closest_enemy:
-            log_event("AI", "THREAT_DETECTED", self.id, {
-                "target_id": self.closest_enemy.id,
-                "dist": round(enemy_distance, 1)
-            })
-            
-        if self.closest_prey is not old_prey and self.closest_prey:
-            log_event("AI", "PREY_ACQUIRED", self.id, {
-                "target_id": self.closest_prey.id,
-                "dist": round(prey_distance, 1)
-            })
-
     def _initialise_body(self, dna_profile: dict) -> None:
         diet = dna_profile.get("diet", "omnivore")
         genome_data = dna_profile.get("genome") or generate_modular_blueprint(diet)

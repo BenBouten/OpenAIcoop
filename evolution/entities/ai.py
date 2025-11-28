@@ -83,17 +83,8 @@ def register_threat(lifeform: "Lifeform", threat: "Lifeform", timestamp: int) ->
     if not threat or threat.health_now <= 0:
         return
 
-    if not lifeform.closest_enemy:
-        lifeform.closest_enemy = threat
-
     _remember(lifeform, "threats", (threat.x, threat.y), timestamp, weight=5.0)
-
-    if lifeform.current_behavior_mode != "flee":
-        lifeform.current_behavior_mode = "flee"
-        direction, _ = lifeform._direction_to_lifeform(threat)
-        if direction.length_squared() > 0:
-            lifeform._escape_vector = -direction
-            lifeform._escape_timer = 30
+    lifeform.last_attacker = threat
 
 
 # ---------------------------------------------------------------------------
