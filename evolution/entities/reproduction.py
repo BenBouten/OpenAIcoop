@@ -162,6 +162,26 @@ def _mix_parent_traits(parent: "Lifeform", partner: "Lifeform") -> Dict[str, obj
         "boid_tendency": boid,
         "risk_tolerance": risk,
         "restlessness": restlessness,
+        "digest_efficiency_plants": (
+            getattr(parent, "digest_efficiency_plants", 1.0)
+            + getattr(partner, "digest_efficiency_plants", 1.0)
+        )
+        / 2,
+        "digest_efficiency_meat": (
+            getattr(parent, "digest_efficiency_meat", 1.0)
+            + getattr(partner, "digest_efficiency_meat", 1.0)
+        )
+        / 2,
+        "bite_force": (
+            getattr(parent, "bite_force", settings.PLANT_BITE_NUTRITION_TARGET)
+            + getattr(partner, "bite_force", settings.PLANT_BITE_NUTRITION_TARGET)
+        )
+        / 2,
+        "tissue_hardness": (
+            getattr(parent, "tissue_hardness", 0.6)
+            + getattr(partner, "tissue_hardness", 0.6)
+        )
+        / 2,
         "morphology": morphology.to_dict(),
         "development": development,
         "genome": genome_blueprint,
@@ -246,6 +266,22 @@ def _apply_mutations(profile: Dict[str, object]) -> None:
         profile["restlessness"] = profile.get("restlessness", 0.5) + random.uniform(
             -0.12, 0.12
         )
+    if random.randint(0, 100) < chance:
+        profile["digest_efficiency_plants"] = profile.get("digest_efficiency_plants", 1.0) + random.uniform(
+            -0.12, 0.12
+        )
+    if random.randint(0, 100) < chance:
+        profile["digest_efficiency_meat"] = profile.get("digest_efficiency_meat", 1.0) + random.uniform(
+            -0.12, 0.12
+        )
+    if random.randint(0, 100) < chance:
+        profile["bite_force"] = profile.get("bite_force", settings.PLANT_BITE_NUTRITION_TARGET) + random.uniform(
+            -4.0, 4.0
+        )
+    if random.randint(0, 100) < chance:
+        profile["tissue_hardness"] = profile.get("tissue_hardness", 0.6) + random.uniform(
+            -0.18, 0.18
+        )
 
     weights = profile.get("brain_weights")
     if not isinstance(weights, list) or len(weights) != expected_weight_count():
@@ -328,6 +364,16 @@ def _clamp_profile(profile: Dict[str, object]) -> None:
     profile["restlessness"] = float(
         max(0.0, min(1.0, profile.get("restlessness", 0.5)))
     )
+    profile["digest_efficiency_plants"] = max(
+        0.1, min(2.0, float(profile.get("digest_efficiency_plants", 1.0)))
+    )
+    profile["digest_efficiency_meat"] = max(
+        0.1, min(2.0, float(profile.get("digest_efficiency_meat", 1.0)))
+    )
+    profile["bite_force"] = max(
+        2.0, min(80.0, float(profile.get("bite_force", settings.PLANT_BITE_NUTRITION_TARGET)))
+    )
+    profile["tissue_hardness"] = max(0.0, min(5.0, float(profile.get("tissue_hardness", 0.6))))
 
 
 def _calculate_change(

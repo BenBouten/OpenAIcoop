@@ -58,7 +58,7 @@ class OceanPhysics:
                 drag=0.18,
                 light_absorption=0.0014,
                 temperature=26.0,
-                current=Vector2(28.0, 0.0),
+                current=Vector2(25.0, 1.0),
             ),
             OceanLayer(
                 name="Twilight",
@@ -68,7 +68,7 @@ class OceanPhysics:
                 drag=0.24,
                 light_absorption=0.003,
                 temperature=12.0,
-                current=Vector2(12.0, 2.0),
+                current=Vector2(-15.0, -1.0),
             ),
             OceanLayer(
                 name="Midnight",
@@ -78,7 +78,7 @@ class OceanPhysics:
                 drag=0.32,
                 light_absorption=0.008,
                 temperature=4.0,
-                current=Vector2(6.0, 6.0),
+                current=Vector2(8.0, 0.5),
             ),
             OceanLayer(
                 name="Abyss",
@@ -88,7 +88,7 @@ class OceanPhysics:
                 drag=0.42,
                 light_absorption=0.02,
                 temperature=1.0,
-                current=Vector2(2.0, 4.0),
+                current=Vector2(-4.0, 0.0),
             ),
         ]
 
@@ -122,7 +122,15 @@ class OceanPhysics:
         )
         light = math.exp(-clamped_depth * layer.light_absorption)
         sway = math.sin(self._time * 0.12 + layer_fraction) * 14.0
-        current = layer.current.rotate(sway)
+        
+        # Global wind oscillation (period ~ 120 seconds)
+        wind_cycle = math.sin(self._time * 0.05) 
+        wind_direction = 1.0 if wind_cycle > 0 else -1.0
+        
+        # Apply wind direction to the base current
+        base_current = Vector2(layer.current.x * wind_direction, layer.current.y)
+        
+        current = base_current.rotate(sway)
         current *= 0.4 + 0.6 * (1.0 - layer_fraction)
         return FluidProperties(
             layer=layer,

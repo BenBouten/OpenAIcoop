@@ -18,6 +18,8 @@ import math
 import random
 from typing import TYPE_CHECKING
 
+from evolution.config import settings
+
 import pygame
 from pygame.math import Vector2
 
@@ -337,114 +339,257 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
     # Physics & Thrust Calculation
     # --------------------------------------------------
 
+    # --------------------------------------------------
+    # Physics & Thrust Calculation (Rigid Body Dynamics)
+    # --------------------------------------------------
+
+    # 1. Determine Desired State
+    # --------------------------
+    
+    # Calculate behavioral intent
     command_ratio = _behavioral_thrust_ratio(lifeform)
     frequency_ratio = _behavioral_frequency_ratio(lifeform)
-    current_speed = lifeform.velocity.length()
-
-    # Update thrust phase for oscillation
-    # Frequency depends op gedragssnelheid
+    
+    # Update animation state (for visual oscillation of tentacles/fins)
     base_freq = 3.0
     frequency = base_freq + frequency_ratio * 5.0
-
-    # Adrenaline boost (FLEE/HUNT)
-    target_adrenaline = 0.0
     mode = getattr(lifeform, "current_behavior_mode", "idle")
     if mode in ("flee", "hunt"):
-        target_adrenaline = 1.0
         frequency *= 1.45
-
-    # Smoothly interpolate adrenaline
-    current_adrenaline = getattr(lifeform, "adrenaline_factor", 0.0)
-    lifeform.adrenaline_factor = current_adrenaline * 0.8 + target_adrenaline * 0.2
-
+        
     lifeform.thrust_phase += frequency * dt
     if lifeform.thrust_phase > 6.28318:
         lifeform.thrust_phase -= 6.28318
 
-    # Oscillating thrust:
-    # - Normal: varies between 0.6 and 1.4
-    # - Adrenaline: varies between 0.4 and 2.2 (explosive bursts)
-    oscillation = math.sin(lifeform.thrust_phase)
-    burst_intensity = 0.4 + lifeform.adrenaline_factor * 0.6
-    thrust_mod = 1.0 + oscillation * burst_intensity
+    # Desired velocity vector (world space)
+    target_speed = _target_swim_speed(lifeform, command_ratio)
+    desired_velocity = desired * target_speed
+    
+    # Desired heading (usually aligned with desired velocity, but could be decoupled)
+    if desired.length_squared() > 0:
+        desired_angle_rad = math.atan2(desired.y, desired.x)
+    else:
+        desired_angle_rad = math.radians(lifeform.angle)
 
-    # Fin damping (stability)
-    fin_count = getattr(lifeform, "fin_count", 0)
-    stability = 0.85 + min(0.14, fin_count * 0.02)
+    # Current State
+    current_angle_rad = math.radians(lifeform.angle)
+    current_velocity = lifeform.velocity
+    current_angular_velocity = getattr(lifeform, "angular_velocity", 0.0)
 
-    # Apply thrust
-    base_effort = _compute_thrust_effort(lifeform, current_speed, command_ratio)
-    effort = base_effort * thrust_mod
-
-    # Burst logic from locomotion profile (superimposed on oscillation)
-    if locomotion and locomotion.burst_force > 1.0:
-        if lifeform._burst_timer > 0:
-            effort *= locomotion.burst_force
-            lifeform._burst_timer -= 1
-        elif lifeform._burst_cooldown > 0:
-            lifeform._burst_cooldown -= 1
-        else:
-            should_burst = (
-                lifeform.closest_enemy
-                or lifeform.closest_prey
-                or lifeform.should_seek_food()
-                or mode == "flee"
-            )
-            if should_burst and lifeform.energy_now > 20.0:
-                # Only trigger burst if we are in the positive phase of oscillation
-                if oscillation > 0.3:
-                    lifeform._burst_timer = max(5, locomotion.burst_duration + 1)
-                    lifeform._burst_cooldown = max(22, int(locomotion.burst_cooldown * 0.75))
-                    effort *= locomotion.burst_force
-
-    clamped_effort = max(-1.0, min(2.0, effort)) # Allow bursting > 1.0
-    propulsion_acceleration = physics_body.propulsion_acceleration(min(1.0, clamped_effort)) * max(1.0, clamped_effort)
-    propulsion_force = physics_body.max_thrust * clamped_effort
-
-    desired = _blend_desired_with_velocity(lifeform, desired)
-    thrust_vector, thrust_activity = _compose_steering_thrust(
-        lifeform, physics_body, desired, propulsion_acceleration
+    # Calculate Errors (PID-like control)
+    # Linear Error (Local Space)
+    velocity_error_world = desired_velocity - current_velocity
+    # Rotate error to local space to map to fixed thrusters
+    cos_a = math.cos(-current_angle_rad)
+    sin_a = math.sin(-current_angle_rad)
+    velocity_error_local = Vector2(
+        velocity_error_world.x * cos_a - velocity_error_world.y * sin_a,
+        velocity_error_world.x * sin_a + velocity_error_world.y * cos_a
     )
+
+    # Angular Error
+    # Shortest path angle difference
+    angle_diff = (desired_angle_rad - current_angle_rad + math.pi) % (2 * math.pi) - math.pi
+    # Desired angular velocity to close the gap
+    desired_angular_vel = angle_diff * 4.0 # P-controller gain
+    angular_vel_error = desired_angular_vel - current_angular_velocity
+
+    # 2. Thruster Allocation (Control Mixer)
+    # --------------------------------------
+    net_force_local = Vector2(0.0, 0.0)
+    net_torque = 0.0
+    thrust_activity: dict[str, float] = {}
+    
+    # Energy tracking
+    total_energy_cost = 0.0
+
+    # Physics Properties
+    mass = physics_body.mass
+    inertia = physics_body.moment_of_inertia
+    
+    # Damping factors (simulated water resistance)
+    # Reduced drag to allow for better forward momentum
+    linear_drag_coeff = physics_body.drag_coefficient * settings.DRAG_COEFFICIENT_MULTIPLIER
+    angular_drag_coeff = max(0.1, physics_body.lateral_area * 2.0)
+
+    # Iterate Thrusters
+    # We want to find activation 'u' (0..1) for each thruster to minimize error.
+    # Simple heuristic: Dot product of thruster effect with error vector.
+    
+    # Tuning weights for the mixer
+    k_linear = 2.0
+    k_angular = 6.0 # Prioritize turning
+    
+    # Burst Mode Logic
+    burst_multiplier = 1.0
+    mode = getattr(lifeform, "current_behavior_mode", "idle")
+    if mode in ("flee", "hunt") and lifeform.energy_now > 25.0:
+        burst_multiplier = 5.0
+
+    for thruster in physics_body.thrusters:
+        # Thruster properties
+        t_pos = Vector2(thruster.position) # Relative to CoM
+        base_dir = Vector2(thruster.direction) # Unit vector in local space
+        max_f = thruster.max_force * burst_multiplier
+        limit = thruster.vectoring_limit
+        
+        # If vectoring is available, we can rotate the thrust vector to better suit our needs.
+        # We want to maximize: Force . Desired_Force + Torque . Desired_Torque
+        # This is a small optimization problem per thruster.
+        
+        # Simplified approach: Check 3 angles (center, max left, max right)
+        best_score = -1e9
+        best_vec = base_dir
+        best_torque = 0.0
+        
+        candidates = [0.0]
+        if limit > 0.01:
+            candidates.extend([limit, -limit])
+            
+        for angle in candidates:
+            # Rotate base_dir by angle
+            cos_v = math.cos(angle)
+            sin_v = math.sin(angle)
+            # Local rotation
+            # x' = x cos - y sin
+            # y' = x sin + y cos
+            # Note: base_dir is already in body frame.
+            curr_dir = Vector2(
+                base_dir.x * cos_v - base_dir.y * sin_v,
+                base_dir.x * sin_v + base_dir.y * cos_v
+            )
+            
+            # Torque = r x F
+            t_val = t_pos.x * curr_dir.y - t_pos.y * curr_dir.x
+            
+            # Utility
+            # Ensure velocity error is normalized for direction comparison
+            vel_err_dir = velocity_error_local.normalize() if velocity_error_local.length_squared() > 0.001 else Vector2(1, 0)
+            lin_util = curr_dir.dot(vel_err_dir)
+            ang_util = 0.0
+            if abs(angular_vel_error) > 0.01:
+                ang_util = (t_val * (1.0 if angular_vel_error > 0 else -1.0))
+                ang_util /= max(0.1, abs(t_pos.length()))
+            
+            # Tuning weights: Prioritize linear motion slightly more to ensure they actually swim
+            k_linear_tuned = 3.0
+            k_angular_tuned = 2.5
+            
+            # Head-first steering logic:
+            # If the target is behind us (velocity_error_local.x < 0), we discourage linear thrust
+            # that pushes us "forward" along the error vector (which is actually backward relative to body).
+            # Instead, we prioritize turning.
+            if velocity_error_local.x < -0.1:
+                k_linear_tuned = 0.5 # Suppress backward/strafing movement
+                k_angular_tuned = 8.0 # Prioritize turning
+            
+            # If we are just trying to move forward (no significant angular error),
+            # we should not penalize thrusters that don't help with turning.
+            # In fact, we should boost them if they help with linear motion.
+            elif abs(angular_vel_error) < 0.1:
+                k_angular_tuned = 0.1 # Ignore torque effects if we are straight
+                k_linear_tuned = 5.0 # Boost forward drive
+            
+            score = (lin_util * k_linear_tuned) + (ang_util * k_angular_tuned)
+            
+            if score > best_score:
+                best_score = score
+                best_vec = curr_dir
+                best_torque = t_val
+
+        # Activation logic
+        activation = 0.0
+        if best_score > 0:
+            activation = min(1.0, best_score * 1.5) # Gain
+            
+            # Apply Force & Torque
+            force_mag = max_f * activation
+            force_vec = best_vec * force_mag
+            
+            net_force_local += force_vec
+            net_torque += best_torque * force_mag
+            
+            thrust_activity[thruster.node_id] = activation
+            total_energy_cost += thruster.activation_cost * activation * burst_multiplier
+
+    # 3. Integration (Symplectic Euler)
+    # ---------------------------------
+    
+    # Transform net force to world space
+    cos_w = math.cos(current_angle_rad)
+    sin_w = math.sin(current_angle_rad)
+    net_force_world = Vector2(
+        net_force_local.x * cos_w - net_force_local.y * sin_w,
+        net_force_local.x * sin_w + net_force_local.y * cos_w
+    )
+    
+    # Apply Drag (Quadratic)
+    speed_sq = current_velocity.length_squared()
+    if speed_sq > 0:
+        drag_force = -current_velocity.normalize() * (0.5 * 1.0 * linear_drag_coeff * physics_body.frontal_area * speed_sq)
+        net_force_world += drag_force
+
+    # Apply Angular Drag
+    ang_speed_sq = current_angular_velocity * current_angular_velocity
+    if ang_speed_sq > 0:
+        ang_drag_torque = - (current_angular_velocity / abs(current_angular_velocity)) * (0.5 * 1.0 * angular_drag_coeff * ang_speed_sq)
+        net_torque += ang_drag_torque
+
+    # Update Linear Motion
+    acceleration = net_force_world / mass
+    lifeform.velocity += acceleration * dt
+    
+    # Update Angular Motion
+    angular_acceleration = net_torque / inertia
+    current_angular_velocity += angular_acceleration * dt
+    
+    # Clamp angular velocity for stability
+    max_ang_vel = 6.0 # rad/s
+    current_angular_velocity = max(-max_ang_vel, min(max_ang_vel, current_angular_velocity))
+    
+    # Apply to Lifeform
+    lifeform.angular_velocity = current_angular_velocity
+    lifeform.angle = (lifeform.angle + math.degrees(current_angular_velocity * dt)) % 360.0
+    
+    # Update direction vectors for legacy compatibility
+    rad_new = math.radians(lifeform.angle)
+    lifeform.x_direction = math.cos(rad_new)
+    lifeform.y_direction = math.sin(rad_new)
+
+    # 4. Telemetry & Energy
+    # ---------------------
+    lifeform.active_thrust_map = thrust_activity
+    thrust_magnitude = net_force_local.length()
+    lifeform.thrust_output = thrust_magnitude
+
+    # Calculate average effort for telemetry
+    avg_effort = 0.0
+    if thrust_activity:
+        avg_effort = sum(thrust_activity.values()) / len(thrust_activity)
+
     telemetry.movement_sample(
         tick=now_ms,
         lifeform=lifeform,
         desired=desired,
-        thrust=propulsion_acceleration,
-        effort=clamped_effort,
+        thrust=thrust_magnitude / max(0.1, mass),
+        effort=avg_effort,
     )
-    if thrust_activity:
-        thrust_activity = {
-            node_id: max(0.0, min(1.0, weight * abs(clamped_effort)))
-            for node_id, weight in thrust_activity.items()
-        }
-    lifeform.active_thrust_map = thrust_activity
-    lifeform.thrust_output = propulsion_force
+    
+    # Fluid dynamics interaction (simplified)
     attempted_position, fluid = state.world.apply_fluid_dynamics(
         lifeform,
-        thrust_vector,
+        Vector2(0,0), # Thrust already applied to velocity
         dt,
         max_speed=max_swim_speed,
     )
+    
     if fluid is not None:
         lifeform.last_fluid_properties = fluid
         if getattr(lifeform, "locomotion_strategy", "") == "tentacle_walker":
             stick = min(0.9, getattr(lifeform, "grip_strength", 1.0) * 0.4)
             lifeform.velocity -= fluid.current * stick * 0.015
 
-    effort_magnitude = abs(clamped_effort)
-    motion_cost = getattr(lifeform, "motion_energy_cost", 1.0)
-    energy_spent = (
-        (physics_body.energy_cost * 0.01 + physics_body.power_output * 0.002)
-        * effort_magnitude
-        * motion_cost
-        * max(0.016, dt)
-        + abs(propulsion_force) * 0.0004
-    )
-    if clamped_effort > 1.0:
-        energy_spent *= clamped_effort * 1.1
-    if drift_bias > 0.5:
-        energy_spent *= 0.6
-    lifeform.energy_now = max(0.0, lifeform.energy_now - energy_spent)
+    lifeform.energy_now = max(0.0, lifeform.energy_now - total_energy_cost * dt)
     attempted_x = float(attempted_position.x)
     attempted_y = float(attempted_position.y)
 

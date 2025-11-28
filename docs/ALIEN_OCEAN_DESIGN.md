@@ -1,17 +1,23 @@
 # Alien Ocean Design
 
+> **Alignment note (2025 vision):** Dit document is bijgewerkt om aan te sluiten op de emergente, physics-first filosofie uit
+> `docs/evolution_design.md`. Hardcoded rollen of vooraf gedefinieerde gedragspatronen zijn vervangen door trait-gedreven,
+> energie-gebalanceerde systemen die predatie, voortplanting en visuals laten ontstaan vanuit lokale prikkels.
+
 ## Visie
-- Evolutie-simulator
+- Evolutie-simulator met **emergent gedrag** i.p.v. voorgeschreven rollen
 - Newtoniaanse fysica (position, velocity, forces, mass, drag, energy)
+- Energy-first ecosystemen: voeding/biomassa → energie → beweging/reproductie → nieuwe biomassa
+- Trait-gedreven visuals (inclusief bioluminescentie en pigmenten) die reageren op diepte/omgeving
 - Setting: Alien Ocean met dieptelagen (sunlit / twilight / dark / abyss)
 - Zijaanzicht (denk aan *Ecco the Dolphin*): zwaartekracht, drijfvermogen en druk nemen toe met diepte
 
 ## Kernsystemen
-1. **DNA & traits** – genetische representatie van fysieke en gedragskenmerken.
-2. **Lifeforms / creatures** – entiteiten die eigenschappen erven, muteren en evolueren.
-3. **World / biomes** – generieke wereldlaag die later wordt uitgebreid naar oceaan-ecosystemen.
+1. **DNA & traits** – genetische representatie van fysieke, metabole en visuele kenmerken; gedrag ontstaat uit sensoren + energie.
+2. **Lifeforms / creatures** – entiteiten die eigenschappen erven, muteren en evolueren zonder hardcoded prooi/roofdierrollen.
+3. **World / biomes** – generieke wereldlaag (oceaan-ecosystemen) met lokale stroming, licht en zuurstof die energiehuishouding beïnvloeden.
 4. **Physics layer** – 2D newtoniaanse simulatie in water met krachten (thrust, drag, buoyancy) en stromingen.
-5. **Energy & fitness** – energiemodel gekoppeld aan fysica voor verbruik en efficiëntie.
+5. **Energy & fitness** – energiemodel gekoppeld aan fysica voor verbruik en efficiëntie; reproductie kost expliciet energie/biomassa.
 
 ### Neuraal gedrag
 - Elke lifeform krijgt een vaste feedforward-controller (10 inputs → 12 verborgen neuronen → 7 outputs) waarvan alle gewichten als vlakke floatlijst in het DNA zitten.【F:evolution/entities/neural_controller.py†L1-L82】
@@ -64,21 +70,20 @@ Het nieuwe lijf wordt niet langer beschreven door vlakke `width/height`-velden m
 - Licht & druk hebben directe invloed op energie / gezondheid zodat dieptekeuzes voelbaar zijn.
 - Locomotie wordt volledig oceaan-gebaseerd: geen landtrillingen meer maar vinnen, jetblasts, drift, grijptentakels en elektromagnetische zintuigen.
 
-### Locomotie archetypes
-Ocean-evolution kent zes automatisch afgeleide strategieën uit DNA/morfologie:
+### Locomotie archetypes → emergente locomotie
+In plaats van vaste archetypes ontstaan locomotieprofielen uit hydrodynamica + energie:
 
-1. **Fin-based swimmers** – Oscillerende vinnen leveren efficiënte thrust en hoge topsnelheid.
-2. **Jet propulsion** – Mantelcompressies geven dure snelheidsbursts voor Newton/Energie fitness-tests.
-3. **Drift feeders** – Sensor-zware zwevers laten zich door stromingen voeren en filteren planktonwolken.
-4. **Benthic crawlers** – Gemuteerde pootjes kruipen veilig over de bodem met hoge grip op rotsen.
-5. **Tentacle locomotion** – Langzame tentakelgangers met grip physics voor interactie met mineralen.
-6. **Electromagnetic sensing beasts** – Diepzee stalkers met geur+elektrische “signal cones” i.p.v. zicht.
+- **Fin / thrust / jet / crawl / drift variaties** komen voort uit de samenstelling van modules (massa, drag, thrust, grip) en de
+  energie die beschikbaar is om deze krachten te voeden.
+- AI krijgt geen gedragspreset per archetype maar beslissingen op basis van lokale energievoordelen (bijv. “drift met stroming
+  omdat thrust duur is” of “burst omdat prooi binnen beetbereik valt”).
+- Sensor- en dieptebias ontstaat uit trait-gedreven pijn/voordeel-curves (licht, zuurstof, druk) i.p.v. hardcoded preferenties.
 
-Elke strategie bepaalt thrust-efficiëntie, energieverbruik, grip, sensorbonus, drift-voorkeur en dieptebias zodat movement- en AI-systemen automatisch op de nieuwe werkelijkheid inspelen.
-
-### Carrion & voedselketen
+### Biomassa & voedselketen
 - Gestorven dieren spawnen een `SinkingCarcass` die langzaam naar de bodem zakt en vervalt.
 - Carcassen zijn voedsel voor carnivoren/omnivoren; AI deelt locaties in geheugen/groep en plantblokkerende logica is aangepast.
+- **Biomassa is generiek**: beetgrootte en metabolisme bepalen hoeveel energie/gezondheid een hap oplevert of kost, zodat
+  “roofdieren” natuurlijk ontstaan uit kracht + energiebehoefte i.p.v. vooraf ingestelde rollen.
 - De oceaan bevat zo een doorlopend nutriënten-cyclus: dode wezens worden energiebron voor volgende generaties.
 
 ## Roadmap

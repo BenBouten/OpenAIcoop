@@ -44,6 +44,36 @@ def _default_factory_for(cls: Type[BodyModule]) -> ModuleFactory:
             value = kwargs["spectrum"]
             if isinstance(value, Iterable) and not isinstance(value, (str, bytes)):
                 kwargs["spectrum"] = tuple(value)
+        # Handle size scaling
+        if "size_scale" in kwargs:
+            scale = float(kwargs.pop("size_scale"))
+            # We need to instantiate with scaled size if it's not passed explicitly
+            # But wait, size is a field on the dataclass.
+            # We can't easily modify the default factory lambda for stats if we change size here.
+            # However, the classes are dataclasses.
+            # If we pass 'size' in kwargs, it overrides the default.
+            # But we don't know the default size here without the class.
+            # Actually, we can just let the class init, then modify? No, frozen=False but good practice.
+            
+            # Better approach: The classes define 'size' as a field with a default.
+            # We can't access that default easily on the class before init without inspecting.
+            # BUT, we can just pass size_scale to the constructor if we add it to BodyModule?
+            # Or we can handle it here by inspecting the class default.
+            
+            # Let's try to get the default size from the class if possible.
+            # Most modules have a default size.
+            from dataclasses import fields
+            for f in fields(cls):
+                if f.name == "size":
+                    default_size = f.default
+                    if default_size and isinstance(default_size, tuple):
+                        kwargs["size"] = (
+                            default_size[0] * scale,
+                            default_size[1] * scale,
+                            default_size[2] * scale
+                        )
+                    break
+        
         return cls(**kwargs)
 
     return _builder
