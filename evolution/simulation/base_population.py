@@ -64,7 +64,9 @@ class BaseDNATemplate:
         blueprint = serialize_body_graph(graph).to_dict()
 
         brain_seed = list(self.base_brain) or initialize_brain_weights(rng)
-        brain = mutate_brain_weights(brain_seed, rng=rng, sigma=0.08, mutation_rate=0.35)
+        brain = mutate_brain_weights(
+            brain_seed, rng=rng, sigma=0.06, mutation_rate=0.22
+        )
 
         color = _jitter_color(self.color, rng)
         development = generate_development_plan(self.diet)
@@ -111,15 +113,16 @@ class BaseDNATemplate:
 def base_templates(rng: random.Random, *, count: int) -> List[BaseDNATemplate]:
     """Return the requested number of neutral base templates."""
 
-    common = _common_ancestor(rng)
-    variants = [common, _ray_variant(rng), _keel_variant(rng)]
-    if count <= len(variants):
-        return variants[: max(1, count)]
+    templates: List[BaseDNATemplate] = [_common_ancestor(rng)]
+    optional_variants = [_ray_variant(rng), _keel_variant(rng)]
 
-    extended: List[BaseDNATemplate] = []
-    while len(extended) < count:
-        extended.append(variants[len(extended) % len(variants)])
-    return extended
+    if count > 1:
+        idx = 0
+        while len(templates) < count and optional_variants:
+            templates.append(optional_variants[idx % len(optional_variants)])
+            idx += 1
+
+    return templates[:count]
 
 
 def _common_ancestor(rng: random.Random) -> BaseDNATemplate:
