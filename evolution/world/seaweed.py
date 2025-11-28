@@ -154,6 +154,19 @@ class SeaweedStrand:
         self._base_rect = base
         self.rect = base.move(int(self._offset.x), int(self._offset.y))
 
+    def set_size(self) -> None:
+        """Compatibility helper used by the simulation bootstrap."""
+        if not self.cells:
+            self.rect = pygame.Rect(0, 0, 0, 0)
+            self._base_rect = self.rect
+            self.surface = pygame.Surface((0, 0), pygame.SRCALPHA)
+            self._dirty = False
+            return
+
+        self._update_rect()
+        # Surface will be resized lazily on the next draw call.
+        self._dirty = True
+
     def update_current(self, world: "World", dt: float) -> None:
         ocean = getattr(world, "ocean", None)
         if ocean is None or not self.cells:
