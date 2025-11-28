@@ -205,20 +205,28 @@ def _keel_variant(rng: random.Random) -> BaseDNATemplate:
         "head": ModuleGene("head", "head", {}, parent="core", slot="head_socket"),
         "eye": ModuleGene("eye", "eye", {}, parent="head", slot="cranial_sensor"),
         "mouth": ModuleGene("mouth", "mouth", {}, parent="head", slot="mouth_socket"),
-        "thruster": ModuleGene("thruster", "propulsion", {"power_output": 28.0}, parent="core", slot="ventral_core"),
+        # RoundCore uses different attachment slots than TrunkCore.
+        # Ventral propulsion mounts on the ventral_socket and fins anchor to radial mounts.
+        "thruster": ModuleGene(
+            "thruster",
+            "propulsion",
+            {"power_output": 28.0},
+            parent="core",
+            slot="ventral_socket",
+        ),
         "fin_left": ModuleGene(
             "fin_left",
             "limb",
             {"variant": "fin"},
             parent="core",
-            slot="lateral_mount_left",
+            slot="radial_1",
         ),
         "fin_right": ModuleGene(
             "fin_right",
             "limb",
             {"variant": "fin"},
             parent="core",
-            slot="lateral_mount_right",
+            slot="radial_2",
         ),
     }
     genome = Genome(genes=genes, constraints=GenomeConstraints(max_mass=150.0, nerve_capacity=18.0))

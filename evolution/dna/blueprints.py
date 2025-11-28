@@ -62,7 +62,10 @@ def _select_spectrum(diet: str, rng: random.Random) -> Sequence[str]:
 
 
 _MIN_ATTACHMENTS = {
+    # TrunkCore defaults
     "core": ("head_socket", "ventral_core"),
+    # RoundCore defaults
+    "round_core": ("head_socket", "ventral_socket"),
 }
 
 _DIET_MODULE_POOLS: Dict[str, Dict[str, Sequence[str]]] = {
@@ -82,9 +85,16 @@ _DIET_MODULE_POOLS: Dict[str, Dict[str, Sequence[str]]] = {
 
 _SLOT_PRIORITY = {
     "head": ["head_socket", "cranial_sensor"],
-    "thruster": ["ventral_core", "tail_sensors"],
+    "thruster": ["ventral_core", "ventral_socket", "tail_sensors"],
     # Limbs only mount to core sockets initially; chained segments use "proximal_joint"
-    "limb": ["lateral_mount_left", "lateral_mount_right"],
+    "limb": [
+        "lateral_mount_left",
+        "lateral_mount_right",
+        "radial_1",
+        "radial_2",
+        "radial_3",
+        "radial_4",
+    ],
     "sensor": ["cranial_sensor", "dorsal_mount", "tail_sensors"],
 }
 
