@@ -1138,6 +1138,8 @@ class Lifeform:
             body_geometry=getattr(self, "profile_geometry", {}),
         )
         self.state.carcasses.append(carcass)
+        if getattr(self.state, "world", None) is not None and self.state.world.carcasses is not self.state.carcasses:
+            self.state.world.carcasses.append(carcass)
 
         if self in self.state.lifeforms:
             self.state.lifeforms.remove(self)
