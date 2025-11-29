@@ -124,7 +124,10 @@ state.notification_context = notification_context
 state.notifications = notification_context.notification_manager
 
 if settings.TELEMETRY_ENABLED:
-    telemetry.enable_telemetry("all")
+    # Enable telemetry (excluding movement to reduce file size)
+    telemetry.enable_telemetry("combat")
+    telemetry.enable_telemetry("events")
+    telemetry.enable_telemetry("reproduction")
     logger.info("Telemetry enabled; writing JSONL samples to %s", settings.LOG_DIRECTORY / "telemetry")
 else:
     logger.info("Telemetry disabled; set EVOLUTION_TELEMETRY=1 to capture movement/combat data")
@@ -1312,10 +1315,34 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                     plant.set_size()
                     plant.regrow(world, plants)
 
-                for carcass in list(carcasses):
+                for i, carcass in enumerate(list(carcasses)):
+                    # Auto-upgrade legacy carcasses
+                    if type(carcass).__name__ == "SinkingCarcass":
+                        from ..world.advanced_carcass import DecomposingCarcass
+                        new_carcass = DecomposingCarcass(
+                            position=(carcass.x, carcass.y),
+                            size=(carcass.width, carcass.height),
+                            mass=carcass.mass,
+                            nutrition=carcass.resource,
+                            color=carcass.color,
+                            body_graph=None,  # Legacy carcasses have no body graph
+                        )
+                        # Preserve some state
+                        new_carcass.velocity = Vector2(carcass.velocity)
+                        
+                        # Replace in the main list
+                        # We need to find the index in the actual list, not the copy
+                        try:
+                            idx = carcasses.index(carcass)
+                            carcasses[idx] = new_carcass
+                            carcass = new_carcass
+                        except ValueError:
+                            pass
+
                     carcass.update(world, delta_time)
                     if carcass.is_depleted():
-                        carcasses.remove(carcass)
+                        if carcass in carcasses:
+                            carcasses.remove(carcass)
 
                 lifeform_snapshot = list(lifeforms)
                 average_maturity = (
@@ -1325,7 +1352,7 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                 )
 
                 # Rebuild spatial grid for efficient proximity queries
-                state.spatial_grid = build_spatial_grid(lifeform_snapshot, plants, cell_size=200.0)
+                state.spatial_grid = build_spatial_grid(lifeform_snapshot, plants, carcasses, cell_size=200.0)
 
                 updated_lifeforms: List[Lifeform] = []
                 for lifeform in lifeform_snapshot:
@@ -1333,7 +1360,6 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                     lifeform.set_speed(average_maturity)
                     lifeform.calculate_attack_power()
                     lifeform.calculate_defence_power()
-                    lifeform.check_group()
 
                     # 2) Interne levensloop
                     lifeform.progression(delta_time)

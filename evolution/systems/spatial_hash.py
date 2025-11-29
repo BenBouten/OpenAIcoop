@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from collections.abc import Iterable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from ..entities.lifeform import Lifeform
@@ -32,11 +32,13 @@ class SpatialHashGrid:
         self.cell_size = max(1.0, cell_size)
         self._lifeforms: dict[tuple[int, int], list[Lifeform]] = defaultdict(list)
         self._plants: dict[tuple[int, int], list[Plant]] = defaultdict(list)
+        self._carcasses: dict[tuple[int, int], list[Any]] = defaultdict(list)
 
     def clear(self) -> None:
         """Clear all entities from the grid."""
         self._lifeforms.clear()
         self._plants.clear()
+        self._carcasses.clear()
 
     def _get_cell(self, x: float, y: float) -> tuple[int, int]:
         """Get the grid cell coordinates for a world position."""
@@ -144,6 +146,44 @@ class SpatialHashGrid:
 
         return results
 
+    def add_carcass(self, carcass: Any) -> None:
+        """Add a carcass to the grid based on its position."""
+        # Use center of carcass
+        if hasattr(carcass, "rect"):
+            center_x = carcass.rect.centerx
+            center_y = carcass.rect.centery
+        else:
+            center_x = getattr(carcass, "x", 0)
+            center_y = getattr(carcass, "y", 0)
+            
+        cell = self._get_cell(center_x, center_y)
+        self._carcasses[cell].append(carcass)
+
+    def query_carcasses(self, x: float, y: float, radius: float) -> list[Any]:
+        """Query all carcasses within radius of the given point."""
+        cells = self._get_cells_in_radius(x, y, radius)
+        seen = set()
+        results = []
+        radius_sq = radius * radius
+
+        for cell in cells:
+            for carcass in self._carcasses.get(cell, []):
+                if id(carcass) in seen:
+                    continue
+                seen.add(id(carcass))
+
+                if hasattr(carcass, "rect"):
+                    dx = carcass.rect.centerx - x
+                    dy = carcass.rect.centery - y
+                else:
+                    dx = getattr(carcass, "x", 0) - x
+                    dy = getattr(carcass, "y", 0) - y
+                    
+                if dx * dx + dy * dy <= radius_sq:
+                    results.append(carcass)
+
+        return results
+
     def query_lifeforms_rect(
         self,
         min_x: float,
@@ -181,6 +221,7 @@ class SpatialHashGrid:
 def build_spatial_grid(
     lifeforms: Iterable[Lifeform],
     plants: Iterable[Plant],
+    carcasses: Iterable[Any] = (),
     cell_size: float = 200.0
 ) -> SpatialHashGrid:
     """Build a spatial hash grid from collections of entities.
@@ -188,14 +229,11 @@ def build_spatial_grid(
     Args:
         lifeforms: Iterable of lifeforms to add to the grid
         plants: Iterable of plants to add to the grid
+        carcasses: Iterable of carcasses to add to the grid
         cell_size: Size of each grid cell (default: 200.0)
 
     Returns:
         Populated SpatialHashGrid ready for queries
-
-    Example:
-        >>> grid = build_spatial_grid(state.lifeforms, state.plants)
-        >>> nearby = grid.query_lifeforms(x=100, y=100, radius=50)
     """
     grid = SpatialHashGrid(cell_size)
 
@@ -204,6 +242,9 @@ def build_spatial_grid(
 
     for plant in plants:
         grid.add_plant(plant)
+        
+    for carcass in carcasses:
+        grid.add_carcass(carcass)
 
     return grid
 

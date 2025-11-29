@@ -46,7 +46,10 @@ def reset_simulation(
 ) -> None:
     """Reset all shared simulation state and regenerate the world."""
     
-    enable_telemetry("all")
+    # Enable telemetry (excluding movement to reduce file size)
+    enable_telemetry("combat")
+    enable_telemetry("events")
+    enable_telemetry("reproduction")
 
     state.lifeforms.clear()
     state.dna_profiles.clear()

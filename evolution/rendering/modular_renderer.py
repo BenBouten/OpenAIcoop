@@ -78,6 +78,9 @@ class AnimatedModule:
     natural_orientation: float = 0.0
     outline_local: List[Vector2] = field(default_factory=list)
     outline_world: List[Vector2] = field(default_factory=list)
+    
+    # Bioluminescence state
+    current_light_intensity: float = 0.0
 
     @property
     def mass(self) -> float:
@@ -96,6 +99,8 @@ class ModularRendererState:
     poses: Dict[str, AnimatedModule] = field(default_factory=dict)
     dirty: bool = True
     cached_surface: Optional[Surface] = None
+    lum_intensity: float = 0.0
+    bite_intent: float = 0.0
 
     def refresh(self) -> None:
         if not self.dirty:
@@ -158,6 +163,33 @@ class ModularRendererState:
             animated.clearance = float(getattr(point, "clearance", 0.0))
 
     def _generate_outline(self, module: BodyModule, segments: int = 7) -> List[Vector2]:
+        # Deep Evolution: Use custom shape if available
+        if module.shape_vertices:
+            # Scale vertices by module size
+            # Vertices are assumed to be normalized (-0.5 to 0.5)
+            # Size is (width, height, length)
+            # X maps to width (size[0]), Y maps to height (size[1])?
+            # Or is it cross section?
+            # In 2D renderer, we usually see Top-Down view?
+            # Renderer uses 'half_length' (size[2]/2) and 'half_cross' (max(size[0], size[1])/2)
+            # Let's align with that.
+            
+            # If vertices are (x, y), we scale them.
+            # Usually X is forward/backward (length), Y is left/right (width) in local space?
+            # In `_generate_outline` below:
+            # trailing = -length, leading = length. So X is Length.
+            # Y is Width/Span.
+            
+            length_scale = float(module.size[2])
+            width_scale = float(max(module.size[0], module.size[1]))
+            
+            outline = []
+            for vx, vy in module.shape_vertices:
+                # Assume vertices are in -0.5 to 0.5 range
+                # vx is along length, vy is along width
+                outline.append(Vector2(vx * length_scale, vy * width_scale))
+            return outline
+
         if getattr(module, "module_type", "") == "limb":
             half_span = max(0.05, float(max(module.size[0], module.size[1])) / 2.0)
             length = max(0.1, float(module.size[2]))
@@ -215,9 +247,14 @@ class ModularRendererState:
         angular_velocity: float = 0.0,
         thrust_output: float = 0.0,
         surface_thrust: dict[str, float] | None = None,
+        lum_intensity: float = 0.0,
+        bite_intent: float = 0.0,
     ) -> None:
         if self.dirty:
             self.refresh()
+        
+        self.lum_intensity = lum_intensity
+        self.bite_intent = bite_intent
 
         # Apply procedural animation to joints
         thrust_map = surface_thrust or {}
@@ -265,6 +302,37 @@ class ModularRendererState:
             module_type = getattr(animated.module, "module_type", "")
             module_thrust = surface_thrust.get(node_id, 0.0)
             animated.thrust_factor = module_thrust or thrust_factor
+            
+            # Bioluminescence Update
+            if animated.module.light_color:
+                pattern = animated.module.light_pattern
+                freq = animated.module.light_frequency
+                phase = animated.module.light_phase
+                base_intensity = animated.module.light_intensity
+                
+                t = time_ms / 1000.0
+                val = 0.0
+                
+                if pattern == "steady":
+                    val = 1.0
+                elif pattern == "pulse":
+                    # Sine wave 0 to 1
+                    val = 0.5 + 0.5 * math.sin(2 * math.pi * freq * t + phase * 2 * math.pi)
+                elif pattern == "flash":
+                    # Sharp flash
+                    cycle = (t * freq + phase) % 1.0
+                    if cycle < 0.1: # Flash for 10% of cycle
+                        val = 1.0
+                    else:
+                        val = 0.0
+                elif pattern == "wave":
+                    # Wave travels down the body (using depth)
+                    wave_phase = t * freq - depth * 0.2
+                    val = 0.5 + 0.5 * math.sin(2 * math.pi * wave_phase)
+                    
+                animated.current_light_intensity = base_intensity * val
+            else:
+                animated.current_light_intensity = 0.0
             
             # Animation Parameters
             wave_amp = 0.0
@@ -386,6 +454,15 @@ class BodyGraphRenderer:
         if len(skin_points) >= 3:
             hull = self._convex_hull(skin_points)
             skin_color = tuple(int(c * 0.9) for c in self.torso_color)
+            
+            # Apply bioluminescence to skin
+            if state.lum_intensity > 0:
+                 lum_factor = state.lum_intensity * 0.5
+                 skin_color = tuple(
+                     min(255, int(c + (255 - c) * lum_factor)) 
+                     for c in skin_color
+                 )
+
             # Draw skin with low alpha or wireframe?
             # Let's keep it solid but maybe lighter
             pygame.draw.polygon(self.surface, skin_color, hull, width=0)
@@ -399,7 +476,7 @@ class BodyGraphRenderer:
                 if parent:
                     self._draw_bridge(parent, animated, offset)
         for animated in state.iter_poses():
-            self._draw_module(animated, offset)
+            self._draw_module(animated, offset, state.lum_intensity, state.bite_intent)
 
     def _collect_outline_points(self, state: ModularRendererState, offset: Vector2) -> List[Tuple[int, int]]:
         points: List[Tuple[int, int]] = []
@@ -448,23 +525,71 @@ class BodyGraphRenderer:
         alpha = max(60, min(255, BASE_MODULE_ALPHA + alpha_offset))
         return tinted, alpha
 
-    def _draw_module(self, animated: AnimatedModule, offset: Vector2) -> None:
+
+    def _draw_module(self, animated: AnimatedModule, offset: Vector2, lum_intensity: float = 0.0, bite_intent: float = 0.0) -> None:
         module = animated.module
         module_type = getattr(module, "module_type", "default")
         color, alpha = self._module_visuals(module_type)
         
+        # Per-module bioluminescence
+        light_intensity = animated.current_light_intensity
+        light_color = module.light_color
+        
+        # Apply global lum_intensity as a boost or override if needed?
+        # Let's treat global lum_intensity as a general excitement factor that might boost all lights
+        # or just the skin.
+        # For now, let's stick to module specific lights.
+        
+        if light_intensity > 0.05:
+            # Draw Glow
+            if light_color:
+                glow_radius = int(self.position_scale * max(module.size) * (1.0 + light_intensity))
+                glow_surf = pygame.Surface((glow_radius * 2, glow_radius * 2), pygame.SRCALPHA)
+                
+                # Create a radial gradient for the glow
+                # Center color with alpha based on intensity
+                glow_alpha = int(100 * light_intensity)
+                glow_rgb = light_color
+                
+                # Simple circle for now (performance)
+                pygame.draw.circle(glow_surf, (*glow_rgb, glow_alpha // 3), (glow_radius, glow_radius), glow_radius)
+                pygame.draw.circle(glow_surf, (*glow_rgb, glow_alpha), (glow_radius, glow_radius), int(glow_radius * 0.6))
+                
+                # Blit glow centered on module
+                center = offset + animated.current_pose.center * self.position_scale
+                self.surface.blit(glow_surf, (center.x - glow_radius, center.y - glow_radius), special_flags=pygame.BLEND_ADD)
+
+            # Tint module color
+            if light_color:
+                # Blend towards light color
+                blend = light_intensity * 0.8
+                color = tuple(
+                    min(255, int(c * (1 - blend) + lc * blend))
+                    for c, lc in zip(color, light_color)
+                )
+            else:
+                # Fallback to cyan/white if no color specified but intensity > 0 (shouldn't happen with new logic)
+                lum_factor = light_intensity * 0.6
+                color = tuple(
+                    min(255, int(c + (200 - c) * lum_factor)) 
+                    for c in color
+                )
+            
+            # Increase alpha for glow
+            alpha = min(255, int(alpha + 100 * light_intensity))
+
         if module_type == "eye":
             self._draw_eye(animated, offset)
             return
         elif module_type == "mouth":
-            self._draw_mouth(animated, offset)
+            self._draw_mouth(animated, offset, bite_intent)
             return
         elif module_type == "tentacle":
             self._draw_tentacle(animated, offset, color, alpha)
             return
 
         polygon_points = [
-            (offset + vertex * self.position_scale) for vertex in animated.outline_world
+            offset + pt * self.position_scale for pt in animated.outline_world
         ]
         int_points = [(int(point.x), int(point.y)) for point in polygon_points]
         
@@ -474,6 +599,9 @@ class BodyGraphRenderer:
             
             # Low Poly Aesthetic: Distinct outlines
             outline_color = (220, 240, 255) # Bright/Whitish outline
+            if lum_intensity > 0.5:
+                outline_color = (200, 255, 255) # Brighter outline
+
             pygame.draw.polygon(self.surface, outline_color, int_points, 2)
             
             # Triangulation / Internal lines
@@ -647,7 +775,7 @@ class BodyGraphRenderer:
         highlight_pos = (int(center.x + radius * 0.3), int(center.y - radius * 0.3))
         pygame.draw.circle(self.surface, (255, 255, 255), highlight_pos, int(radius * 0.2))
 
-    def _draw_mouth(self, animated: AnimatedModule, offset: Vector2) -> None:
+    def _draw_mouth(self, animated: AnimatedModule, offset: Vector2, bite_intent: float = 0.0) -> None:
         module = animated.module
         center = offset + animated.current_pose.center * self.position_scale
         angle = animated.current_pose.angle
@@ -662,6 +790,18 @@ class BodyGraphRenderer:
             return
             
         color = (180, 100, 100) # Reddish/Pinkish
+        if bite_intent > 0.1:
+             # Bright red for biting
+             intensity = min(1.0, bite_intent * 1.5)
+             color = (
+                 int(180 + (75 - 180) * intensity), # More red
+                 int(100 - 100 * intensity),
+                 int(100 - 100 * intensity)
+             )
+             # Flash effect
+             if (pygame.time.get_ticks() // 100) % 2 == 0:
+                 color = (255, 50, 50)
+
         pygame.draw.polygon(self.surface, color, int_points)
         pygame.draw.polygon(self.surface, (100, 50, 50), int_points, 2)
         

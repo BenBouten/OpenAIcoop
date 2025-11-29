@@ -1,33 +1,57 @@
-# Evolution Simulation Design Overview
+# Evolution Simulation Design Document
 
-## Target Philosophy
-- **Emergent behaviour**: minimise hand-authored roles; let pursuit, avoidance and cooperation arise from sensory input, local incentives and physics constraints instead of explicit predator/prey flags.
-- **Physics-first movement**: locomotion should flow from hydrodynamic properties (mass, drag, thrust, steering surfaces) and environmental forces (currents, buoyancy) rather than behaviour-mode speed presets.
-- **Energy-driven reproduction**: allow lifeforms to reproduce only when energy reserves exceed a configurable surplus and age/maturity thresholds, spending biomass/energy to spawn offspring.
-- **Resource-based ecosystem**: plants, carcasses and other biomass pools should be consumed and decomposed into nutrients that circulate through the food web; feeding should change energy, health and possibly toxins.
-- **Trait-driven visuals**: render skin pigments, morphology silhouettes and bioluminescent emissions directly from genetic traits and environmental state (depth/light), avoiding hardcoded palettes.
-- **Generic biomass/bite mechanics**: damage, harvesting and predation should all run through the same biomass and bite-size rules, letting predators emerge naturally from shape, mouth strength and metabolism.
+## 1. Target Philosophy
 
-## Current Implementation (Scan)
-- **Behaviour & AI**: Behaviour modes are set by explicit threat/food/partner checks in the central brain step, blending vectors for flee/hunt/search and logging mode changes.【F:evolution/entities/ai.py†L49-L218】 Target detection in `Lifeform.update_targets` classifies enemies and prey via attack/defence comparisons and species IDs, with closest targets promoted into `closest_enemy/closest_prey/closest_partner` fields.【F:evolution/entities/lifeform.py†L560-L820】 Hunger and reproduction decisions rely on thresholds and simple flags such as `_foraging_focus` and `ENERGY_REPRODUCTION_THRESHOLD`.【F:evolution/entities/lifeform.py†L400-L461】 Movement effort scales off behaviour modes (flee, hunt, mate) through preset thrust/frequency multipliers rather than physical demand.【F:evolution/entities/movement.py†L97-L146】
-- **Resources / Food**: Plant matter is represented by moss clusters with per-cell nutrition pools (`resource`), regrowth and oxygen deprivation logic.【F:evolution/world/vegetation.py†L1-L122】 Lifeforms also track carcasses as carrion targets during sensing, treating them as another consumable resource.【F:evolution/entities/lifeform.py†L760-L813】
-- **Reproduction**: Eligibility checks gate mating on cooldown, adulthood, hunger thresholds and energy ratio; reproduction currently does not appear to deduct energy or mass beyond these checks.【F:evolution/entities/lifeform.py†L436-L461】 Offspring DNA is built by mixing parent traits, applying random mutations and potentially registering new profiles; body graphs may be rebuilt for geometry but resource costs are not charged here.【F:evolution/entities/reproduction.py†L31-L145】
-- **Movement & Physics**: `movement.py` integrates AI directions into thrust/steering, applying behaviour-specific thrust/frequency targets and environment biases (depth, buoyancy, hunger) before physics forces are computed.【F:evolution/entities/movement.py†L50-L172】 Physical parameters (mass, drag, buoyancy, thrust, grip) are derived from the modular body graph into a `PhysicsBody` used by movement and combat.【F:evolution/physics/physics_body.py†L7-L66】
-- **Brains / AI Architecture**: The AI is a single procedural function (`update_brain`) that handles memory, target selection, group heuristics and escape overrides; there is no learning or pluggable neural model in this path.【F:evolution/entities/ai.py†L49-L218】 Behaviour is largely reactive and rule-based rather than emergent from lower-level drives.
-- **Visuals & Bioluminescence**: Creature visuals derive from base colors with pigment adjustments during lifeform construction, while the renderer includes ocean gradients and glow helpers for vents/bioluminescent elements.【F:evolution/entities/lifeform.py†L20-L120】【F:evolution/rendering/ocean_renderer.py†L6-L118】 Module definitions carry a `bioluminescence` trait and the creature creator exposes a biolum slider, but there is no clear path wiring those values into runtime rendering or lighting effects.【F:evolution/body/modules.py†L268-L338】【F:evolution/rendering/creature_creator_overlay.py†L47-L985】
+The goal is to create a simulation where complex behaviors and ecological dynamics **emerge** from simple, physical rules rather than being scripted.
 
-## Gap Analysis vs Target Design
-- Behaviour currently hardcodes flee/hunt/mate/search modes and classifies predators/prey globally, conflicting with the emergent-behaviour goal where appetites and physics should drive encounters.【F:evolution/entities/ai.py†L88-L218】【F:evolution/entities/lifeform.py†L560-L820】
-- Movement speed/frequency presets per behaviour mode bypass the physical constraints derived from drag, thrust and currents, working against a physics-first approach.【F:evolution/entities/movement.py†L97-L146】
-- Reproduction is gated by thresholds but does not consume energy/biomass at spawn time, leaving little incentive for foraging-driven reproduction loops.【F:evolution/entities/lifeform.py†L436-L461】【F:evolution/entities/reproduction.py†L31-L145】
-- Resource handling focuses on discrete plants and carcasses without nutrient cycling or toxin/quality modelling, limiting emergent diets beyond simple hunger satisfaction.【F:evolution/world/vegetation.py†L1-L122】【F:evolution/entities/lifeform.py†L760-L813】
-- Visual traits like bioluminescence are exposed in blueprints and UI yet are not consistently rendered or tied to environmental cues (depth/light), undermining trait-driven visuals.【F:evolution/body/modules.py†L268-L338】【F:evolution/rendering/creature_creator_overlay.py†L47-L985】【F:evolution/rendering/ocean_renderer.py†L6-L118】
-- AI is centralized and behaviour-role-driven, with shared knowledge of closest enemies/prey rather than local sensory inputs feeding simple instincts, which hampers emergent predator identity from generic biomass/bite mechanics.【F:evolution/entities/ai.py†L49-L218】【F:evolution/entities/lifeform.py†L560-L820】
+### Core Pillars
 
-## Key Pain Points
-- Hardcoded behaviour modes and role assumptions (enemy vs prey vs partner) prevent behaviours from emerging from metabolism, opportunity and physics alone.【F:evolution/entities/ai.py†L88-L218】【F:evolution/entities/lifeform.py†L560-L820】
-- Behaviour-mode thrust/frequency presets decouple locomotion from hydrodynamics, masking differences between body plans and environments.【F:evolution/entities/movement.py†L97-L146】
-- Reproduction logic lacks explicit energy/biomass spend, so populations can grow without tangible metabolic cost once thresholds are met.【F:evolution/entities/lifeform.py†L436-L461】【F:evolution/entities/reproduction.py†L31-L145】
-- Resource and consumption systems are compartmentalized (plants vs carcass) with no shared biomass accounting or nutrient recycling, making ecosystem feedback shallow.【F:evolution/world/vegetation.py†L1-L122】【F:evolution/entities/lifeform.py†L760-L813】
-- Bioluminescent traits exist in data and UI but are not connected to rendering/lighting behaviour, reducing visual signalling and depth-awareness opportunities.【F:evolution/body/modules.py†L268-L338】【F:evolution/rendering/creature_creator_overlay.py†L47-L985】【F:evolution/rendering/ocean_renderer.py†L6-L118】
-- AI architecture is monolithic and rule-based with implicit global knowledge, limiting experimentation with learning-driven or modular decision layers aligned to emergent behaviour goals.【F:evolution/entities/ai.py†L49-L218】
+*   **Emergent Behavior**: Creatures should not have hardcoded "roles" (predator/prey) or state machines (Flee/Chase/Mate). Instead, they should have sensory inputs and motor outputs. If a creature eats meat, it becomes a predator because it learns to chase things that move. If it eats plants, it becomes a grazer.
+*   **Physics-First Movement**: All movement should be the result of forces (thrust, drag, lift) applied by body parts. No "teleportation" or direct velocity setting.
+*   **Energy-Based Reproduction**: Reproduction should be a purely economic decision for the organism: "Do I have enough excess energy to create offspring?" coupled with "Is there a compatible mate nearby?".
+*   **Trait-Driven Visuals**: The visual appearance should strictly reflect the underlying genetics and physical state. A creature with high bioluminescence genes should *glow*. A creature with armor should *look* armored.
+*   **Generic Biomass**: "Food" is anything with nutritional value. Predation is just "aggressive feeding on a live target". Scavenging is "feeding on a dead target".
+
+## 2. Current Implementation Analysis
+
+### Behavior & AI
+*   **Current State**:
+    *   **Hybrid Approach**: A neural network (`ai.py`) controls low-level actuation (thrust, turning), but high-level decisions are often hardcoded.
+    *   **Hardcoded Logic**: `Lifeform.py` contains explicit logic for `should_seek_food`, `should_seek_partner`, and `_trigger_escape_manoeuvre`.
+    *   **Global Knowledge**: `update_targets()` iterates through *all* entities in the world to find the closest ones. This is computationally expensive (O(N^2)) and biologically unrealistic (infinite knowledge).
+    *   **Neural Inputs**: Food density (fwd/left/right), depth, energy, neighbor density.
+    *   **Neural Outputs**: Thrust (tail/fins), bite intent, luminescence.
+
+### Resources & Reproduction
+*   **Current State**:
+    *   **Energy Dynamics**: Implemented. Creatures lose energy to move/exist and gain it by eating.
+    *   **Reproduction**: Implemented (`reproduction.py`). Sexual reproduction mixes genomes and applies mutations.
+    *   **Gating**: Reproduction is gated by hardcoded checks (`can_reproduce`): Age > Maturity and Energy > Threshold.
+
+### Movement
+*   **Current State**:
+    *   **Physics-Based**: `Lifeform` calculates drag, mass, and thrust. `ai.py` outputs thrust commands.
+    *   **Overrides**: There are "escape" and "wander" modes that seem to override or bypass pure neural control in some cases (e.g., `_trigger_escape_manoeuvre` sets a specific vector).
+
+### Visuals
+*   **Current State**:
+    *   **Modular Rendering**: `modular_lifeform_renderer.py` and `modular_renderer.py` draw creatures based on their `BodyGraph`.
+    *   **Procedural Animation**: Tentacles and spines animate based on thrust and movement, which is excellent.
+    *   **Missing Features**: **Bioluminescence is not rendered.** The brain outputs `lum_intensity`, but the renderer does not use this value to alter the creature's appearance (e.g., glowing, brightness).
+
+## 3. Key Pain Points & Gap Analysis
+
+| Feature | Target Philosophy | Current Implementation | Gap |
+| :--- | :--- | :--- | :--- |
+| **Target Selection** | Sensory-based (vision cones, local queries). | Global iteration of all entities. | **High**. Creatures have "god mode" knowledge of nearest targets. |
+| **Decision Making** | Fully neural/emergent. | Hardcoded state overrides (Hungry -> Seek Food). | **High**. The brain suggests actions, but the code forces modes. |
+| **Predation** | Emergent (bite what moves). | `prefers_meat` / `prefers_plants` flags. | **Medium**. `BiomassTarget` abstraction exists but diet flags still drive logic. |
+| **Visuals** | 1:1 State reflection. | Bioluminescence ignored. | **Medium**. Visual feedback loop for communication is broken. |
+| **Performance** | Scalable (Spatial Partitioning). | O(N^2) neighbor checks. | **High**. Simulation slows down with population growth. |
+
+## 4. Recommendations
+
+1.  **Remove Global Knowledge**: Replace `update_targets` with a spatial grid query that only returns entities within `vision_range`.
+2.  **Unshackle the Brain**: Remove `should_seek_food` / `should_seek_partner` overrides. Feed "hunger" and "reproductive_urge" (hormones) as inputs to the brain and let it decide what to do.
+3.  **Implement Bioluminescence**: Pass `lum_intensity` to the renderer and use it to adjust the brightness/glow of the creature (or specific modules).
+4.  **Unified "Bite" Interface**: Ensure `feeding.py` treats all biomass identically, with only physical properties (hardness, size) distinguishing them.

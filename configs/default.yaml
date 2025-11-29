@@ -4,7 +4,7 @@ world_width: 5200
 world_height: 6400
 window_width: 1920
 window_height: 1080
-n_lifeforms: 140
+n_lifeforms: 100
 max_lifeforms: 220
 mutation_chance: 8
 fps: 45

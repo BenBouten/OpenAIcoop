@@ -3,7 +3,7 @@
 ## Overview
 Implement a system where each body module has its own nutrition value and can be individually consumed/damaged.
 
-## Status: **PHASE 1 COMPLETE** ✅
+## Status: **PHASE 3 COMPLETE** ✅
 
 ## Features
 1. **Module Nutrition Values** ✅ - Each module type has edible value
@@ -40,12 +40,12 @@ Implement a system where each body module has its own nutrition value and can be
 - Verified with tests
 - Ready for Phase 3!
 
-### Phase 3: Module Consumption for Carcasses  
-- [ ] Track which modules remain in carcass (`consumed_modules` set)
-- [ ] Implement `consume_module(module_key)` method
-- [ ] Calculate nutrition based on specific module eaten
-- [ ] Update rendering to hide consumed modules
-- [ ] Test: Eating specific modules from carcass
+### Phase 3: Module Consumption for Carcasses ✅ COMPLETE
+- [x] Track which modules remain in carcass (`consumed_modules` set)
+- [x] Implement `consume_module(module_key)` method
+- [x] Calculate nutrition based on specific module eaten
+- [x] Update rendering to hide consumed modules
+- [x] Test: Eating specific modules from carcass
 
 ### Phase 4: Combat Limb Damage/Loss
 - [ ] Track module damage in `Lifeform.limb_damage`

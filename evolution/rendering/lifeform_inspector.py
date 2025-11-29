@@ -327,7 +327,28 @@ class LifeformInspector:
 
         stats_bottom = max(stats_y_left, stats_y_right)
 
-        body_top = stats_bottom + 12
+        neural_top = stats_bottom + 12
+        neural_top = self._render_section_heading(surface, "Neuraal Netwerk", content_left, neural_top)
+        
+        # Neural outputs
+        bite_intent = getattr(lifeform, "bite_intent", 0.0)
+        reproduce_intent = getattr(lifeform, "reproduce_intent", 0.0)
+        lum_intensity = getattr(lifeform, "lum_intensity", 0.0)
+        thrust_ratio = getattr(lifeform, "neural_thrust_ratio", 0.0)
+        
+        neural_lines = [
+            f"Bijt Intentie: {bite_intent:.2f}",
+            f"Voortplantingsdrang: {reproduce_intent:.2f}",
+            f"Lichtintensiteit: {lum_intensity:.2f}",
+            f"Stuwdruk Ratio: {thrust_ratio:.2f}",
+        ]
+        
+        for line in neural_lines:
+            text_surface = self._body_font.render(line, True, (60, 60, 60))
+            surface.blit(text_surface, (content_left, neural_top))
+            neural_top += text_surface.get_height() + 2
+
+        body_top = neural_top + 12
         body_top = self._render_section_heading(surface, "Modulaire anatomie", content_left, body_top)
         for line in self._body_summary_lines(lifeform):
             text_surface = self._body_font.render(line, True, (60, 60, 60))
@@ -501,98 +522,35 @@ class LifeformInspector:
             return "Overleden", ["Geen activiteit; het wezen is gestorven."]
 
         details: List[str] = []
-        enemy = getattr(lifeform, "closest_enemy", None)
-        if getattr(lifeform, "_escape_timer", 0) > 0:
-            if enemy and enemy.health_now > 0:
-                details.append(f"Ontsnapt aan {enemy.id}")
-            else:
-                details.append("Noodmanoeuvre actief")
-            return "Vluchten", details
-
-        if enemy and enemy.health_now > 0:
-            relation = "In gevecht"
-            if lifeform.attack_power_now < enemy.attack_power_now:
-                relation = "Vluchten"
-            verb = "met" if relation == "In gevecht" else "voor"
-            details.append(f"{relation} {verb} {enemy.id}")
-            return relation, details
-
-        last_recorded = getattr(lifeform, "last_activity", {})
-        now = pygame.time.get_ticks()
-        feeding_recently = lifeform._feeding_frames > 0
-        if not feeding_recently and last_recorded.get("name") == "Eet plant":
-            last_bite = int(last_recorded.get("timestamp", 0))
-            if (
-                lifeform.hunger > settings.HUNGER_SATIATED_THRESHOLD
-                and now - last_bite <= settings.FEEDING_ACTIVITY_MEMORY_MS
-            ):
-                feeding_recently = True
-
-        if feeding_recently:
-            plant = getattr(lifeform, "closest_plant", None)
-            if plant:
-                plant_center = (
-                    plant.x + plant.width / 2,
-                    plant.y + plant.height / 2,
-                )
-                distance = math.hypot(
-                    lifeform.rect.centerx - plant_center[0],
-                    lifeform.rect.centery - plant_center[1],
-                )
-                details.append(f"Eet van plant op {distance:.1f}m")
-            else:
-                details.append("Laatste hap verwerken")
-            return "Eten", details
-
-        prey = getattr(lifeform, "closest_prey", None)
-        if (
-            prey
-            and getattr(prey, "health_now", 0) > 0
-            and lifeform.closest_enemy is None
-            and lifeform.prefers_meat()
-        ):
-            distance = lifeform.distance_to(prey)
-            details.append(f"Jaagt op {prey.id} ({distance:.1f}m)")
-            return "Zoekt prooi", details
-
-        partner = getattr(lifeform, "closest_partner", None)
-        if lifeform.closest_enemy is None and lifeform.can_reproduce():
-            if partner and partner.health_now > 0:
-                distance = lifeform.distance_to(partner)
-                details.append(f"Benadert partner {partner.id} ({distance:.1f}m)")
-                return "Zoekt partner", details
-            details.append("Zoekt naar geschikte partner")
-            return "Zoekt partner", details
-
-        if lifeform.is_foraging or lifeform.hunger >= settings.HUNGER_SEEK_THRESHOLD:
-            if lifeform.prefers_plants() and lifeform.closest_plant:
-                plant = lifeform.closest_plant
-                plant_center = (
-                    plant.x + plant.width / 2,
-                    plant.y + plant.height / 2,
-                )
-                distance = math.hypot(
-                    lifeform.rect.centerx - plant_center[0],
-                    lifeform.rect.centery - plant_center[1],
-                )
-                details.append(f"Op weg naar plant ({distance:.1f}m)")
-            elif lifeform.prefers_meat() and prey:
-                distance = lifeform.distance_to(prey)
-                details.append(f"Zoekt vlees op {distance:.1f}m")
-            else:
-                details.append("Zoekt nieuwe voedselbron")
-            return "Zoekt voedsel", details
-
-        if lifeform.search:
-            details.append("Verkent omgeving, geen doelen dichtbij")
-            return "Verkennen", details
-
-        last_event = last_recorded.get("name") if last_recorded else None
-        if last_event:
-            details.append("Gebaseerd op recente gebeurtenis")
-            return str(last_event), details
-
-        return "Zwerft rond", ["Geen specifieke doelen gedetecteerd"]
+        
+        # Neural Intents
+        bite_intent = getattr(lifeform, "bite_intent", 0.0)
+        reproduce_intent = getattr(lifeform, "reproduce_intent", 0.0)
+        lum_intensity = getattr(lifeform, "lum_intensity", 0.0)
+        thrust = getattr(lifeform, "neural_thrust_ratio", 0.0)
+        
+        activities = []
+        
+        if bite_intent > 0.5:
+            activities.append("Aanvallen / Eten")
+            details.append(f"Bijt intentie: {bite_intent:.2f}")
+            
+        if reproduce_intent > 0.5:
+            activities.append("Voortplanten")
+            details.append(f"Voortplantingsdrang: {reproduce_intent:.2f}")
+            
+        if lum_intensity > 0.1:
+            activities.append("Gloeien")
+            details.append(f"Lichtintensiteit: {lum_intensity:.2f}")
+            
+        if thrust > 0.1:
+            activities.append("Zwemmen")
+            details.append(f"Stuwdruk: {thrust:.2f}")
+            
+        if not activities:
+            return "Rusten", ["Geen sterke neurale impulsen"]
+            
+        return ", ".join(activities[:2]), details
 
     def _last_activity_summary(self, lifeform: "Lifeform") -> Tuple[str, List[str]]:
         entry = getattr(lifeform, "last_activity", None) or {}
@@ -679,13 +637,10 @@ class LifeformInspector:
 
     def _diet_breakdown(self, lifeform: "Lifeform") -> List[str]:
         lines = [f"Voorkeur: {self._format_diet_value(lifeform)}"]
+        lines.append(f"Vertering Planten: {getattr(lifeform, 'digest_efficiency_plants', 0.0):.1%}")
+        lines.append(f"Vertering Vlees: {getattr(lifeform, 'digest_efficiency_meat', 0.0):.1%}")
         lines.append(f"Huidige honger: {lifeform.hunger:.1f}")
-        lines.append(f"Zoekdrempel: {settings.HUNGER_SEEK_THRESHOLD}")
-        lines.append(f"Ontspan-drempel: {settings.HUNGER_RELAX_THRESHOLD}")
-        if lifeform.is_foraging:
-            lines.append("Status: actief op zoek naar voedsel")
-        else:
-            lines.append("Status: geen actief zoekgedrag")
+        
         stage_info = describe_skin_stage(lifeform.skin_stage)
         lines.append(
             f"Huidfase: {stage_info['label']} – {stage_info['description']}"
@@ -811,24 +766,11 @@ class LifeformInspector:
             locomotion_desc,
             f"Weer: {effects.get('weather_name', '-')}, {effects.get('temperature', '?')}°C, {effects.get('precipitation', '-')}",
             (
-                f"Beweging x{float(effects.get('movement', 1.0)):.2f} • "
-                f"Energie x{float(effects.get('energy', 1.0)):.2f} • "
-                f"Honger x{float(effects.get('hunger', 1.0)):.2f}"
-            ),
-            (
                 f"Dieptebias {float(getattr(lifeform, 'depth_bias', 0.0)):+.2f} • "
                 f"Drift voorkeur {float(getattr(lifeform, 'drift_preference', 0.0)):.2f}"
             ),
             f"Groei x{float(effects.get('regrowth', 1.0)):.2f} • Gezondheid {float(effects.get('health', 0.0)):+.2f}/s",
         ]
-        if lifeform.in_group:
-            lines.append(
-                f"In groep met {len(lifeform.group_neighbors) + 1} leden (sterkte {lifeform.group_strength:.2f})"
-            )
-        else:
-            lines.append("Geen groepsverband actief")
-        if lifeform.is_leader:
-            lines.append("Dit wezen fungeert als leider")
         return lines
 
     def _body_summary_lines(self, lifeform: "Lifeform") -> List[str]:

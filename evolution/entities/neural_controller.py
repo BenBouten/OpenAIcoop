@@ -21,6 +21,9 @@ INPUT_KEYS: Sequence[str] = (
     "speed",
     "noise",
     "buoyancy_bias",
+    "reproductive_urge",
+    "risk_tolerance",
+    "restlessness",
 )
 
 OUTPUT_KEYS: Sequence[str] = (
@@ -31,6 +34,7 @@ OUTPUT_KEYS: Sequence[str] = (
     "bite_intent",
     "lum_intensity",
     "lum_pattern_mod",
+    "reproduce_intent",
 )
 
 # Small fixed network: Input -> Hidden(12) -> Output

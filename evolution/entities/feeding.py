@@ -139,12 +139,36 @@ def _apply_carcass_bite(lifeform, target: BiomassTarget, bite_strength: float) -
     if target.distance > reach:
         return False
 
-    nutrition = carcass.consume(bite_strength)
+    # Check for module-based consumption
+    if hasattr(carcass, "consume_module") and hasattr(carcass, "body_graph") and carcass.body_graph:
+        # Find an available module to eat
+        # Ideally we would pick the closest one, but for now random/first available is fine
+        available_modules = []
+        consumed = getattr(carcass, "consumed_modules", set())
+        
+        for node_id in carcass.body_graph.nodes:
+            if node_id not in consumed:
+                available_modules.append(node_id)
+        
+        if available_modules:
+            # Pick a random module to simulate "biting a chunk"
+            import random
+            target_module = random.choice(available_modules)
+            nutrition = carcass.consume_module(target_module)
+        else:
+            # No modules left? Fallback to generic consume if implemented, or 0
+            nutrition = carcass.consume(bite_strength) if hasattr(carcass, "consume") else 0.0
+    else:
+        # Legacy carcass
+        nutrition = carcass.consume(bite_strength)
+
     if nutrition <= 0:
         return False
 
     digest = float(getattr(lifeform, "digest_efficiency_meat", 1.0))
-    carcass.apply_effect(lifeform, nutrition, digest_multiplier=digest)
+    if hasattr(carcass, "apply_effect"):
+        carcass.apply_effect(lifeform, nutrition, digest_multiplier=digest)
+    
     lifeform.record_activity("Bite biomass", doel="carrion", voeding=nutrition)
 
     if getattr(carcass, "is_depleted", lambda: False)():
@@ -165,18 +189,34 @@ def _apply_creature_bite(lifeform, target: BiomassTarget, bite_strength: float) 
         return False
 
     resistance = target.hardness * 0.6
-    effective_bite = max(0.0, bite_strength - resistance)
+    # Scale damage and energy by victim's growth factor (protect babies)
+    growth_factor = getattr(other, "growth_factor", 1.0)
+    
+    # Small creatures take less damage (harder to hit / glancing blows)
+    # But ensure at least some damage (min 20% effectiveness)
+    damage_scale = max(0.2, growth_factor)
+    effective_bite = max(0.0, bite_strength - resistance) * damage_scale
+    
     if effective_bite <= 0:
         return False
 
     other.health_now -= effective_bite
     other.wounded += effective_bite * 0.6
     digest = float(getattr(lifeform, "digest_efficiency_meat", 1.0))
-    energy_gain = effective_bite * 0.7 * digest
+    
+    # Cap energy gain by victim's mass to prevent infinite energy from small prey
+    max_energy_gain = getattr(other, "mass", 1.0) * 2.5
+    
+    # Further reduce energy gain from young creatures (low nutritional density)
+    nutrition_scale = max(0.1, growth_factor)
+    raw_gain = effective_bite * 0.7 * digest * nutrition_scale
+    
+    energy_gain = min(raw_gain, max_energy_gain)
+    
     lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + energy_gain)
     lifeform.hunger = max(
         settings.HUNGER_MINIMUM,
-        lifeform.hunger - effective_bite * digest,
+        lifeform.hunger - effective_bite * digest * nutrition_scale,
     )
 
     timestamp = pygame.time.get_ticks()
@@ -207,8 +247,14 @@ def resolve_biomass_bites(lifeform) -> None:
         return
 
     attack_component = max(0.0, getattr(lifeform, "attack_power_now", 0.0)) * 0.35
-    bite_strength = (bite_force + attack_component) * bite_intent
-    bite_strength = max(2.5, min(bite_strength, settings.PLANT_BITE_NUTRITION_TARGET * 2.5))
+    
+    # Scale bite strength by energy (exhausted creatures cannot bite hard)
+    max_energy = max(1.0, getattr(lifeform, "energy", 100.0))
+    current_energy = max(0.0, getattr(lifeform, "energy_now", 0.0))
+    energy_factor = max(0.1, current_energy / max_energy)
+    
+    bite_strength = (bite_force + attack_component) * bite_intent * energy_factor
+    bite_strength = max(2.5 * energy_factor, min(bite_strength, settings.PLANT_BITE_NUTRITION_TARGET * 2.5))
 
     for biomass in _reachable_targets(lifeform):
         if biomass.tag == "plant":

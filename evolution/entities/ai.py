@@ -54,6 +54,7 @@ def update_brain(lifeform: "Lifeform", state: "SimulationState", dt: float) -> N
     lifeform.bite_intent = commands["bite_intent"]
     lifeform.lum_intensity = commands["lum_intensity"]
     lifeform.lum_pattern_mod = commands["lum_pattern_mod"]
+    lifeform.reproduce_intent = commands["reproduce_intent"]
     lifeform.neural_thrust_ratio = commands["thrust_ratio"]
 
     forward = _forward_vector(lifeform)
@@ -118,6 +119,11 @@ def _gather_inputs(lifeform: "Lifeform", state: "SimulationState") -> List[float
     buoyancy_offsets = getattr(lifeform, "buoyancy_offsets", (0.0, 0.0))
     buoyancy_bias = max(-1.0, min(1.0, (buoyancy_offsets[0] - buoyancy_offsets[1]) * 0.25))
 
+    # Reproductive urge: High if adult, high energy, and ready
+    reproductive_urge = 0.0
+    if lifeform.is_adult() and lifeform.reproduced_cooldown <= 0:
+        reproductive_urge = energy_ratio
+
     inputs: List[float] = [
         food_forward,
         food_left,
@@ -129,6 +135,9 @@ def _gather_inputs(lifeform: "Lifeform", state: "SimulationState") -> List[float
         speed,
         random.uniform(-1.0, 1.0),
         buoyancy_bias,
+        reproductive_urge,
+        lifeform.risk_tolerance,
+        lifeform.restlessness,
     ]
     if len(inputs) != len(INPUT_KEYS):
         logger.debug("Unexpected input size: %s", len(inputs))
@@ -139,7 +148,10 @@ def _interpret_outputs(outputs: Iterable[float]) -> dict:
     values = list(outputs)
     if len(values) != len(OUTPUT_KEYS):
         logger.debug("Unexpected output size: %s", len(values))
-    tail, left, right, vertical, bite, lum, pattern = (values + [0.0] * len(OUTPUT_KEYS))[: len(OUTPUT_KEYS)]
+    # Unpack based on known order. If OUTPUT_KEYS changes, this needs update.
+    # Current: tail, left, right, vertical, bite, lum, pattern, reproduce
+    tail, left, right, vertical, bite, lum, pattern, reproduce = (values + [0.0] * len(OUTPUT_KEYS))[: len(OUTPUT_KEYS)]
+    
     thrust_ratio = max(0.0, min(1.5, abs(tail) + (abs(left) + abs(right)) * 0.35))
     return {
         "tail_thrust": max(-1.0, min(1.0, tail)),
@@ -149,6 +161,7 @@ def _interpret_outputs(outputs: Iterable[float]) -> dict:
         "bite_intent": max(0.0, min(1.0, (bite + 1.0) * 0.5)),
         "lum_intensity": max(0.0, min(1.0, (lum + 1.0) * 0.5)),
         "lum_pattern_mod": max(-1.0, min(1.0, pattern)),
+        "reproduce_intent": max(0.0, min(1.0, (reproduce + 1.0) * 0.5)),
         "thrust_ratio": thrust_ratio,
     }
 
@@ -173,6 +186,9 @@ def _sense_food_density(
     radius = max(12.0, lifeform.vision * 0.6)
     radius_sq = radius * radius
     pos = Vector2(lifeform.x, lifeform.y)
+    
+    grid = getattr(state, "spatial_grid", None)
+    
     def _score(target_pos: Vector2) -> Tuple[float, float, float]:
         delta = target_pos - pos
         dist_sq = delta.length_squared()
@@ -193,19 +209,47 @@ def _sense_food_density(
     right_density = 0.0
 
     targets: List[Tuple[float, float, float]] = []
-    if lifeform.prefers_plants():
-        for plant in getattr(state, "plants", []):
-            target_pos = Vector2(plant.x + plant.width / 2, plant.y + plant.height / 2)
-            targets.append(_score(target_pos))
-    if lifeform.prefers_meat():
-        for carcass in getattr(state, "carcasses", []):
-            target_pos = Vector2(carcass.rect.centerx, carcass.rect.centery)
-            targets.append(_score(target_pos))
-        for other in getattr(state, "lifeforms", []):
-            if other is lifeform or other.health_now <= 0:
-                continue
-            target_pos = Vector2(other.rect.centerx, other.rect.centery)
-            targets.append(_score(target_pos))
+    
+    digest_plants = getattr(lifeform, "digest_efficiency_plants", 0.0)
+    digest_meat = getattr(lifeform, "digest_efficiency_meat", 0.0)
+
+    if grid:
+        # Use spatial grid
+        if digest_plants > 0.1:
+            for plant in grid.query_plants(lifeform.x, lifeform.y, radius):
+                target_pos = Vector2(plant.x + plant.width / 2, plant.y + plant.height / 2)
+                base_score = _score(target_pos)
+                targets.append(tuple(v * digest_plants for v in base_score))
+                
+        if digest_meat > 0.1:
+            for carcass in grid.query_carcasses(lifeform.x, lifeform.y, radius):
+                target_pos = Vector2(carcass.rect.centerx, carcass.rect.centery)
+                base_score = _score(target_pos)
+                targets.append(tuple(v * digest_meat for v in base_score))
+            for other in grid.query_lifeforms(lifeform.x, lifeform.y, radius):
+                if other is lifeform or other.health_now <= 0:
+                    continue
+                target_pos = Vector2(other.rect.centerx, other.rect.centery)
+                base_score = _score(target_pos)
+                targets.append(tuple(v * digest_meat for v in base_score))
+    else:
+        # Fallback to global lists
+        if digest_plants > 0.1:
+            for plant in getattr(state, "plants", []):
+                target_pos = Vector2(plant.x + plant.width / 2, plant.y + plant.height / 2)
+                base_score = _score(target_pos)
+                targets.append(tuple(v * digest_plants for v in base_score))
+        if digest_meat > 0.1:
+            for carcass in getattr(state, "carcasses", []):
+                target_pos = Vector2(carcass.rect.centerx, carcass.rect.centery)
+                base_score = _score(target_pos)
+                targets.append(tuple(v * digest_meat for v in base_score))
+            for other in getattr(state, "lifeforms", []):
+                if other is lifeform or other.health_now <= 0:
+                    continue
+                target_pos = Vector2(other.rect.centerx, other.rect.centery)
+                base_score = _score(target_pos)
+                targets.append(tuple(v * digest_meat for v in base_score))
 
     for fwd, left, right in targets:
         forward_density += fwd
@@ -222,14 +266,29 @@ def _sense_food_density(
 
 def _neighbor_density(lifeform: "Lifeform", state: "SimulationState") -> float:
     radius = 64.0
-    radius_sq = radius * radius
-    pos = Vector2(lifeform.x, lifeform.y)
+    grid = getattr(state, "spatial_grid", None)
     count = 0
-    for other in getattr(state, "lifeforms", []):
-        if other is lifeform or other.health_now <= 0:
-            continue
-        if (Vector2(other.rect.center) - pos).length_squared() <= radius_sq:
-            count += 1
+    
+    if grid:
+        # Use spatial grid
+        # Note: query_lifeforms returns candidates, we still check distance/identity
+        radius_sq = radius * radius
+        pos = Vector2(lifeform.x, lifeform.y)
+        for other in grid.query_lifeforms(lifeform.x, lifeform.y, radius):
+            if other is lifeform or other.health_now <= 0:
+                continue
+            if (Vector2(other.rect.center) - pos).length_squared() <= radius_sq:
+                count += 1
+    else:
+        # Fallback
+        radius_sq = radius * radius
+        pos = Vector2(lifeform.x, lifeform.y)
+        for other in getattr(state, "lifeforms", []):
+            if other is lifeform or other.health_now <= 0:
+                continue
+            if (Vector2(other.rect.center) - pos).length_squared() <= radius_sq:
+                count += 1
+                
     return max(0.0, min(1.0, count / 12.0))
 
 

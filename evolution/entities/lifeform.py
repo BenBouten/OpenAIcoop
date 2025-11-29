@@ -72,6 +72,9 @@ class Lifeform:
         # Legacy behaviour modes are deprecated in favour of neural control.
         self.current_behavior_mode = BehaviorMode.NEURAL
         self.target_behavior_mode = BehaviorMode.NEURAL
+        
+        # Neural intent states
+        self.reproduce_intent = 0.0
 
 
         # Core DNA / stats
@@ -80,6 +83,32 @@ class Lifeform:
         self.maturity = int(dna_profile["maturity"])
         self.longevity = int(dna_profile["longevity"])
         self.generation = generation
+        
+        # Growth State
+        self._last_growth_update = 0
+        self._cached_growth_factor = 1.0
+        
+        self.diet = dna_profile.get("diet", "herbivore")
+        # Digestion efficiency (generic feeding support)
+        self.digest_efficiency_plants = float(dna_profile.get("digest_efficiency_plants", 0.0))
+        self.digest_efficiency_meat = float(dna_profile.get("digest_efficiency_meat", 0.0))
+        
+        # Backward compatibility for legacy diet roles
+        if self.digest_efficiency_plants == 0.0 and self.digest_efficiency_meat == 0.0:
+            if self.diet == "herbivore":
+                self.digest_efficiency_plants = 1.0
+            elif self.diet == "carnivore":
+                self.digest_efficiency_meat = 1.0
+            elif self.diet == "omnivore":
+                self.digest_efficiency_plants = 0.8
+                self.digest_efficiency_meat = 0.8
+            elif self.diet == "scavenger":
+                self.digest_efficiency_meat = 1.0
+        
+        self.bite_force = float(dna_profile.get("bite_force", settings.PLANT_BITE_NUTRITION_TARGET))
+        self.tissue_hardness = float(dna_profile.get("tissue_hardness", 0.6))
+        self.risk_tolerance = float(dna_profile.get("risk_tolerance", 0.5))
+        self.restlessness = float(dna_profile.get("restlessness", 0.5))
         self.morphology: MorphologyGenotype = MorphologyGenotype.from_mapping(
             dna_profile.get("morphology", {})
         )
@@ -90,6 +119,7 @@ class Lifeform:
         raw_geometry = dna_profile.get("geometry")
         self.profile_geometry: Dict[str, float] = dict(raw_geometry) if isinstance(raw_geometry, dict) else {}
         self._initialise_body(dna_profile)
+        self._derive_stats_from_body()
         self.development = ensure_development_plan(dna_profile.get("development"))
         self.skin_stage = int(self.development.get("skin_stage", 0))
         self.development_features: Tuple[str, ...] = tuple(
@@ -106,30 +136,12 @@ class Lifeform:
         self.neural_thrust_ratio: float | None = None
         self.tail_thrust = 0.0
         self.left_fin_thrust = 0.0
-        self.right_fin_thrust = 0.0
-        self.vertical_thrust = 0.0
-        self.bite_intent = 0.0
-        self.lum_intensity = 0.0
-        self.lum_pattern_mod = 0.0
-        self.bite_force = float(dna_profile.get("bite_force", 0.0))
-        self.tissue_hardness = float(dna_profile.get("tissue_hardness", 0.6))
-
-        # Derive physical stats from the body graph
-        self._derive_stats_from_body()
-
         scaled_width = int(round(self.base_width * self.morph_stats.collision_scale))
         scaled_height = int(round(self.base_height * self.morph_stats.collision_scale))
         self.width = max(1, scaled_width)
         self.height = max(1, scaled_height)
 
-        adjusted_vision = self.vision + self.morph_stats.vision_range_bonus
-        self.vision = max(
-            float(settings.VISION_MIN),
-            min(float(settings.VISION_MAX), adjusted_vision),
-        )
-        self.sensory_range = self.vision
-        self.perception_rays = self.morph_stats.perception_rays
-        self.hearing_range = self.morph_stats.hearing_range
+
         physics = self.physics_body
         self.body_module_count = len(getattr(self, "body_graph", []))
         self.body_mass = physics.mass
@@ -283,31 +295,12 @@ class Lifeform:
             "current_speed": 0.0,
         }
 
-        # Social / grouping
-        self.follow_range = 30
-        self.is_leader = False
-        self.search = False
-        self.in_group = False
-        self.group_neighbors: List[Lifeform] = []
-        self.group_center: Optional[Tuple[float, float]] = None
-        self.group_strength = 0.0
-        self.group_state_timer = 0
-        self.group_leader: Optional[Lifeform] = None
-
         # Behaviour / traits
-        self.diet = dna_profile.get("diet", "omnivore")
-        self.social_tendency = float(dna_profile.get("social", 0.5))
-        self.boid_tendency = float(
-            dna_profile.get("boid_tendency", self.social_tendency)
-        )
         self.risk_tolerance = float(dna_profile.get("risk_tolerance", 0.5))
         self.restlessness = float(dna_profile.get("restlessness", 0.5))
         if not math.isfinite(self.restlessness):
             self.restlessness = 0.5
         self.restlessness = max(0.0, min(1.0, self.restlessness))
-        if not math.isfinite(self.boid_tendency):
-            self.boid_tendency = self.social_tendency
-        self.boid_tendency = max(0.0, min(1.0, self.boid_tendency))
 
         # Local memory buffers
         self.memory: Dict[str, Deque[dict]] = {
@@ -543,7 +536,7 @@ class Lifeform:
         return distance
 
     def is_adult(self) -> bool:
-        return self.age >= self.maturity
+        return self.maturity >= settings.MATURITY_FULL_SIZE
 
     def _distance_squared_to_lifeform(self, other: "Lifeform") -> float:
         dx = self.rect.centerx - other.rect.centerx
@@ -593,70 +586,118 @@ class Lifeform:
             return False
         return True
 
+    def _calculate_camouflage(self, target: "Lifeform") -> float:
+        """Calculate camouflage score (0.0 to 1.0) based on background matching."""
+        # Assume ocean background for now. 
+        # Ideally get this from the environment/biome at position.
+        background_color = (20, 30, 50) # Deep blue/dark
+        
+        # Target color (body color)
+        tc = target.body_color
+        
+        # Euclidean distance in RGB space
+        # Max distance is sqrt(255^2 * 3) approx 441
+        dist = ((tc[0] - background_color[0])**2 + 
+                (tc[1] - background_color[1])**2 + 
+                (tc[2] - background_color[2])**2) ** 0.5
+                
+        # Normalize to 0-1 (0 = distinct, 1 = invisible)
+        # Let's say max effective camouflage is when distance is small
+        max_dist = 441.0
+        similarity = 1.0 - (dist / max_dist)
+        
+        # Boost similarity to make it easier to achieve some camouflage
+        # e.g. if similarity is 0.8, camouflage is 0.8.
+        # But maybe we want non-linear?
+        return max(0.0, min(1.0, similarity))
+
     def update_targets(self) -> None:
+        """Update awareness of nearby entities using the spatial grid."""
         vision_range = max(0.0, float(self.vision))
-        self.sensory_range = vision_range
-        if vision_range <= 0:
-            self.closest_enemy = None
-            self.closest_prey = None
-            self.closest_partner = None
-            self.closest_neighbor = None
-            self.closest_follower = None
-            self.closest_plant = None
-            self.closest_carcass = None
-            return
-
-        vision_sq = vision_range * vision_range
-        position = Vector2(self.rect.center)
-
-        nearest_neighbor: Optional[Lifeform] = None
-        neighbor_distance = float("inf")
-        partner_candidate: Optional[Lifeform] = None
-        partner_distance = float("inf")
-        plant_candidate = None
-        plant_distance = float("inf")
-        carcass_candidate: Optional[SinkingCarcass] = None
-        carcass_distance = float("inf")
-
-        for other in getattr(self.state, "lifeforms", []):
-            if other is self or other.health_now <= 0:
-                continue
-            offset = Vector2(other.rect.center) - position
-            distance_sq = offset.length_squared()
-            if distance_sq >= vision_sq:
-                continue
-            if distance_sq < neighbor_distance:
-                neighbor_distance = distance_sq
-                nearest_neighbor = other
-            if self._can_partner_with(other) and distance_sq < partner_distance:
-                partner_distance = distance_sq
-                partner_candidate = other
-
-        for plant in getattr(self.state, "plants", []):
-            if getattr(plant, "resource", 0) <= 0:
-                continue
-            center = Vector2(plant.x + plant.width / 2, plant.y + plant.height / 2)
-            distance_sq = (center - position).length_squared()
-            if distance_sq < plant_distance and distance_sq < vision_sq:
-                plant_candidate = plant
-                plant_distance = distance_sq
-
-        for carcass in getattr(self.state, "carcasses", []):
-            if getattr(carcass, "resource", 0) <= 0:
-                continue
-            center = Vector2(carcass.rect.center)
-            distance_sq = (center - position).length_squared()
-            if distance_sq < carcass_distance and distance_sq < vision_sq:
-                carcass_candidate = carcass
-                carcass_distance = distance_sq
-
-        self.closest_neighbor = nearest_neighbor
-        self.closest_partner = partner_candidate
+        
+        # Reset targets
+        self.closest_partner = None
         self.closest_follower = None
         self.closest_enemy = None
         self.closest_prey = None
-        self.closest_plant = plant_candidate
-        self.closest_carcass = carcass_candidate
+        self.closest_plant = None
+        self.closest_carcass = None
+        
+        if not self.state or not self.state.spatial_grid:
+            return
+
+        # Query Grid
+        nearby_lifeforms = self.state.spatial_grid.query_lifeforms(self.x, self.y, vision_range)
+        nearby_plants = self.state.spatial_grid.query_plants(self.x, self.y, vision_range)
+        nearby_carcasses = self.state.spatial_grid.query_carcasses(self.x, self.y, vision_range)
+        
+        # Filter and find closest
+        closest_dist_sq = {
+            "partner": float("inf"),
+            "enemy": float("inf"),
+            "prey": float("inf"),
+            "plant": float("inf"),
+            "carcass": float("inf"),
+        }
+        
+        # Process Lifeforms
+        for other in nearby_lifeforms:
+            if other is self:
+                continue
+                
+            dist_sq = self._distance_squared_to_lifeform(other)
+            dist = dist_sq ** 0.5
+            
+            # Camouflage Check
+            camou = self._calculate_camouflage(other)
+            # Effective visibility range is reduced by camouflage
+            # If camou is 1.0 (perfect), range is 20% of normal.
+            # If camou is 0.0 (bright), range is 100%.
+            effective_range = vision_range * (1.0 - camou * 0.8)
+            
+            if dist > effective_range:
+                continue
+                
+            # Categorize
+            if self._can_partner_with(other):
+                if dist_sq < closest_dist_sq["partner"]:
+                    closest_dist_sq["partner"] = dist_sq
+                    self.closest_partner = other
+            
+            # Simple prey/enemy logic (can be expanded with neural net inputs later)
+            # For now, if it's smaller, it's prey. If larger/stronger, it's enemy.
+            # This is a heuristic for the 'closest' slots, but the brain decides what to do.
+            
+            is_family = self._is_close_family(other)
+            if not is_family:
+                if other.mass < self.mass * 0.6:
+                    if dist_sq < closest_dist_sq["prey"]:
+                        closest_dist_sq["prey"] = dist_sq
+                        self.closest_prey = other
+                elif other.mass > self.mass * 1.2:
+                    if dist_sq < closest_dist_sq["enemy"]:
+                        closest_dist_sq["enemy"] = dist_sq
+                        self.closest_enemy = other
+                        
+        # Process Plants
+        for plant in nearby_plants:
+            # Plant distance is to its center, but we can eat if we touch it
+            # Use simple distance for now
+            dx = plant.x + plant.width/2 - self.x
+            dy = plant.y + plant.height/2 - self.y
+            d_sq = dx*dx + dy*dy
+            if d_sq < closest_dist_sq["plant"]:
+                closest_dist_sq["plant"] = d_sq
+                self.closest_plant = plant
+                
+        # Process Carcasses
+        for carcass in nearby_carcasses:
+            dx = carcass.x + carcass.width/2 - self.x
+            dy = carcass.y + carcass.height/2 - self.y
+            d_sq = dx*dx + dy*dy
+            if d_sq < closest_dist_sq["carcass"]:
+                closest_dist_sq["carcass"] = d_sq
+                self.closest_carcass = carcass
     def _initialise_body(self, dna_profile: dict) -> None:
         diet = dna_profile.get("diet", "omnivore")
         genome_data = dna_profile.get("genome") or generate_modular_blueprint(diet)
@@ -674,7 +715,23 @@ class Lifeform:
         self.genome_blueprint = genome.to_dict()
         self.body_graph = graph
         self.body_geometry = geometry
+        self.base_width = geometry.get("width", 1.0)
+        self.base_height = geometry.get("height", 1.0)
         self.physics_body: PhysicsBody = build_physics_body(graph)
+
+    @property
+    def growth_factor(self) -> float:
+        """Current size scale based on maturity (0.0 to 1.0+)."""
+        # Calculate growth factor based on maturity
+        # settings.GROWTH_MIN_SCALE at maturity 0
+        # 1.0 at settings.MATURITY_FULL_SIZE
+        
+        if self.maturity >= settings.MATURITY_FULL_SIZE:
+            return 1.0
+            
+        progress = max(0.0, self.maturity / settings.MATURITY_FULL_SIZE)
+        scale_range = 1.0 - settings.GROWTH_MIN_SCALE
+        return settings.GROWTH_MIN_SCALE + (progress * scale_range)
 
     def _derive_stats_from_body(self) -> None:
         """Calculate all gameplay stats from the assembled body graph."""
@@ -690,8 +747,13 @@ class Lifeform:
             elif getattr(self, "body_geometry", None):
                 width = self.body_geometry.get("width", width)
                 height = self.body_geometry.get("height", height)
-        self.base_width = int(max(1.0, width * pixel_scale))
-        self.base_height = int(max(1.0, height * pixel_scale))
+        
+        # Apply Growth Scaling
+        growth = self.growth_factor
+        self._cached_growth_factor = growth
+        
+        self.base_width = int(max(1.0, width * pixel_scale * growth))
+        self.base_height = int(max(1.0, height * pixel_scale * growth))
 
         # 2-4. Collect stats in a single pass through modules (much faster!)
         total_integrity = 0.0
@@ -727,31 +789,40 @@ class Lifeform:
                 tentacle_span += max(module.size[0], module.size[1])
                 tentacle_grip += float(getattr(module, "grip_strength", 0.0))
 
-        self.health = max(10, int(total_integrity))
+        self.health = max(10, int(total_integrity * growth))
 
-        base_energy = 100.0
-        mass_factor = self.physics_body.mass * 2.0
+        base_energy = 100.0 * growth
+        mass_factor = self.physics_body.mass * 2.0 * growth
         self.energy = int(base_energy + module_capacity + mass_factor)
         base_vision = 150.0
-        self.vision = base_vision + vision_bonus + max_sensor_range
+        self.vision = base_vision + vision_bonus + max_sensor_range + self.morph_stats.vision_range_bonus
+        self.vision = max(
+            float(settings.VISION_MIN),
+            min(float(settings.VISION_MAX), self.vision),
+        )
+        self.sensory_range = self.vision
+        self.perception_rays = self.morph_stats.perception_rays
+        self.hearing_range = self.morph_stats.hearing_range
 
         self.tentacle_count = tentacle_count or getattr(self, "tentacle_count", 0)
-        self.tentacle_reach = tentacle_reach or getattr(self.physics_body, "tentacle_reach", 0.0)
-        self.tentacle_span = tentacle_span or getattr(self.physics_body, "tentacle_span", 0.0)
-        self.tentacle_grip_bonus = tentacle_grip or getattr(self.physics_body, "tentacle_grip", 0.0)
+        self.tentacle_reach = (tentacle_reach or getattr(self.physics_body, "tentacle_reach", 0.0)) * growth
+        self.tentacle_span = (tentacle_span or getattr(self.physics_body, "tentacle_span", 0.0)) * growth
+        self.tentacle_grip_bonus = (tentacle_grip or getattr(self.physics_body, "tentacle_grip", 0.0)) * growth
 
         # 5. Combat Power
         # Attack: Thrust (ramming) + Grip (grappling) + Mass (impact) + Bite (mouths)
-        thrust_factor = self.physics_body.max_thrust * 0.2
-        grip_factor = self.physics_body.grip_strength * 0.5
-        mass_impact = self.physics_body.mass * 0.1
+        # Scale physics stats by growth
+        thrust_factor = self.physics_body.max_thrust * 0.2 * growth
+        grip_factor = self.physics_body.grip_strength * 0.5 * growth
+        mass_impact = self.physics_body.mass * 0.1 * growth
 
         bite_damage = 0.0
         for module in self.body_graph.iter_modules():
             if getattr(module, "module_type", "") == "mouth":
                 bite_damage += getattr(module, "bite_damage", 0.0)
-
-        bite_bonus = max(0.0, self.bite_force * 0.35)
+        
+        bite_damage *= growth
+        bite_bonus = max(0.0, self.bite_force * 0.35 * growth)
 
         tentacle_control = (
             self.tentacle_grip_bonus * 0.35
@@ -768,8 +839,8 @@ class Lifeform:
 
         # Defence: Integrity (health) + Mass (bulk) + Density (armor)
         integrity_factor = self.health * 0.1
-        bulk_factor = self.physics_body.mass * 0.2
-        armor_factor = self.physics_body.density * 5.0 + self.tissue_hardness * 4.0
+        bulk_factor = self.physics_body.mass * 0.2 * growth
+        armor_factor = (self.physics_body.density * 5.0 + self.tissue_hardness * 4.0) * growth
         self.defence_power = max(
             1.0, integrity_factor + bulk_factor + armor_factor + self.grapple_power * 0.6
         )
@@ -949,84 +1020,6 @@ class Lifeform:
         if hasattr(self, '_compute_buoyancy_debug'):
             self._compute_buoyancy_debug()
 
-    def check_group(self) -> None:
-        relevant_radius = min(self.vision, settings.GROUP_MAX_RADIUS)
-        if relevant_radius <= 0:
-            self.in_group = False
-            self.group_neighbors = []
-            self.group_center = None
-            self.group_strength = 0
-            self.group_state_timer = 0
-            self.group_leader = None
-            return
-
-        neighbors: List[Tuple["Lifeform", float]] = []
-        total_distance = 0.0
-        total_x = self.x
-        total_y = self.y
-
-        for lifeform in self.state.lifeforms:
-            if lifeform is self:
-                continue
-            if lifeform.dna_id != self.dna_id or lifeform.health_now <= 0:
-                continue
-            if lifeform.age < lifeform.maturity * settings.GROUP_MATURITY_RATIO:
-                continue
-            distance = self.distance_to(lifeform)
-            if distance <= relevant_radius:
-                neighbors.append((lifeform, distance))
-                total_distance += distance
-                total_x += lifeform.x
-                total_y += lifeform.y
-
-        self.group_neighbors = [lf for lf, _ in neighbors]
-        neighbor_count = len(neighbors)
-
-        qualified = False
-        cohesion = 0.0
-        if neighbor_count >= settings.GROUP_MIN_NEIGHBORS:
-            avg_distance = total_distance / neighbor_count if neighbor_count else 0
-            cohesion = max(0.0, 1.0 - avg_distance / relevant_radius)
-            if cohesion >= settings.GROUP_COHESION_THRESHOLD:
-                qualified = True
-        else:
-            self.group_strength = 0
-            self.group_center = None
-
-        if qualified:
-            self.in_group = True
-            self.group_state_timer = settings.GROUP_PERSISTENCE_FRAMES
-            total_members = neighbor_count + 1
-            self.group_center = (total_x / total_members, total_y / total_members)
-            self.group_strength = cohesion
-            self.group_leader = self._determine_group_leader()
-        elif self.group_state_timer > 0:
-            self.group_state_timer -= 1
-            self.in_group = True
-            if not self.group_leader or getattr(self.group_leader, "health_now", 0) <= 0:
-                self.group_leader = self._determine_group_leader()
-        else:
-            self.in_group = False
-            self.group_neighbors = []
-            self.group_center = None
-            self.group_strength = 0
-            self.group_leader = None
-
-    def _determine_group_leader(self) -> Optional["Lifeform"]:
-        candidates = [self]
-        candidates.extend(self.group_neighbors)
-        alive = [lf for lf in candidates if getattr(lf, "health_now", 0) > 0]
-        if not alive:
-            return None
-
-        def _leader_score(lf: "Lifeform") -> Tuple[float, float, float]:
-            leader_bonus = 1.0 if getattr(lf, "is_leader", False) else 0.0
-            boid_drive = getattr(lf, "boid_tendency", getattr(lf, "social_tendency", 0.5))
-            return (leader_bonus, boid_drive, getattr(lf, "age", 0.0))
-
-        alive.sort(key=_leader_score, reverse=True)
-        return alive[0]
-
     # ------------------------------------------------------------------
     # Stats / combat / lifecycle
     # ------------------------------------------------------------------
@@ -1161,6 +1154,9 @@ class Lifeform:
         # Removed broken size bonus: self.attack_power_now += (self.size - 50) * 0.8
         self.attack_power_now -= self.hunger * 0.1
         self.attack_power_now *= self.calculate_age_factor()
+        
+        # Mass bonus is now implicitly handled by base stats scaling with growth, 
+        # but we keep the relative mass bonus for species differentiation
         mass_bonus = 1.0 + (self.mass - 1.0) * 0.12
         reach_bonus = 1.0 + (self.reach - 4.0) * 0.03
         self.attack_power_now *= max(0.4, mass_bonus * reach_bonus)
@@ -1275,12 +1271,84 @@ class Lifeform:
             self.y,
             child.dna_id,
         )
+        
+        # Immense energy drain after giving birth
+        self.energy_now = max(1.0, self.energy * 0.1)
+        
+        return True
 
-        self.record_activity("Reproduceert", partner=partner.id, kind=child.id)
-        partner.record_activity("Reproduceert", partner=self.id, kind=child.id)
+    def reproduce_asexual(self) -> bool:
+        if len(self.state.lifeforms) >= settings.MAX_LIFEFORMS:
+            logger.info(
+                "Lifeform %s attempted to reproduce asexually but cap %s reached",
+                self.id,
+                settings.MAX_LIFEFORMS,
+            )
+            retry = max(1, settings.POPULATION_CAP_RETRY_COOLDOWN)
+            self.reproduced_cooldown = retry
+            self.record_activity(
+                "Reproductie mislukt",
+                reden="populatie limiet (asexual)",
+            )
+            return False
+
+        child_dna_profile, metadata = reproduction.create_asexual_offspring(
+            self.state,
+            self,
+        )
+
+        child_parents: Tuple[str, ...] = (self.id,)
+        child = Lifeform(
+            self.state,
+            self.x,
+            self.y,
+            child_dna_profile,
+            self.generation + 1,
+            parents=child_parents,
+        )
+        if random.randint(0, 100) < 10:
+            child.is_leader = True
+        self.state.lifeforms.append(child)
+
+        self.state.lifeform_genetics[child.id] = {
+            "dna_id": child.dna_id,
+            "parents": child_parents,
+            "source_profile": metadata.source_profile,
+            "dna_change": metadata.dna_change,
+            "color_change": metadata.color_change,
+            "mutations": list(metadata.mutations),
+            "is_new_profile": metadata.is_new_profile,
+        }
+
+        player = getattr(self.state, "player", None)
+        if player:
+            player.on_birth()
+
+        context = self.notification_context
+        if context:
+            context.action(f"Nieuwe levensvorm (asexual) geboren uit {self.id}")
+
+        effects = self.effects_manager
+        if effects:
+            center_x = self.x + self.width / 2
+            effects.spawn_birth((center_x, self.y - 16))
+
+        logger.info(
+            "Lifeform %s reproduced asexually producing %s at (%.1f, %.1f) [dna %s]",
+            self.id,
+            child.id,
+            self.x,
+            self.y,
+            child.dna_id,
+        )
+
+        self.record_activity("Reproduceert (asexual)", kind=child.id)
 
         self.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
-        partner.reproduced_cooldown = settings.REPRODUCING_COOLDOWN_VALUE
+        
+        # Immense energy drain after giving birth
+        self.energy_now = max(1.0, self.energy * 0.1)
+        
         return True
 
     def progression(self, delta_time: float) -> None:
@@ -1297,6 +1365,23 @@ class Lifeform:
         hunger_rate *= 1.0 + (self.mass - 1.0) * 0.04
         self.hunger += hunger_rate * settings.HUNGER_RATE_PER_SECOND * delta_time
         self.age += settings.AGE_RATE_PER_SECOND * delta_time
+        
+        # Check for growth update
+        if self.maturity < settings.MATURITY_FULL_SIZE:
+            self.maturity += settings.AGE_RATE_PER_SECOND * delta_time
+            
+            # If maturity changed significantly or enough time passed, update stats
+            current_growth = self.growth_factor
+            if abs(current_growth - self._cached_growth_factor) > 0.05:
+                 self._derive_stats_from_body()
+                 # Update collision rect size
+                 scaled_width = int(round(self.base_width * self.morph_stats.collision_scale))
+                 scaled_height = int(round(self.base_height * self.morph_stats.collision_scale))
+                 self.width = max(1, scaled_width)
+                 self.height = max(1, scaled_height)
+                 # Update mass
+                 self.mass = self._scaled_mass(self.body_mass * current_growth)
+
         self.energy_now += (
             settings.ENERGY_RECOVERY_PER_SECOND
             * delta_time

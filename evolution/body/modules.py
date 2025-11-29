@@ -77,6 +77,17 @@ class BodyModule:
 
     module_type: str = "generic"
     variant: Optional[str] = None
+    
+    # Deep Evolution Fields
+    shape_vertices: Optional[List[Tuple[float, float]]] = None
+    custom_attachment_points: Optional[List[AttachmentPoint]] = None
+    
+    # Bioluminescence
+    light_color: Optional[Tuple[int, int, int]] = None
+    light_intensity: float = 0.0
+    light_pattern: str = "steady"  # steady, pulse, flash, wave
+    light_frequency: float = 1.0
+    light_phase: float = 0.0
 
     def add_attachment_points(self, points: Iterable[AttachmentPoint]) -> None:
         """Register new attachment points on the module."""

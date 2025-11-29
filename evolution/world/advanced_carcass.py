@@ -138,6 +138,9 @@ class DecomposingCarcass:
         self.particle_spawn_timer = 0.0
         self.particle_spawn_interval = 0.5  # seconds
 
+        # Module consumption tracking
+        self.consumed_modules = set()  # Set of module keys (node_ids) that have been eaten
+
     def _update_decomposition_stage(self) -> None:
         """Update stage based on progress."""
         old_stage = self.stage
@@ -271,7 +274,8 @@ class DecomposingCarcass:
         self.time_since_death += dt
         
         # Update decomposition progress
-        decay_speed = self.base_decay_rate * 0.01  # Slower for visual decomposition
+        # Target ~60 seconds for full decomposition
+        decay_speed = 1.0 / 60.0 
         self.decomposition_progress += decay_speed * dt
         self.decomposition_progress = min(1.0, self.decomposition_progress)
         
@@ -378,6 +382,11 @@ class DecomposingCarcass:
                 state = ModularRendererState(self.body_graph, self.color)
                 state.rebuild_world_poses()
                 
+                # Remove consumed modules from state so they don't render
+                for module_key in self.consumed_modules:
+                    if module_key in state.poses:
+                        del state.poses[module_key]
+                
                 # Create a temporary surface for the body
                 # Use a generous size to accommodate limbs and rotation
                 surf_size = int(max(self.width, self.height) * 2.5)
@@ -466,6 +475,42 @@ class DecomposingCarcass:
         self.decomposition_progress = min(1.0, self.decomposition_progress + 0.01)
         
         return bite
+
+    def consume_module(self, node_id: str) -> float:
+        """Consume a specific module from the carcass.
+        
+        Args:
+            node_id: The key/node_id of the module to consume.
+            
+        Returns:
+            float: Nutrition value obtained (0.0 if already eaten or not found).
+        """
+        if self.body_graph is None:
+            return 0.0
+            
+        if node_id in self.consumed_modules:
+            return 0.0
+            
+        try:
+            node = self.body_graph.get_node(node_id)
+            module = node.module
+        except KeyError:
+            return 0.0
+            
+        # Get nutrition value
+        nutrition = module.stats.nutrition_value
+        
+        # Mark as consumed
+        self.consumed_modules.add(node_id)
+        
+        # Accelerate decomposition
+        self.decomposition_progress = min(1.0, self.decomposition_progress + 0.02)
+        
+        # Reduce total resource pool to keep it somewhat in sync
+        # (though resource pool is less relevant with module consumption)
+        self.resource = max(0.0, self.resource - nutrition)
+        
+        return nutrition
 
     def blocks_rect(self, _rect: pygame.Rect) -> bool:
         return False

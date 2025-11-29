@@ -303,7 +303,11 @@ class SeaweedStrand:
         return samples
 
     def apply_effect(
-        self, lifeform: "Lifeform", consumption: Sequence["ConsumptionSample"]
+        self,
+        lifeform: "Lifeform",
+        consumption: Sequence["ConsumptionSample"],
+        *,
+        digest_multiplier: float = 1.0,
     ) -> "ConsumptionOutcome":
         from .vegetation import ConsumptionOutcome
 
@@ -320,6 +324,10 @@ class SeaweedStrand:
             toxins += nutrition * dna.toxicity * 0.2
             satiety += dna.fiber_density * 5.0
             soothing += dna.hydration * 3.0
+        
+        # Apply digestion efficiency
+        energy *= digest_multiplier
+        
         net = energy - toxins
         lifeform.energy_now = min(lifeform.energy, lifeform.energy_now + net)
         lifeform.hunger = max(

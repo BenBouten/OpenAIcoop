@@ -53,10 +53,14 @@ class ModularLifeformRenderer:
             or getattr(lifeform, "thrust_output", 0.0)
         )
         thrust_map = getattr(lifeform, "active_thrust_map", None)
+        lum_intensity = getattr(lifeform, "lum_intensity", 0.0)
+        bite_intent = getattr(lifeform, "bite_intent", 0.0)
         state.rebuild_world_poses(
             angular_velocity=getattr(lifeform, "angular_velocity", 0.0),
             thrust_output=thrust,
             surface_thrust=thrust_map,
+            lum_intensity=lum_intensity,
+            bite_intent=bite_intent,
         )
         base_width = max(1, getattr(lifeform, "base_width", lifeform.width))
         base_height = max(1, getattr(lifeform, "base_height", lifeform.height))
@@ -92,6 +96,11 @@ class ModularLifeformRenderer:
         surface.fill((0, 0, 0, 0))
         renderer = _get_renderer(surface, lifeform.body_color)
         renderer.set_debug_overlays(False)
+        
+        # Apply growth scaling
+        growth = getattr(lifeform, "growth_factor", 1.0)
+        renderer.position_scale = settings.BODY_PIXEL_SCALE * growth
+        
         renderer.draw(state, Vector2(surf_width / 2, surf_height / 2))
         return surface, (surf_width, surf_height)
 

@@ -53,7 +53,7 @@ class BaseDNATemplate:
 
         genome = self.genome
         try:
-            genome = mutate_genome(genome, rng=rng)
+            genome, _ = mutate_genome(genome, rng=rng)
         except MutationError:
             pass
 

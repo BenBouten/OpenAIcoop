@@ -479,15 +479,15 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         lifeform.y_direction = -lifeform.y_direction
 
         # ⬇️ NIEUW: alleen een nieuwe escape starten als we NIET al in escape-modus zitten
-        if lifeform._escape_timer == 0:
-            logger.warning(
-                "Lifeform %s collided with obstacle at (%.1f, %.1f)",
-                lifeform.id,
-                resolved_x,
-                resolved_y,
-            )
-            lifeform._trigger_escape_manoeuvre("collision")
-            lifeform._boundary_contact_frames = 0
+        # if lifeform._escape_timer == 0:
+        #     logger.warning(
+        #         "Lifeform %s collided with obstacle at (%.1f, %.1f)",
+        #         lifeform.id,
+        #         resolved_x,
+        #         resolved_y,
+        #     )
+        #     lifeform._trigger_escape_manoeuvre("collision")
+        #     lifeform._boundary_contact_frames = 0
 
     else:
         grip = max(0.5, getattr(lifeform, "grip_strength", 1.0))
@@ -500,15 +500,15 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
 
         if hit_boundary_x or hit_boundary_y:
             lifeform._boundary_contact_frames += 1
-            if lifeform._boundary_contact_frames >= settings.STUCK_FRAMES_THRESHOLD:
-                logger.info(
-                    "Lifeform %s hugging boundary at (%.1f, %.1f) for %s frames",
-                    lifeform.id,
-                    resolved_x,
-                    resolved_y,
-                    lifeform._boundary_contact_frames,
-                )
-                lifeform._trigger_escape_manoeuvre("boundary")
+            # if lifeform._boundary_contact_frames >= settings.STUCK_FRAMES_THRESHOLD:
+            #     logger.info(
+            #         "Lifeform %s hugging boundary at (%.1f, %.1f) for %s frames",
+            #         lifeform.id,
+            #         resolved_x,
+            #         resolved_y,
+            #         lifeform._boundary_contact_frames,
+            #     )
+            #     lifeform._trigger_escape_manoeuvre("boundary")
         else:
             lifeform._boundary_contact_frames = 0
 
@@ -538,14 +538,14 @@ def update_movement(lifeform: "Lifeform", state: "SimulationState", dt: float) -
         lifeform._stuck_frames = 0
     elif displacement.length() < 0.05:
         lifeform._stuck_frames += 1
-        if lifeform._stuck_frames == settings.STUCK_FRAMES_THRESHOLD:
-            logger.warning(
-                "Lifeform %s stuck near (%.1f, %.1f); triggering escape",
-                lifeform.id,
-                lifeform.x,
-                lifeform.y,
-            )
-            lifeform._trigger_escape_manoeuvre("stuck")
+        # if lifeform._stuck_frames == settings.STUCK_FRAMES_THRESHOLD:
+        #     logger.warning(
+        #         "Lifeform %s stuck near (%.1f, %.1f); triggering escape",
+        #         lifeform.id,
+        #         lifeform.x,
+        #         lifeform.y,
+        #     )
+        #     lifeform._trigger_escape_manoeuvre("stuck")
     else:
         lifeform._stuck_frames = 0
 
