@@ -23,6 +23,7 @@ from ..body.modules import (
     TailThruster,
     TrunkCore,
     RoundCore,
+    HexagonCore,
     Eye,
     Mouth,
 )
@@ -236,6 +237,7 @@ DEFAULT_MODULE_FACTORIES: Dict[str, ModuleFactory] = {
     "sensor": _default_factory_for(SensorPod),
     "eye": _default_factory_for(Eye),
     "mouth": _default_factory_for(Mouth),
+    "hexagon_core": _default_factory_for(HexagonCore),
 }
 
 _NERVE_LOAD: Dict[str, float] = {

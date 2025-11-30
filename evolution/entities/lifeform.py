@@ -705,6 +705,15 @@ class Lifeform:
             genome = ensure_genome(genome_data)
             graph, geometry = build_body_graph(genome, include_geometry=True)
         except Exception as exc:  # pragma: no cover - defensive fallback
+            import sys
+            with open("c:/Users/Jasper/PycharmProjects/OpenAIcoop2/error_log.txt", "w") as f:
+                f.write(f"ERROR: Failed to build body graph for dna {dna_profile.get('dna_id')}: {exc}\n")
+                import traceback
+                traceback.print_exc(file=f)
+            
+            print(f"ERROR: Failed to build body graph for dna {dna_profile.get('dna_id')}: {exc}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
             logger.exception(
                 "Failed to build body graph for dna %s: %s", dna_profile.get("dna_id"), exc
             )
@@ -763,7 +772,9 @@ class Lifeform:
         tentacle_count = 0
         tentacle_reach = 0.0
         tentacle_grip = 0.0
+        tentacle_grip = 0.0
         tentacle_span = 0.0
+        photosynthesis_rate = 0.0
 
         for module in self.body_graph.iter_modules():
             # Health & Integrity
@@ -788,6 +799,9 @@ class Lifeform:
                 tentacle_reach += max(0.0, module.size[2])
                 tentacle_span += max(module.size[0], module.size[1])
                 tentacle_grip += float(getattr(module, "grip_strength", 0.0))
+            
+            # Photosynthesis from modules
+            photosynthesis_rate += getattr(module.stats, "photosynthesis_rate", 0.0)
 
         self.health = max(10, int(total_integrity * growth))
 
@@ -816,12 +830,12 @@ class Lifeform:
         grip_factor = self.physics_body.grip_strength * 0.5 * growth
         mass_impact = self.physics_body.mass * 0.1 * growth
 
-        bite_damage = 0.0
+        self.bite_damage = 0.0
         for module in self.body_graph.iter_modules():
             if getattr(module, "module_type", "") == "mouth":
-                bite_damage += getattr(module, "bite_damage", 0.0)
+                self.bite_damage += getattr(module, "bite_damage", 0.0)
         
-        bite_damage *= growth
+        self.bite_damage *= growth
         bite_bonus = max(0.0, self.bite_force * 0.35 * growth)
 
         tentacle_control = (
@@ -834,7 +848,7 @@ class Lifeform:
 
         self.attack_power = max(
             1.0,
-            thrust_factor + grip_factor + mass_impact + bite_damage + bite_bonus + self.grapple_power,
+            thrust_factor + grip_factor + mass_impact + self.bite_damage + bite_bonus + self.grapple_power,
         )
 
         # Defence: Integrity (health) + Mass (bulk) + Density (armor)
@@ -844,6 +858,8 @@ class Lifeform:
         self.defence_power = max(
             1.0, integrity_factor + bulk_factor + armor_factor + self.grapple_power * 0.6
         )
+        
+        self.photosynthesis_rate = photosynthesis_rate * growth
 
     def _compute_buoyancy_debug(self) -> None:
         """Compute and store buoyancy diagnostics for debugging and inspection."""
@@ -1427,10 +1443,6 @@ class Lifeform:
 
         if self.health_now > self.health:
             self.health_now = self.health
-
-    # ------------------------------------------------------------------
-    # Debug helpers
-    # ------------------------------------------------------------------
 
     def _summarise_related(self, entity: Optional["Lifeform"]) -> Optional[Dict[str, Any]]:
         if entity is None:

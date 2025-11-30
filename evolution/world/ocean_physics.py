@@ -39,9 +39,10 @@ class FluidProperties:
 class OceanPhysics:
     """Layered 2D Newtonian fluid approximating an alien ocean."""
 
-    def __init__(self, width: float, depth: float) -> None:
+    def __init__(self, width: float, depth: float, surface_y: float = 0.0) -> None:
         self.width = float(width)
         self.depth = max(1.0, float(depth))
+        self.surface_y = float(surface_y)
         self.gravity = 9.81  # screen units / s^2
         self.surface_pressure = 1.0
         self.layers: List[OceanLayer] = self._build_default_layers()
@@ -110,7 +111,9 @@ class OceanPhysics:
         gain above the surface).
         """
 
-        clamped_depth = max(0.0, min(self.depth, depth))
+        # Convert absolute Y to relative depth
+        relative_depth = depth - self.surface_y
+        clamped_depth = max(0.0, min(self.depth, relative_depth))
         layer = self.layer_at(clamped_depth)
         local_depth = max(layer.depth_start, min(layer.depth_end, clamped_depth))
         layer_fraction = (local_depth - layer.depth_start) / max(

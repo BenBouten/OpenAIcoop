@@ -65,7 +65,9 @@ from ..world.types import Barrier
 from ..world.vegetation import create_cluster_from_brush
 from ..world.world import World
 from .world.chunks import ChunkManager
+from .world.chunks import ChunkManager
 from . import bootstrap, environment
+from .scenarios import setup_hexagon_scenario
 from .state import SimulationState
 
 
@@ -1155,6 +1157,13 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
             200,
             60,
         )
+
+        hexagon_scenario_button = pygame.Rect(
+            start_button.left,
+            start_button.bottom + 10,
+            start_button.width,
+            start_button.height,
+        )
         modular_test_button = pygame.Rect(
             start_button.left,
             start_button.bottom + 80,
@@ -1226,6 +1235,11 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
             pygame.draw.rect(screen, settings.BLACK, start_button, 3, border_radius=12)
             start_text = button_font.render("Start oceaan", True, settings.BLACK)
             screen.blit(start_text, start_text.get_rect(center=start_button.center))
+
+            pygame.draw.rect(screen, (50, 200, 80), hexagon_scenario_button, border_radius=12)
+            pygame.draw.rect(screen, settings.BLACK, hexagon_scenario_button, 3, border_radius=12)
+            hex_text = button_font.render("Hexagon Scenario", True, settings.BLACK)
+            screen.blit(hex_text, hex_text.get_rect(center=hexagon_scenario_button.center))
 
             pygame.draw.rect(screen, settings.SEA, modular_test_button, border_radius=12)
             pygame.draw.rect(screen, settings.BLACK, modular_test_button, 3, border_radius=12)
@@ -1617,56 +1631,41 @@ def run(sim_settings: Optional[SimulationSettings] | None = None) -> None:
                     continue
                 if starting_screen:
                     if start_button.collidepoint(event.pos):
-                        bootstrap.reset_simulation(
-                            state,
-                            world,
-                            camera,
-                            event_manager,
-                            player_controller,
-                            notification_manager,
-                            effects_manager,
-                            on_spawn=_spawn_creature_from_template,
-                        )
-                        chunk_manager.build_static_chunks(world)
-                        _initialise_population()
-                        inspector.clear()
-                        start_time = datetime.datetime.now()
-                        notification_manager.add("Alien Ocean simulatie gestart", settings.SEA)
-                        starting_screen = False
-                        paused = False
-                        camera.reset()
-                    elif modular_test_button.collidepoint(event.pos):
-                        modular_test_report, test_preview = _run_modular_creature_test()
-                        notification_manager.add(
-                            "Prototype test uitgevoerd", settings.SEA
-                        )
-                else:
-                    if (
-                        event.button == 1
-                        and legacy_ui_visible
-                        and reset_button.collidepoint(event.pos)
-                    ):
-                        bootstrap.reset_simulation(
-                            state,
-                            world,
-                            camera,
-                            event_manager,
-                            player_controller,
-                            notification_manager,
-                            effects_manager,
-                            on_spawn=_spawn_creature_from_template,
-                        )
-                        chunk_manager.build_static_chunks(world)
-                        _initialise_population()
-                        inspector.clear()
-                        latest_stats = None
                         stats_window.clear()
+                        bootstrap.reset_simulation(
+                            state,
+                            world,
+                            camera,
+                            event_manager,
+                            player_controller,
+                            notification_manager,
+                            effects_manager,
+                        )
                         notification_manager.add(
-                            "Simulatie gereset",
+                            "Simulatie gestart",
                             settings.BLUE,
                         )
-                        starting_screen = True
-                        paused = True
+                        starting_screen = False
+                        paused = False
+                    elif hexagon_scenario_button.collidepoint(event.pos):
+                        stats_window.clear()
+                        bootstrap.reset_simulation(
+                            state,
+                            world,
+                            camera,
+                            event_manager,
+                            player_controller,
+                            notification_manager,
+                            effects_manager,
+                        )
+                        chunk_manager.build_static_chunks(world)
+                        setup_hexagon_scenario(state, world)
+                        notification_manager.add(
+                            "Hexagon Scenario gestart",
+                            settings.BLUE,
+                        )
+                        starting_screen = False
+                        paused = False
                     elif (
                         event.button == 1
                         and legacy_ui_visible

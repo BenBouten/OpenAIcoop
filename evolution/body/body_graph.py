@@ -165,8 +165,11 @@ class BodyGraph:
             lateral_area += module_lateral
             dorsal_area += module_dorsal
             drag_area += module_drag
-            buoyancy_volume += module_volume
             bias = float(getattr(stats, "buoyancy_bias", 0.0))
+            # Apply bias as a volume multiplier (e.g. 0.5 bias = 1.5x effective volume)
+            # This represents air bladders or low-density tissues
+            buoyancy_volume += module_volume * (1.0 + bias)
+            
             if bias >= 0.0:
                 buoyancy_positive += bias
             else:
@@ -345,9 +348,18 @@ class BodyGraph:
 
         point = parent_node.module.get_attachment_point(attachment_point)
         if not point.allows(module):
-            raise ValueError(
-                f"Attachment point '{attachment_point}' on '{parent_id}' does not accept module type {type(module).__name__}"
-            )
+            # Fallback: check by class name to handle potential import/reload issues
+            allowed_names = {t.__name__ for t in point.allowed_modules}
+            module_name = type(module).__name__
+            
+            # Check exact class name first
+            if module_name in allowed_names:
+                pass
+            # Then check MRO intersection
+            elif not allowed_names.intersection({c.__name__ for c in type(module).mro()}):
+                raise ValueError(
+                    f"Attachment point '{attachment_point}' on '{parent_id}' does not accept module type {module_name}"
+                )
 
         parent_node.add_child(node_id, attachment_point)
         self.nodes[node_id] = BodyNode(module=module, parent=parent_id, attachment_point=attachment_point)
@@ -554,9 +566,15 @@ class BodyGraph:
                 raise ValueError(f"Node '{node_id}' is missing attachment metadata")
             point = parent.module.get_attachment_point(point_name)
             if not point.allows(node.module):
-                raise ValueError(
-                    f"Node '{node_id}' uses attachment '{point_name}' on '{node.parent}', which does not allow {type(node.module).__name__}"
-                )
+                # Fallback: check by class name to handle potential import/reload issues
+                allowed_names = {t.__name__ for t in point.allowed_modules}
+                module_name = type(node.module).__name__
+                
+                # Check exact class name first, then MRO
+                if module_name not in allowed_names and not allowed_names.intersection({c.__name__ for c in type(node.module).mro()}):
+                    raise ValueError(
+                        f"Node '{node_id}' uses attachment '{point_name}' on '{node.parent}', which does not allow {type(node.module).__name__}"
+                    )
 
     def nodes_at_depth(self, depth: int) -> List[BodyNode]:
         """Return all nodes exactly ``depth`` hops from the root."""

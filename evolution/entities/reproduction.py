@@ -223,30 +223,10 @@ def _mutate_offspring(profile: Dict[str, object]) -> List[str]:
     mutations: List[str] = []
     
     # 1. Genome Mutation
-    # Note: Genome structural mutation is complex to do on a dict.
-    # Ideally, we should have mutated the Genome object before converting to dict.
-    # In _mix_parent_genome and _clone_parent_traits, we already handle genome mutation
-    # if we kept that logic.
-    # Let's rely on the upstream functions for genome mutation for now, 
-    # or implementing a proper Genome.from_dict() -> mutate -> to_dict() flow would be better but requires more changes.
-    # For this refactor, we will assume genome mutations are handled during the mix/clone phase 
-    # OR we add a simple "parameter mutation" for modules if possible.
-    
-    # However, we removed genome mutation from _clone_parent_traits!
-    # So we MUST handle it here or put it back.
-    # Since we don't have the Genome object here easily, let's put it back in _clone_parent_traits 
-    # and _mix_parent_genome, OR we accept that we need to reconstruct Genome here.
-    
-    # Let's try to reconstruct Genome if possible.
-    # We need constraints. We don't have them here.
-    # So, let's revert the decision to remove genome mutation from _clone_parent_traits?
-    # No, the goal was to unify.
-    
-    # Alternative: Pass 'state' to this function and use default constraints?
-    # Or just handle non-structural mutations here?
-    
-    # Let's stick to Brain and Traits here for now, and rely on _mix_parent_genome for genome mutations (which it does).
-    # But _clone_parent_traits needs to mutate genome too.
+    # Genome structural mutation is handled in _clone_parent_traits (asexual) 
+    # and _mix_parent_genome (sexual) because it requires the Genome object.
+    # Here we only handle parameter mutations if we implemented them for the dict,
+    # but for now we rely on the upstream structural mutations.
     
     # 2. Brain Mutation
     if "brain_weights" in profile and random.randint(0, 100) < settings.MUTATION_CHANCE:
@@ -354,9 +334,28 @@ def _clone_parent_traits(parent: "Lifeform") -> Tuple[Dict[str, object], List[st
     development = parent.development.copy() if parent.development else {}
     
     # Clone genome
-    genome_blueprint = parent.genome_blueprint.copy() if parent.genome_blueprint else {}
-    # Note: Genome mutations are now handled in _mutate_offspring, not here.
     mutations = []
+    genome_blueprint = {}
+
+    # Try to use the Genome object for structural mutation
+    if hasattr(parent, "genome") and isinstance(parent.genome, Genome):
+        try:
+            # Start with the parent's genome
+            current_genome = parent.genome
+            
+            # Apply mutation chance
+            if random.randint(0, 100) < settings.MUTATION_CHANCE:
+                new_genome, desc = mutate_genome(current_genome)
+                genome_blueprint = new_genome.to_dict()
+                mutations.append(desc)
+            else:
+                genome_blueprint = current_genome.to_dict()
+                
+        except Exception:
+            # Fallback to blueprint copy if mutation fails
+            genome_blueprint = parent.genome_blueprint.copy() if parent.genome_blueprint else {}
+    else:
+        genome_blueprint = parent.genome_blueprint.copy() if parent.genome_blueprint else {}
 
     brain_weights = list(parent.brain_weights) if parent.brain_weights else initialize_brain_weights()
 

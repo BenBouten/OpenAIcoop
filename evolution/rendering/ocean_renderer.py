@@ -16,6 +16,8 @@ from typing import Tuple
 
 import pygame
 
+from ..config import settings
+
 Color = Tuple[int, int, int]
 
 
@@ -83,8 +85,16 @@ class OceanRenderer:
         deep_color = (14, 40, 76)     # midnight
         abyss_color = (2, 6, 18)      # abyss
 
-        for y in range(h):
-            t = y / max(1, h - 1)
+        surface_y = settings.OCEAN_SURFACE_Y
+        
+        # Sky (Dark night sky)
+        sky_color = (10, 15, 30)
+        pygame.draw.rect(target, sky_color, (0, 0, self.w, surface_y))
+
+        # Ocean
+        ocean_height = max(1, h - surface_y)
+        for y in range(surface_y, h):
+            t = (y - surface_y) / ocean_height
             if t < 0.18:
                 color = lerp_color(top_color, mid_color, t / 0.18)
             elif t < 0.55:
@@ -211,7 +221,7 @@ class OceanRenderer:
     ) -> None:
         """Render surface waves limited to the current viewport."""
 
-        base_y = 40
+        base_y = settings.OCEAN_SURFACE_Y
         amp1 = 10
         amp2 = 6
 

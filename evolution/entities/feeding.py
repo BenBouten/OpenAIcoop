@@ -130,6 +130,14 @@ def _apply_plant_bite(lifeform, target: BiomassTarget, bite_strength: float) -> 
         anchor = _lifeform_anchor(lifeform)
         effects.spawn_bite_label(anchor, "Munch!", color=(120, 220, 160))
     lifeform.record_activity("Bite biomass", doel="plant", voeding=total_nutrition)
+    
+    # DEBUG: Log successful plant bite
+    try:
+        with open("feeding_events.csv", "a") as f:
+            f.write(f"{pygame.time.get_ticks()},{getattr(lifeform, 'id', 'unknown')},plant,{total_nutrition:.2f},{bite_strength:.2f}\n")
+    except Exception:
+        pass
+
     return True
 
 
@@ -170,6 +178,13 @@ def _apply_carcass_bite(lifeform, target: BiomassTarget, bite_strength: float) -
         carcass.apply_effect(lifeform, nutrition, digest_multiplier=digest)
     
     lifeform.record_activity("Bite biomass", doel="carrion", voeding=nutrition)
+
+    # DEBUG: Log successful carcass bite
+    try:
+        with open("feeding_events.csv", "a") as f:
+            f.write(f"{pygame.time.get_ticks()},{getattr(lifeform, 'id', 'unknown')},carcass,{nutrition:.2f},{bite_strength:.2f}\n")
+    except Exception:
+        pass
 
     if getattr(carcass, "is_depleted", lambda: False)():
         if carcass in getattr(lifeform.state, "carcasses", []):
@@ -243,7 +258,23 @@ def _apply_creature_bite(lifeform, target: BiomassTarget, bite_strength: float) 
 def resolve_biomass_bites(lifeform) -> None:
     bite_intent = max(0.0, min(1.0, getattr(lifeform, "bite_intent", 0.0)))
     bite_force = float(getattr(lifeform, "bite_force", 0.0))
-    if bite_intent <= 0 or bite_force <= 0:
+    bite_force = float(getattr(lifeform, "bite_force", 0.0))
+    bite_damage = float(getattr(lifeform, "bite_damage", 0.0))
+    
+    # Must have either innate bite force or a mouth (bite_damage) to eat
+    
+    # Must have a mouth (bite_damage > 0) to eat.
+    # Innate bite_force alone is not enough - you need a mouth module.
+    
+    # DEBUG: Log feeding attempts
+    if bite_intent > 0.1:
+        try:
+            with open("feeding_debug.csv", "a") as f:
+                f.write(f"{pygame.time.get_ticks()},{getattr(lifeform, 'id', 'unknown')},{bite_intent:.2f},{bite_force:.2f},{bite_damage:.2f}\n")
+        except Exception:
+            pass
+
+    if bite_intent <= 0 or bite_damage <= 0:
         return
 
     attack_component = max(0.0, getattr(lifeform, "attack_power_now", 0.0)) * 0.35

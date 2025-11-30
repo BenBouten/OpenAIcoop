@@ -113,13 +113,15 @@ class BubbleColumn:
         self.bubbles.append((Vector2(x, y), rise, radius))
 
 
+from ..config import settings
+
 def build_ocean_blueprint(width: int, height: int) -> OceanBlueprint:
     """Assemble the layered sideways ocean described in the design doc."""
 
     rng = random.Random(1337)
     layer_specs = _layer_specs()
     layers: List[DepthLayer] = []
-    y_cursor = 0
+    y_cursor = settings.OCEAN_SURFACE_Y
     remaining_layers = len(layer_specs)
 
     for index, spec in enumerate(layer_specs):

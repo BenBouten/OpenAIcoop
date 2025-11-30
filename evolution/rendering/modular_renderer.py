@@ -166,28 +166,32 @@ class ModularRendererState:
         # Deep Evolution: Use custom shape if available
         if module.shape_vertices:
             # Scale vertices by module size
-            # Vertices are assumed to be normalized (-0.5 to 0.5)
-            # Size is (width, height, length)
-            # X maps to width (size[0]), Y maps to height (size[1])?
-            # Or is it cross section?
-            # In 2D renderer, we usually see Top-Down view?
-            # Renderer uses 'half_length' (size[2]/2) and 'half_cross' (max(size[0], size[1])/2)
-            # Let's align with that.
-            
-            # If vertices are (x, y), we scale them.
-            # Usually X is forward/backward (length), Y is left/right (width) in local space?
-            # In `_generate_outline` below:
-            # trailing = -length, leading = length. So X is Length.
-            # Y is Width/Span.
-            
             length_scale = float(module.size[2])
             width_scale = float(max(module.size[0], module.size[1]))
             
             outline = []
             for vx, vy in module.shape_vertices:
-                # Assume vertices are in -0.5 to 0.5 range
-                # vx is along length, vy is along width
                 outline.append(Vector2(vx * length_scale, vy * width_scale))
+            return outline
+
+        if getattr(module, "key", "") == "hexagon_core":
+            # Generate a hexagon
+            half_span = max(0.05, float(max(module.size[0], module.size[1])) / 2.0)
+            outline = []
+            for i in range(6):
+                angle_deg = 60 * i + 30  # Start at 30 degrees for flat top/bottom? Or pointy top?
+                # Let's align with attachment points: north (0), ne (60), se (120), s (180), sw (240), nw (300)
+                # If we want vertices BETWEEN attachment points, we offset by 30.
+                # If we want vertices AT attachment points, we start at 0.
+                # HexagonCore has flat sides at N/S? No, it has attachment points at N, NE, SE, S, SW, NW.
+                # This implies the FACES are at those angles, or the CORNERS?
+                # Usually attachment points are on the FACES of a hexagon.
+                # If faces are at 0, 60, 120... then corners are at 30, 90, 150...
+                angle_rad = math.radians(angle_deg)
+                # X is forward (up/down in screen space if rotated?), Y is lateral.
+                # In this renderer, X is length (forward/back), Y is width (left/right).
+                # 0 degrees = Forward (X+)
+                outline.append(Vector2(math.cos(angle_rad) * half_span, math.sin(angle_rad) * half_span))
             return outline
 
         if getattr(module, "module_type", "") == "limb":

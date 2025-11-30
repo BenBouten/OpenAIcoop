@@ -4,7 +4,7 @@ world_width: 5200
 world_height: 6400
 window_width: 1920
 window_height: 1080
-n_lifeforms: 100
+n_lifeforms: 140
 max_lifeforms: 220
 mutation_chance: 8
 fps: 45
@@ -18,4 +18,8 @@ log_directory: "logs"
 debug_log_file: "simulation_debug.log"
 debug_log_level: "INFO"
 use_bodygraph_size: true
-initial_baseform_count: 1
+thrust_scale_exponent: 0.5
+thrust_base_multiplier: 6.0
+drag_coefficient_multiplier: 0.15
+reproduction_distance_multiplier: 2.5
+dna_change_threshold: 0.04

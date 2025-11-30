@@ -37,7 +37,7 @@ class World:
         self.carcasses: List[object] = []
         self.environment_modifiers = environment_modifiers
         self.world_type = "Alien Ocean"
-        self.ocean = OceanPhysics(self.width, self.height)
+        self.ocean = OceanPhysics(self.width, self.height - settings.OCEAN_SURFACE_Y, surface_y=settings.OCEAN_SURFACE_Y)
         self._background_surface: Optional[pygame.Surface] = None
         self._label_font: Optional[pygame.font.Font] = None
         self._time_seconds: float = 0.0
@@ -76,7 +76,7 @@ class World:
         self.vegetation_masks = list(blueprint.vegetation_masks)
         self.rad_vents = list(blueprint.vents)
         self.bubble_columns = list(blueprint.bubble_columns)
-        self.ocean = OceanPhysics(self.width, self.height)
+        self.ocean = OceanPhysics(self.width, self.height - settings.OCEAN_SURFACE_Y, surface_y=settings.OCEAN_SURFACE_Y)
         self._background_surface = self._render_background()
         self._rebuild_layer_lookup()
         self._last_update_ms = None
@@ -461,7 +461,7 @@ class World:
         max_x = self.width - entity_rect.width
         max_y = self.height - entity_rect.height
         clamped_x = max(0.0, min(max_x, attempt_x))
-        clamped_y = max(0.0, min(max_y, attempt_y))
+        clamped_y = max(float(settings.OCEAN_SURFACE_Y), min(max_y, attempt_y))
         hit_boundary_x = not math.isclose(clamped_x, attempt_x, abs_tol=1e-3)
         hit_boundary_y = not math.isclose(clamped_y, attempt_y, abs_tol=1e-3)
 

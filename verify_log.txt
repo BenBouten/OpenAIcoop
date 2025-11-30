@@ -1,0 +1,17 @@
+
+--- Verifying Single Species Spawn ---
+Templates generated: 1
+PASS: Only 1 template generated.
+Template key: common_ancestor
+
+--- Verifying Brain Control ---
+Testing Movement Control...
+Neural Thrust Ratio: 1.175
+Target Turn (derived): 0.5
+PASS: Thrust output reflected in lifeform state.
+Testing Biting Control...
+Bite Intent: 1.0
+PASS: Bite intent reflected in lifeform state.
+Testing Reproduction Control...
+Reproduce Intent: 1.0
+PASS: Reproduce intent reflected in lifeform state.

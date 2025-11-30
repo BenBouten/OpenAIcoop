@@ -19,6 +19,7 @@ class ModuleStats:
     heat_dissipation: float
     power_output: float = 0.0
     buoyancy_bias: float = 0.0
+    photosynthesis_rate: float = 0.0
     nutrition_value: float = 0.0  # Nutrition when eaten (auto-calculated from mass)
 
 
@@ -1062,3 +1063,125 @@ def catalogue_jellyfish_modules() -> Mapping[str, BodyModule]:
         tentacle_rear.key: tentacle_rear,
         sensor.key: sensor,
     }
+
+
+@dataclass
+class HexagonCore(CoreModule):
+    """Hexagonal core optimized for photosynthesis and stability."""
+
+    key: str = "hexagon_core"
+    name: str = "Hexagon Core"
+    description: str = "Photosynthetic core with 6-way symmetry"
+    size: Tuple[float, float, float] = (2.2, 2.2, 1.5)
+    stats: ModuleStats = field(
+        default_factory=lambda: ModuleStats(
+            mass=8.0,
+            energy_cost=1.5,
+            integrity=60.0,
+            heat_dissipation=8.0,
+            power_output=30.0,
+            buoyancy_bias=0.8,  # High buoyancy for surface floating
+            photosynthesis_rate=5.0,  # Native energy generation
+        )
+    )
+    material: str = "cellulose-chitin"
+    energy_capacity: float = 150.0
+    cargo_slots: int = 1
+
+    module_type: str = "core"
+
+    ATTACHMENT_SLOTS: ClassVar[Tuple[AttachmentPoint, ...]] = (
+        AttachmentPoint(
+            name="north",
+            joint=Joint(JointType.FIXED),
+            allowed_modules=(HeadModule, SensoryModule),
+            description="Top vector mount",
+            max_child_mass=8.0,
+            allowed_materials=("cellulose-chitin", "organic"),
+            offset=(0.0, 0.9),
+            angle=0.0,
+            clearance=1.0,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="north_east",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-60.0, 60.0)),
+            allowed_modules=(LimbModule, PropulsionModule),
+            description="Upper-right vector mount",
+            max_child_mass=6.0,
+            allowed_materials=("cellulose-chitin", "flex-polymer"),
+            offset=(0.78, 0.45),
+            angle=60.0,
+            clearance=0.8,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="south_east",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-60.0, 60.0)),
+            allowed_modules=(LimbModule, PropulsionModule),
+            description="Lower-right vector mount",
+            max_child_mass=6.0,
+            allowed_materials=("cellulose-chitin", "flex-polymer"),
+            offset=(0.78, -0.45),
+            angle=120.0,
+            clearance=0.8,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="south",
+            joint=Joint(JointType.HINGE, swing_limits=(-30.0, 30.0)),
+            allowed_modules=(PropulsionModule, LimbModule, TailThruster),
+            description="Bottom vector mount",
+            max_child_mass=10.0,
+            allowed_materials=("cellulose-chitin", "flex-polymer"),
+            offset=(0.0, -0.9),
+            angle=180.0,
+            clearance=1.0,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="south_west",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-60.0, 60.0)),
+            allowed_modules=(LimbModule, PropulsionModule),
+            description="Lower-left vector mount",
+            max_child_mass=6.0,
+            allowed_materials=("cellulose-chitin", "flex-polymer"),
+            offset=(-0.78, -0.45),
+            angle=240.0,
+            clearance=0.8,
+            relative=True,
+        ),
+        AttachmentPoint(
+            name="north_west",
+            joint=Joint(JointType.MUSCLE, swing_limits=(-60.0, 60.0)),
+            allowed_modules=(LimbModule, PropulsionModule),
+            description="Upper-left vector mount",
+            max_child_mass=6.0,
+            allowed_materials=("cellulose-chitin", "flex-polymer"),
+            offset=(-0.78, 0.45),
+            angle=300.0,
+            clearance=0.8,
+            relative=True,
+        ),
+    )
+
+    def __post_init__(self) -> None:
+        if not self.attachment_points:
+            self.add_attachment_points(_clone_attachment_points(self.ATTACHMENT_SLOTS))
+            
+        # Scale stats based on size volume relative to default
+        default_vol = 2.2 * 2.2 * 1.0
+        vol = self.size[0] * self.size[1] * self.size[2]
+        scale = max(0.2, vol / max(0.001, default_vol))
+        
+        # Adjust stats
+        self.stats = ModuleStats(
+            mass=self.stats.mass * scale,
+            energy_cost=self.stats.energy_cost * scale,
+            integrity=self.stats.integrity * (scale ** 0.6),
+            heat_dissipation=self.stats.heat_dissipation * scale,
+            power_output=self.stats.power_output * scale,
+            buoyancy_bias=self.stats.buoyancy_bias * scale,
+            photosynthesis_rate=self.stats.photosynthesis_rate * scale,
+        )
+        self.energy_capacity *= scale

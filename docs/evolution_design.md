@@ -25,7 +25,7 @@ The goal is to create a simulation where complex behaviors and ecological dynami
 ### Resources & Reproduction
 *   **Current State**:
     *   **Energy Dynamics**: Implemented. Creatures lose energy to move/exist and gain it by eating.
-    *   **Reproduction**: Implemented (`reproduction.py`). Sexual reproduction mixes genomes and applies mutations.
+    *   **Reproduction**: Partly Implemented (`reproduction.py`). Sexual reproduction mixes genomes and applies mutations. However, reproducing is not a purely economic decision. It is also not a decision that is made by the brain. Reproduction should also be triggered without the need for a partner.
     *   **Gating**: Reproduction is gated by hardcoded checks (`can_reproduce`): Age > Maturity and Energy > Threshold.
 
 ### Movement

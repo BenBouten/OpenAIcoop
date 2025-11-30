@@ -1,0 +1,3 @@
+DEBUG: spatial_grid=<MagicMock id='1941168353424'>, candidates_len=2
+DEBUG: spatial_grid=<MagicMock id='2729105862096'>, candidates_len=2
+Added neighbor <evolution.entities.lifeform.Lifeform object at 0x0000027B6B501650>

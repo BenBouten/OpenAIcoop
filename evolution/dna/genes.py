@@ -142,8 +142,10 @@ class Genome:
         return roots[0]
 
 
-def ensure_genome(data: Mapping[str, object]) -> Genome:
+def ensure_genome(data: Mapping[str, object] | Genome) -> Genome:
     """Normalise raw mapping data into a :class:`Genome` instance."""
+    if isinstance(data, Genome):
+        return data
 
     modules_raw = data.get("modules") or data.get("genes")
     if not isinstance(modules_raw, Mapping) or not modules_raw:
